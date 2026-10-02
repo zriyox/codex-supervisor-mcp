@@ -8,6 +8,14 @@ export const supervisorRoot = resolve(
   process.env.SUPERVISOR_HOME?.trim() || join(homedir(), ".codex-supervisor")
 );
 
+// Codex's own home, used to read native thread goals. Read-only.
+// Override with CODEX_HOME.
+export const codexHome = resolve(
+  process.env.CODEX_HOME?.trim() || join(homedir(), ".codex")
+);
+
+export const goalsDbPath = join(codexHome, "goals_1.sqlite");
+
 export const dataDir = join(supervisorRoot, "data");
 export const dbPath = join(dataDir, "supervisor.sqlite");
 export const runsDir = join(dataDir, "runs");

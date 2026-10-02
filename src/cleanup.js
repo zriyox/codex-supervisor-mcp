@@ -3,6 +3,7 @@ import { rm, stat } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { deleteTasks, readTasks, vacuumStore } from "./task-store.js";
 import { runsDir, worktreesDir } from "./paths.js";
+import { TERMINAL_STATUSES } from "./status.js";
 
 function parseArgs(argv) {
   const options = {
@@ -52,12 +53,12 @@ Options:
 }
 
 function isTerminal(task) {
-  return ["completed", "failed", "cancelled"].includes(task.status);
+  return TERMINAL_STATUSES.has(task.status);
 }
 
 function isDeleteCandidate(task, cutoffMs, includeFailed) {
   if (!isTerminal(task)) return false;
-  if (!includeFailed && ["failed", "cancelled"].includes(task.status)) return false;
+  if (!includeFailed && ["failed", "cancelled", "lost"].includes(task.status)) return false;
   const completedAt = Date.parse(task.completed_at ?? task.updated_at ?? task.created_at);
   return Number.isFinite(completedAt) && completedAt < cutoffMs;
 }

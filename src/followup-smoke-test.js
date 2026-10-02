@@ -8,7 +8,7 @@ async function waitForTerminal(taskId) {
   while (Date.now() < deadline) {
     await new Promise((resolve) => setTimeout(resolve, 1000));
     const latest = await getTask(taskId);
-    if (["completed", "failed", "cancelled"].includes(latest?.status) && latest.exit_code !== null) {
+    if (["completed", "failed", "cancelled", "lost"].includes(latest?.status) && latest.exit_code !== null) {
       return latest;
     }
   }
@@ -19,7 +19,9 @@ const parent = await createCodexWorker({
   title: "Follow-up parent smoke",
   task: "Reply with one short sentence. Do not modify files.",
   cwd,
-  sandbox: "read-only"
+  sandbox: "read-only",
+  ownedPaths: [cwd],
+  goal: { objective: "Smoke test the follow-up path" }
 });
 
 const parentFinal = await waitForTerminal(parent.id);

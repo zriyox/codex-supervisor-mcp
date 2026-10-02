@@ -27,7 +27,9 @@ try {
       task: "Reply with one short sentence. Do not modify files.",
       cwd,
       sandbox: "read-only",
-      reasoningEffort: "high"
+      reasoningEffort: "high",
+      ownedPaths: [cwd],
+      goal: { objective: "MCP wait smoke test: reply with one sentence" }
     }
   }));
 

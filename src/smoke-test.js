@@ -8,7 +8,9 @@ const worker = await createCodexWorker({
   title: "Smoke test",
   task,
   cwd,
-  sandbox: "read-only"
+  sandbox: "read-only",
+  ownedPaths: [cwd],
+  goal: { objective: "Smoke test: one short sentence, no file writes" }
 });
 
 console.log(JSON.stringify({ created: worker.id }, null, 2));
@@ -17,7 +19,7 @@ const deadline = Date.now() + 120000;
 while (Date.now() < deadline) {
   await new Promise((resolve) => setTimeout(resolve, 1000));
   const latest = await getTask(worker.id);
-  if (["completed", "failed", "cancelled"].includes(latest?.status) && latest.exit_code !== null) {
+  if (["completed", "failed", "cancelled", "lost"].includes(latest?.status) && latest.exit_code !== null) {
     const events = await readTaskEvents(worker.id, 5);
     const eventCount = await taskEventCount(worker.id);
     console.log(JSON.stringify({ latest, event_count: eventCount, recent_events: events }, null, 2));

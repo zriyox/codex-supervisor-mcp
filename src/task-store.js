@@ -2,28 +2,35 @@ import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { dataDir, dbPath, runsDir } from "./paths.js";
+import { ACTIVE_STATUSES, PHASES } from "./status.js";
 
 let db;
 
-function ensureColumn(dbInstance, tableName, columnName, definition) {
-  const columns = dbInstance.prepare(`PRAGMA table_info(${tableName})`).all();
-  if (!columns.some((column) => column.name === columnName)) {
-    dbInstance.exec(`ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${definition};`);
-  }
-}
+// Columns added after v1. Kept in one place so the legacy rebuild and the
+// fresh CREATE TABLE cannot drift apart.
+const V2_COLUMNS = [
+  ["resumed_from", "TEXT"],
+  ["thread_id", "TEXT"],
+  ["owned_paths", "TEXT NOT NULL DEFAULT '[]'"],
+  ["depends_on", "TEXT NOT NULL DEFAULT '[]'"],
+  ["goal_objective", "TEXT"],
+  ["goal_token_budget", "INTEGER"],
+  ["goal_status", "TEXT"],
+  ["goal_tokens_used", "INTEGER"],
+  ["goal_time_used_seconds", "INTEGER"],
+  ["goal_updated_at", "TEXT"],
+  ["run_count", "INTEGER NOT NULL DEFAULT 0"],
+  ["cancel_requested_at", "TEXT"],
+  ["notices", "TEXT"]
+];
 
-function openDb() {
-  if (db) return db;
-  db = new DatabaseSync(dbPath);
-  db.exec("PRAGMA journal_mode=WAL;");
-  db.exec("PRAGMA synchronous=NORMAL;");
-  db.exec(`
+const TASKS_DDL = `
     CREATE TABLE IF NOT EXISTS tasks (
       id TEXT PRIMARY KEY,
       title TEXT,
       worker TEXT NOT NULL,
       status TEXT NOT NULL,
-      phase TEXT NOT NULL,
+      phase TEXT,
       cwd TEXT NOT NULL,
       project_root TEXT NOT NULL,
       sandbox TEXT NOT NULL,
@@ -48,12 +55,88 @@ function openDb() {
       current_command TEXT,
       error TEXT,
       followup_of TEXT,
+      resumed_from TEXT,
+      thread_id TEXT,
+      owned_paths TEXT NOT NULL DEFAULT '[]',
+      depends_on TEXT NOT NULL DEFAULT '[]',
+      goal_objective TEXT,
+      goal_token_budget INTEGER,
+      goal_status TEXT,
+      goal_tokens_used INTEGER,
+      goal_time_used_seconds INTEGER,
+      goal_updated_at TEXT,
+      run_count INTEGER NOT NULL DEFAULT 0,
+      cancel_requested_at TEXT,
+      notices TEXT,
       worktree_path TEXT,
       run_log TEXT NOT NULL
     );
-  `);
-  ensureColumn(db, "tasks", "reasoning_effort", "TEXT NOT NULL DEFAULT 'high'");
-  db.exec(`
+`;
+
+const TASK_COLUMNS = [
+  "id", "title", "worker", "status", "phase", "cwd", "project_root", "sandbox", "model",
+  "reasoning_effort", "skip_git_repo_check", "prompt", "changed_files", "commands",
+  "created_at", "updated_at", "started_at", "completed_at", "pid", "exit_code", "signal",
+  "stderr_tail", "last_event_at", "last_event_type", "last_message", "current_action",
+  "current_command", "error", "followup_of", "resumed_from", "thread_id", "owned_paths",
+  "depends_on", "goal_objective", "goal_token_budget", "goal_status", "goal_tokens_used",
+  "goal_time_used_seconds", "goal_updated_at", "run_count", "cancel_requested_at",
+  "notices", "worktree_path", "run_log"
+];
+
+function tableColumns(dbInstance, tableName) {
+  return dbInstance.prepare(`PRAGMA table_info(${tableName})`).all();
+}
+
+// v1 stored progress phases ("editing", "command", "reporting") in the status
+// column and required phase to be non-null. Both have to change, and SQLite
+// cannot relax NOT NULL in place, so the table is rebuilt once.
+function migrateTasksTable(dbInstance, columns) {
+  const phaseColumn = columns.find((column) => column.name === "phase");
+  const alreadyV2 = V2_COLUMNS.every(([name]) => columns.some((column) => column.name === name))
+    && phaseColumn
+    && !phaseColumn.notnull;
+  if (alreadyV2) return { migrated: false, rows: 0 };
+
+  const legacyNames = new Set(columns.map((column) => column.name));
+  const rows = dbInstance.prepare("SELECT COUNT(*) AS count FROM tasks").get().count;
+
+  const selectExpression = (name) => {
+    if (legacyNames.has(name)) return name;
+    const definition = V2_COLUMNS.find(([columnName]) => columnName === name);
+    if (definition && definition[1].includes("DEFAULT '[]'")) return "'[]'";
+    if (definition && definition[1].includes("DEFAULT 0")) return "0";
+    return "NULL";
+  };
+
+  const statusExpression = legacyNames.has("status")
+    ? `CASE WHEN status IN ('editing','command','command_completed','reporting') THEN 'running' ELSE status END`
+    : "'failed'";
+
+  const phaseExpression = legacyNames.has("phase")
+    ? `CASE
+         WHEN status IN ('editing','command','reporting') THEN status
+         WHEN status = 'command_completed' THEN 'command'
+         WHEN status = 'running' THEN CASE WHEN phase IN (${PHASES.map((p) => `'${p}'`).join(",")}) THEN phase ELSE 'starting' END
+         ELSE NULL
+       END`
+    : "NULL";
+
+  {
+    dbInstance.exec("ALTER TABLE tasks RENAME TO tasks_legacy_v1;");
+    dbInstance.exec(TASKS_DDL);
+    const selectList = TASK_COLUMNS.map((name) => {
+      if (name === "status") return `${statusExpression} AS status`;
+      if (name === "phase") return `${phaseExpression} AS phase`;
+      return `${selectExpression(name)} AS ${name}`;
+    }).join(", ");
+    dbInstance.exec(`INSERT INTO tasks (${TASK_COLUMNS.join(", ")}) SELECT ${selectList} FROM tasks_legacy_v1;`);
+    dbInstance.exec("DROP TABLE tasks_legacy_v1;");
+  }
+  return { migrated: true, rows };
+}
+
+const TASK_EVENTS_DDL = `
     CREATE TABLE IF NOT EXISTS task_events (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       task_id TEXT NOT NULL,
@@ -62,8 +145,65 @@ function openDb() {
       event_type TEXT NOT NULL,
       payload TEXT NOT NULL
     );
-  `);
-  db.exec("CREATE INDEX IF NOT EXISTS idx_task_events_task_seq ON task_events(task_id, seq);");
+  `;
+
+const TASK_EVENTS_INDEX_DDL =
+  "CREATE INDEX IF NOT EXISTS idx_task_events_task_seq ON task_events(task_id, seq);";
+
+function sleepSync(ms) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+function isBusyError(error) {
+  return /SQLITE_BUSY|database is locked|database table is locked/i.test(String(error?.message ?? ""));
+}
+
+// Several MCP processes may open a brand-new database at the same moment, so
+// schema setup runs inside one immediate transaction (which the busy timeout
+// makes wait instead of failing) and is retried if the file is still locked.
+function runWithRetry(dbInstance, work, attempts = 10) {
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    try {
+      return work();
+    } catch (error) {
+      if (attempt === attempts - 1 || !isBusyError(error)) throw error;
+      sleepSync(50 * (attempt + 1));
+    }
+  }
+  return undefined;
+}
+
+function initializeSchema(dbInstance) {
+  runWithRetry(dbInstance, () => {
+    dbInstance.exec("BEGIN IMMEDIATE;");
+    try {
+      const columns = tableColumns(dbInstance, "tasks");
+      if (columns.length === 0) dbInstance.exec(TASKS_DDL);
+      else migrateTasksTable(dbInstance, columns);
+      dbInstance.exec(TASK_EVENTS_DDL);
+      dbInstance.exec(TASK_EVENTS_INDEX_DDL);
+      dbInstance.exec("COMMIT;");
+    } catch (error) {
+      try {
+        dbInstance.exec("ROLLBACK;");
+      } catch {
+        /* transaction already unwound */
+      }
+      throw error;
+    }
+  });
+}
+
+function openDb() {
+  if (db) return db;
+  db = new DatabaseSync(dbPath);
+  // Several MCP processes share one database file. The busy timeout has to be
+  // set before anything that can touch the write lock, otherwise a concurrent
+  // writer turns into an immediate SQLITE_BUSY.
+  db.exec("PRAGMA busy_timeout=15000;");
+  runWithRetry(db, () => db.exec("PRAGMA journal_mode=WAL;"));
+  db.exec("PRAGMA synchronous=NORMAL;");
+  initializeSchema(db);
   return db;
 }
 
@@ -78,7 +218,11 @@ function encodeJson(value) {
 
 function decodeJson(value, fallback) {
   if (!value) return fallback;
-  return JSON.parse(value);
+  try {
+    return JSON.parse(value);
+  } catch {
+    return fallback;
+  }
 }
 
 function rowToTask(row) {
@@ -88,13 +232,16 @@ function rowToTask(row) {
     skip_git_repo_check: Boolean(row.skip_git_repo_check),
     changed_files: decodeJson(row.changed_files, []),
     commands: decodeJson(row.commands, []),
+    owned_paths: decodeJson(row.owned_paths, []),
+    depends_on: decodeJson(row.depends_on, []),
     pid: row.pid ?? null,
-    exit_code: row.exit_code ?? null
+    exit_code: row.exit_code ?? null,
+    phase: row.phase ?? null,
+    goal_token_budget: row.goal_token_budget ?? null,
+    goal_tokens_used: row.goal_tokens_used ?? null,
+    goal_time_used_seconds: row.goal_time_used_seconds ?? null,
+    goal_status: row.goal_status ?? null
   };
-}
-
-function isActiveTask(task) {
-  return ["queued", "running", "editing", "command", "command_completed", "reporting"].includes(task.status);
 }
 
 function isPidAlive(pid) {
@@ -113,19 +260,27 @@ export async function readTasks() {
   return rows.map(rowToTask);
 }
 
-export async function reconcileDetachedActiveTasks() {
+export async function readActiveTasks() {
   const tasks = await readTasks();
-  const staleTasks = tasks.filter((task) => isActiveTask(task) && task.pid && !isPidAlive(task.pid));
+  return tasks.filter((task) => ACTIVE_STATUSES.has(task.status));
+}
+
+// A worker whose process is gone and that never wrote a terminal event is not
+// "failed": nothing told us it failed. It is lost, and the fix is to re-run it.
+export async function reconcileDetachedActiveTasks() {
+  const tasks = await readActiveTasks();
+  const staleTasks = tasks.filter((task) => task.pid && !isPidAlive(task.pid));
   for (const task of staleTasks) {
+    const now = new Date().toISOString();
     await writeTask({
       ...task,
-      status: "failed",
-      phase: "failed",
-      current_action: "Worker process is no longer running",
+      status: "lost",
+      phase: null,
+      current_action: "Worker process disappeared without a terminal event",
       current_command: null,
       error: task.error ?? "Codex worker process disappeared before a terminal event was recorded.",
-      completed_at: task.completed_at ?? new Date().toISOString(),
-      updated_at: new Date().toISOString()
+      completed_at: task.completed_at ?? now,
+      updated_at: now
     });
   }
   return staleTasks;
@@ -133,58 +288,29 @@ export async function reconcileDetachedActiveTasks() {
 
 export async function writeTask(task) {
   await ensureFilesystem();
+  const placeholders = TASK_COLUMNS.map((name) => `@${name}`).join(", ");
+  const updates = TASK_COLUMNS
+    .filter((name) => name !== "id" && name !== "created_at")
+    .map((name) => `${name} = excluded.${name}`)
+    .join(",\n      ");
   const stmt = openDb().prepare(`
-    INSERT INTO tasks (
-      id, title, worker, status, phase, cwd, project_root, sandbox, model, reasoning_effort, skip_git_repo_check,
-      prompt, changed_files, commands, created_at, updated_at, started_at, completed_at,
-      pid, exit_code, signal, stderr_tail, last_event_at, last_event_type, last_message,
-      current_action, current_command, error, followup_of, worktree_path, run_log
-    ) VALUES (
-      @id, @title, @worker, @status, @phase, @cwd, @project_root, @sandbox, @model, @reasoning_effort, @skip_git_repo_check,
-      @prompt, @changed_files, @commands, @created_at, @updated_at, @started_at, @completed_at,
-      @pid, @exit_code, @signal, @stderr_tail, @last_event_at, @last_event_type, @last_message,
-      @current_action, @current_command, @error, @followup_of, @worktree_path, @run_log
-    )
+    INSERT INTO tasks (${TASK_COLUMNS.join(", ")}) VALUES (${placeholders})
     ON CONFLICT(id) DO UPDATE SET
-      title = excluded.title,
-      worker = excluded.worker,
-      status = excluded.status,
-      phase = excluded.phase,
-      cwd = excluded.cwd,
-      project_root = excluded.project_root,
-      sandbox = excluded.sandbox,
-      model = excluded.model,
-      reasoning_effort = excluded.reasoning_effort,
-      skip_git_repo_check = excluded.skip_git_repo_check,
-      prompt = excluded.prompt,
-      changed_files = excluded.changed_files,
-      commands = excluded.commands,
-      updated_at = excluded.updated_at,
-      started_at = excluded.started_at,
-      completed_at = excluded.completed_at,
-      pid = excluded.pid,
-      exit_code = excluded.exit_code,
-      signal = excluded.signal,
-      stderr_tail = excluded.stderr_tail,
-      last_event_at = excluded.last_event_at,
-      last_event_type = excluded.last_event_type,
-      last_message = excluded.last_message,
-      current_action = excluded.current_action,
-      current_command = excluded.current_command,
-      error = excluded.error,
-      followup_of = excluded.followup_of,
-      worktree_path = excluded.worktree_path,
-      run_log = excluded.run_log
+      ${updates}
   `);
 
-  stmt.run({
-    ...task,
-    reasoning_effort: task.reasoning_effort ?? "high",
-    skip_git_repo_check: task.skip_git_repo_check ? 1 : 0,
-    project_root: task.project_root,
-    changed_files: encodeJson(task.changed_files),
-    commands: encodeJson(task.commands)
-  });
+  const params = {};
+  for (const name of TASK_COLUMNS) params[name] = task[name] ?? null;
+  params.reasoning_effort = task.reasoning_effort ?? "high";
+  params.skip_git_repo_check = task.skip_git_repo_check ? 1 : 0;
+  params.changed_files = encodeJson(task.changed_files);
+  params.commands = encodeJson(task.commands);
+  params.owned_paths = encodeJson(task.owned_paths);
+  params.depends_on = encodeJson(task.depends_on);
+  params.run_count = task.run_count ?? 0;
+  params.phase = task.phase ?? null;
+
+  stmt.run(params);
   return task;
 }
 
@@ -221,16 +347,30 @@ export async function appendTaskEvent(taskId, event) {
   `).run(taskId, nextSeqRow.seq, new Date().toISOString(), event.type ?? "unknown", JSON.stringify(event));
 }
 
-export async function readTaskEvents(taskId, limit = 100) {
+export async function readTaskEvents(taskId, limit = 100, kinds = null) {
   await ensureFilesystem();
-  const rows = openDb().prepare(`
-    SELECT payload
-    FROM task_events
-    WHERE task_id = ?
-    ORDER BY seq DESC
-    LIMIT ?
-  `).all(taskId, limit);
+  const kindList = Array.isArray(kinds) && kinds.length > 0 ? kinds : null;
+  // Filtering happens before the limit so "give me the last 10 file changes"
+  // actually returns 10 file changes, not the tail of an unfiltered stream.
+  const rows = kindList
+    ? openDb().prepare(`
+        SELECT payload FROM task_events
+        WHERE task_id = ? AND event_type IN (${kindList.map(() => "?").join(", ")})
+        ORDER BY seq DESC LIMIT ?
+      `).all(taskId, ...kindList, limit)
+    : openDb().prepare(`
+        SELECT payload FROM task_events
+        WHERE task_id = ? ORDER BY seq DESC LIMIT ?
+      `).all(taskId, limit);
   return rows.reverse().map((row) => JSON.parse(row.payload));
+}
+
+export async function listTaskEventKinds(taskId) {
+  await ensureFilesystem();
+  return openDb().prepare(`
+    SELECT event_type AS kind, COUNT(*) AS count
+    FROM task_events WHERE task_id = ? GROUP BY event_type ORDER BY count DESC
+  `).all(taskId);
 }
 
 export async function taskCount() {

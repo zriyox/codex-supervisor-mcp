@@ -9,7 +9,7 @@ const transport = new StdioClientTransport({
 
 const client = new Client({
   name: "codex-supervisor-smoke-test",
-  version: "0.1.0"
+  version: "0.2.0"
 });
 
 try {
@@ -17,12 +17,16 @@ try {
   const tools = await client.listTools();
   const toolNames = tools.tools.map((tool) => tool.name).sort();
   const required = [
-    "create_codex_followup_worker",
     "cancel_codex_worker",
+    "create_codex_followup_worker",
     "create_codex_worker",
     "get_codex_worker_events",
     "get_codex_worker_status",
+    "get_orchestration_overview",
+    "get_worker_goal",
+    "get_worker_summary",
     "list_codex_workers",
+    "resume_codex_worker",
     "wait_codex_workers"
   ];
   const missing = required.filter((name) => !toolNames.includes(name));
