@@ -1,7 +1,7 @@
 import { createCodexWorker, createFollowupWorker } from "./codex-runner.js";
 import { getTask, readTaskEvents, taskEventCount } from "./task-store.js";
 
-const cwd = process.argv[2] ?? "/Users/zriyo/Desktop/work";
+const cwd = process.argv[2] ?? process.cwd();
 
 async function waitForTerminal(taskId) {
   const deadline = Date.now() + 120000;

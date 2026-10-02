@@ -1,7 +1,7 @@
 import { createCodexWorker } from "./codex-runner.js";
 import { getTask, readTaskEvents, taskEventCount } from "./task-store.js";
 
-const cwd = process.argv[2] ?? "/Users/zriyo/Desktop/work";
+const cwd = process.argv[2] ?? process.cwd();
 const task = "Reply with one short sentence. Do not modify files.";
 
 const worker = await createCodexWorker({

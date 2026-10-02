@@ -1,7 +1,7 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 
-const cwd = process.argv[2] ?? "/Users/zriyo/Desktop/work";
+const cwd = process.argv[2] ?? process.cwd();
 
 const transport = new StdioClientTransport({
   command: "node",

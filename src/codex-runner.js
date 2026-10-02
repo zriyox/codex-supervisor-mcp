@@ -8,8 +8,8 @@ import { applyCodexEvent } from "./event-parser.js";
 import { worktreesDir } from "./paths.js";
 
 const processes = new Map();
-const defaultCodexBin = "/Users/zriyo/.nvm/versions/node/v22.22.2/bin/codex";
-const defaultGitBin = "/usr/bin/git";
+const defaultCodexBin = process.env.CODEX_BIN?.trim() || "codex";
+const defaultGitBin = process.env.GIT_BIN?.trim() || "git";
 const allowedReasoningEfforts = new Set(["minimal", "low", "medium", "high"]);
 
 function splitLines(buffer, chunk) {
@@ -110,7 +110,7 @@ export async function createCodexWorker({
   args.push("-c", `model_reasoning_effort="${reasoningEffort}"`);
   args.push("-");
 
-  const child = spawn(process.env.CODEX_BIN ?? defaultCodexBin, args, {
+  const child = spawn(defaultCodexBin, args, {
     stdio: ["pipe", "pipe", "pipe"],
     env: { ...process.env, NO_COLOR: "1" }
   });
