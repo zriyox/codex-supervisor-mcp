@@ -1,0 +1,53 @@
+{
+  "name": "codex-supervisor-mcp",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "MCP server that dispatches and supervises parallel Codex CLI workers, one isolated Git worktree each.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/zriyox/codex-supervisor-mcp.git"
+  },
+  "homepage": "https://github.com/zriyox/codex-supervisor-mcp#readme",
+  "bugs": {
+    "url": "https://github.com/zriyox/codex-supervisor-mcp/issues"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "codex",
+    "claude",
+    "orchestration",
+    "multi-agent",
+    "worktree",
+    "supervisor"
+  ],
+  "bin": {
+    "codex-supervisor-mcp": "./src/mcp-server.js"
+  },
+  "files": [
+    "src/",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "start": "node ./src/mcp-server.js",
+    "monitor": "tsx ./src/monitor.jsx",
+    "cleanup": "node ./src/cleanup.js",
+    "smoke": "node ./src/smoke-test.js",
+    "smoke:followup": "node ./src/followup-smoke-test.js",
+    "smoke:mcp": "node ./src/mcp-smoke-test.js",
+    "smoke:mcp-wait": "node ./src/mcp-wait-smoke-test.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.21.0",
+    "ink": "^7.0.2",
+    "react": "^19.2.6"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "devDependencies": {
+    "tsx": "^4.21.0"
+  }
+}
