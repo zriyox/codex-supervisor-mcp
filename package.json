@@ -1,0 +1,67 @@
+{
+  "name": "codex-supervisor-mcp",
+  "version": "0.3.0",
+  "type": "module",
+  "description": "MCP server that dispatches and supervises parallel Codex CLI workers, one isolated Git worktree each, with a persisted work state machine.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/zriyox/codex-supervisor-mcp.git"
+  },
+  "homepage": "https://github.com/zriyox/codex-supervisor-mcp#readme",
+  "bugs": {
+    "url": "https://github.com/zriyox/codex-supervisor-mcp/issues"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "codex",
+    "claude",
+    "orchestration",
+    "multi-agent",
+    "worktree",
+    "supervisor"
+  ],
+  "bin": {
+    "codex-supervisor-mcp": "./src/mcp-server.js"
+  },
+  "files": [
+    "src/mcp-server.js",
+    "src/codex-runner.js",
+    "src/task-store.js",
+    "src/goal-store.js",
+    "src/event-parser.js",
+    "src/worktree.js",
+    "src/truncate.js",
+    "src/status.js",
+    "src/paths.js",
+    "src/prompt.js",
+    "src/cleanup.js",
+    "src/monitor.jsx",
+    "skills/",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "start": "node ./src/mcp-server.js",
+    "monitor": "tsx ./src/monitor.jsx",
+    "cleanup": "node ./src/cleanup.js",
+    "test": "node ./src/truncate-test.js && node ./src/status-test.js && node ./src/migration-test.js && node ./src/regression-test.js",
+    "test:real": "node ./src/real-codex-test.js",
+    "smoke": "node ./src/smoke-test.js",
+    "smoke:followup": "node ./src/followup-smoke-test.js",
+    "smoke:mcp": "node ./src/mcp-smoke-test.js",
+    "smoke:mcp-wait": "node ./src/mcp-wait-smoke-test.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.21.0"
+  },
+  "optionalDependencies": {
+    "ink": "^7.0.2",
+    "react": "^19.2.6",
+    "tsx": "^4.21.0"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}
