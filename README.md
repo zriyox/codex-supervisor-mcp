@@ -8,6 +8,10 @@
 
 让一个主线程（Claude Code、Codex、任何 MCP 客户端）同时指挥多个 Codex worker 干活。
 
+![演示：一个 Claude Code 主线程同时派 3 个 Codex worker，各自独立 worktree，并行跑完后合并提交](https://raw.githubusercontent.com/zriyox/codex-supervisor-mcp/main/assets/demo.gif)
+
+*30 秒演示（真跑，非摆拍）：Claude Code 主线程 `create_codex_worker` ×3 → 三个 worker 在各自 worktree 里并行干活 → 主线程收 3 份 diff 合并成一次 commit。*
+
 一个 worker 一个独立 Git worktree，一个 worker 一个原生 Codex goal，状态全部落盘。主线程负责派单、等待、读结果、断线重连、取消。
 
 ## 它解决什么
