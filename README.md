@@ -33,7 +33,7 @@ Codex worker  ──►  data/runs/<taskId>.jsonl      原始 JSONL 事件流
 
 ## 安装
 
-需要 Node.js >= 22 和 `codex` CLI 在 `PATH` 里。
+需要 Node.js >= 22 和 `codex` CLI 在 `PATH` 里。macOS、Linux、Windows 都支持。
 
 ```bash
 npm install -g codex-supervisor-mcp
@@ -54,6 +54,15 @@ codex-supervisor-setup --target claude,codex
 codex-supervisor-setup --skill-only         # 只装 skill
 codex-supervisor-setup --dry-run            # 只打印计划
 ```
+
+### Windows
+
+支持 Windows，两条实现细节值得知道：
+
+- npm 装的 CLI 在 Windows 上是 `codex.cmd` 而不是可执行文件，Node 从 18.20 / 20.12 起拒绝直接 `spawn` 它（CVE-2024-27980 之后的行为，报 `EINVAL`）。这里不用 `shell: true` 绕——那样 shell 会变成子进程，取消时只杀掉 shell 而真正的 Codex 还在跑，状态机会卡在 `running`。做法是绕到 npm 包自己的入口（`node_modules/@openai/codex/bin/codex.js`），用 `node` 起它。
+- 跨进程取消用 `taskkill /PID <pid> /T /F` 结束整棵进程树；确认这个 pid 还是 Codex 用 PowerShell 的 `Get-CimInstance Win32_Process` 读命令行（拿不到时退到 `tasklist`）。`ps` 只在 macOS / Linux 上用。
+
+除了 `PATH`，还会探 `%APPDATA%\npm`、`%LOCALAPPDATA%\pnpm`、`%LOCALAPPDATA%\Volta\bin`、`%ProgramFiles%\nodejs`。
 
 自动安装只在**全局安装**时发生。`npx`、`--ignore-scripts`、以及被别人当项目依赖装的场景都不会触发。要跳过用 `CODEX_SUPERVISOR_SKIP_SETUP=1`；要补装手动跑一次 `codex-supervisor-setup`。
 
@@ -178,7 +187,7 @@ Codex 原生 goal 有六个状态，映射到 work 状态：
 |---|---|---|
 | `SUPERVISOR_HOME` | `~/.codex-supervisor` | 状态根目录（sqlite / 事件流 / worktree 都在它下面） |
 | `CODEX_HOME` | `~/.codex` | 只读，用来读 Codex 原生的 `goals_1.sqlite` |
-| `CODEX_BIN` | `codex`（走 `PATH`） | Codex CLI 可执行文件路径 |
+| `CODEX_BIN` | `codex`（走 `PATH`） | Codex CLI 可执行文件路径。Windows 上给裸名字时会按 `PATHEXT` 展开，`.cmd` shim 会被自动绕开 |
 | `GIT_BIN` | `git`（走 `PATH`） | Git 可执行文件路径 |
 
 如果 MCP 客户端启动时 `PATH` 里没有 `codex`（GUI 启动的应用常见），显式设置 `CODEX_BIN`：
@@ -201,7 +210,7 @@ Codex 原生 goal 有六个状态，映射到 work 状态：
 - **不往 Codex 原生 goal 写数据**：`goals_1.sqlite` 归 Codex 所有，本 MCP 只读。worker 起来后由它自己调 Codex 的 `create_goal` 建原生 goal，本 MCP 只负责在派单时把这段指令拼进 prompt。
 - **原生 goal 依赖模型照做**：`codex exec` 不会自动建 goal，是派单时那段指令让 worker 建的。模型偶尔漏调，这时 `native_goal` 为 `null`，`get_worker_goal` 退回派单时记录的那份，不影响状态机。
 - **`search_works` 是子串匹配，不是全文索引**：几百条 work 的规模下 `LIKE` 扫描足够快，也省掉一套索引的维护成本。上到几万条再谈别的。
-- **跨进程取消按 pid**：进程句柄不在本进程时，会用落库的 pid 发 `SIGTERM`，并且要求 `ps` 里那个 pid 的命令行包含 `codex`，避免误杀被复用的 pid。
+- **跨进程取消按 pid**：进程句柄不在本进程时，会先确认那个 pid 的命令行里含 `codex`（macOS / Linux 用 `ps`，Windows 用 CIM，退到 `tasklist`），再发 `SIGTERM`（Windows 上是 `taskkill /T /F`），避免误杀被复用的 pid。
 - **`create_codex_followup_worker` 和 `resume_codex_worker` 不是一回事**：前者开新会话、靠文本重述上下文；后者接同一个会话。要细节不丢就用后者。
 - **`session_id` 由派单方自己传，本 MCP 不生成**：一批活传同一个值，`get_session_works` 才能把它们归到一起。不传就是 `NULL`，事后按 session 找不回来。
 
@@ -215,8 +224,9 @@ Codex 原生 goal 有六个状态，映射到 work 状态：
 6. ~~session 维度：`session_id` 落库 + `get_session_works` 断线重连~~
 7. ~~按关键词找历史 work：`search_works`~~
 8. ~~worker 原生 goal：派单时注入 `create_goal` 指令~~
-9. 常驻 daemon：派单和进程生命周期从 MCP 进程里拿出来
-10. React 实时看板
+9. ~~Windows 支持：`.cmd` shim 绕行、`taskkill` 进程树、跨平台 PATH / `PATHEXT`~~ ✅
+10. 常驻 daemon：派单和进程生命周期从 MCP 进程里拿出来
+11. React 实时看板
 
 砍掉不做的（说明理由，免得以后又想起来）：
 
@@ -247,7 +257,7 @@ skill 里写了派单流程、读结果该按什么顺序、`failed` 和 `lost` 
 
 ```bash
 npm install
-npm test               # 确定性测试：截断移植、状态机、v1→v2 迁移、13 项端到端回归
+npm test               # 确定性测试：截断移植、状态机、v1→v2 迁移、setup、Windows 解析器、17 项端到端回归
 npm run test:real      # 用真 codex CLI 跑端到端（含跨进程 resume、worktree 隔离）
 npm run smoke          # 基础冒烟（真 codex）
 npm run smoke:mcp      # MCP 协议冒烟

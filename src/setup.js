@@ -16,6 +16,12 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
+import {
+  defaultBinDirs,
+  findBinaryPath,
+  resolveCommand,
+  shimMessage
+} from "./bin-resolver.js";
 
 const run = promisify(execFile);
 
@@ -29,10 +35,27 @@ const CLIENT_TIMEOUT_MS = 60_000;
 
 // A client is "present" when its binary is on PATH or its skill directory
 // already exists. We never invent directories for clients the user does not run.
+// `npmEntry` lets bin-resolver.js step over a Windows .cmd shim by pointing at
+// the package's own entry point. `binEnv` is the override named in the repair
+// message when that fails (only Codex has one).
 const CLIENTS = [
-  { id: "claude", label: "Claude Code", skillRoot: join(homedir(), ".claude", "skills"), binary: "claude" },
+  {
+    id: "claude",
+    label: "Claude Code",
+    skillRoot: join(homedir(), ".claude", "skills"),
+    binary: "claude",
+    binEnv: null,
+    npmEntry: { pkg: "@anthropic-ai/claude-code", bin: "bin/claude.exe" }
+  },
   { id: "agents", label: "~/.agents", skillRoot: join(homedir(), ".agents", "skills"), binary: null },
-  { id: "codex", label: "Codex", skillRoot: join(homedir(), ".codex", "skills"), binary: "codex" }
+  {
+    id: "codex",
+    label: "Codex",
+    skillRoot: join(homedir(), ".codex", "skills"),
+    binary: "codex",
+    binEnv: "CODEX_BIN",
+    npmEntry: { pkg: "@openai/codex", bin: "bin/codex.js" }
+  }
 ];
 
 function parseArgs(argv) {
@@ -99,35 +122,18 @@ Environment:
 `);
 }
 
-// PATH first, then the well-known global bin directories. A client installed
-// with a custom npm prefix (npm config set prefix ~/.npm-global) or a version
-// manager is usually absent from a non-interactive PATH, and without this the
-// client would look "not installed" even though the user runs it every day.
-const EXTRA_BIN_DIRS = [
-  join(homedir(), ".npm-global", "bin"),
-  join(homedir(), ".local", "bin"),
-  join(homedir(), ".bun", "bin"),
-  join(homedir(), ".volta", "bin"),
-  join(homedir(), "Library", "pnpm"),
-  "/opt/homebrew/bin",
-  "/usr/local/bin"
-];
+// PATH first, then the well-known global bin directories (shared with the
+// worker runner so both look in the same places), then the version managers,
+// whose node bin directory is only discoverable by listing.
+const EXTRA_BIN_DIRS = defaultBinDirs();
 
 const VERSION_MANAGER_ROOTS = [
   [join(homedir(), ".nvm", "versions", "node"), join("bin")],
   [join(homedir(), ".fnm", "node-versions"), join("installation", "bin")]
 ];
 
-function onPath(binary) {
-  for (const dir of (process.env.PATH ?? "").split(":")) {
-    if (!dir) continue;
-    const candidate = join(dir, binary);
-    if (existsSync(candidate)) return candidate;
-  }
-  for (const dir of EXTRA_BIN_DIRS) {
-    const candidate = join(dir, binary);
-    if (existsSync(candidate)) return candidate;
-  }
+function versionManagerBinDirs() {
+  const dirs = [];
   for (const [root, suffix] of VERSION_MANAGER_ROOTS) {
     if (!existsSync(root)) continue;
     let entries = [];
@@ -137,17 +143,34 @@ function onPath(binary) {
       continue;
     }
     for (const entry of entries) {
-      const candidate = join(root, entry, suffix, binary);
-      if (existsSync(candidate)) return candidate;
+      dirs.push(join(root, entry, suffix));
     }
   }
-  return null;
+  return dirs;
+}
+
+// Turns a client binary into a spawnable target, or null when the client is not
+// installed. On Windows a bare `codex` resolves to `codex.cmd`, which Node
+// refuses to execute directly, so the resolver hands back `cmd` + `prefixArgs`
+// instead (see bin-resolver.js).
+function locateClient(binary) {
+  if (!binary) return null;
+  const path = findBinaryPath(binary, {
+    extraDirs: [...EXTRA_BIN_DIRS, ...versionManagerBinDirs()]
+  });
+  if (!path) return null;
+  const target = resolveCommand(path, { npmEntry: CLIENTS.find((c) => c.binary === binary)?.npmEntry });
+  return { path, cmd: target.cmd, args: target.prefixArgs, shim: target.shim };
+}
+
+function runClient(target, args, options = {}) {
+  return run(target.cmd, [...target.args, ...args], { windowsHide: true, ...options });
 }
 
 function selectClients(options) {
   return CLIENTS.filter((client) => {
     if (options.targets && !options.targets.includes(client.id)) return false;
-    if (client.binary && onPath(client.binary)) return true;
+    if (client.binary && locateClient(client.binary)) return true;
     return existsSync(client.skillRoot);
   });
 }
@@ -189,12 +212,10 @@ async function installSkill(client, options, log) {
   return "installed";
 }
 
-async function mcpAlreadyRegistered(client, options) {
+async function mcpAlreadyRegistered(target, options) {
   if (options.dryRun) return false;
-  const binary = onPath(client.binary);
-  if (!binary) return false;
   try {
-    await run(binary, ["mcp", "get", MCP_NAME], { timeout: CLIENT_TIMEOUT_MS });
+    await runClient(target, ["mcp", "get", MCP_NAME], { timeout: CLIENT_TIMEOUT_MS });
     return true;
   } catch {
     return false;
@@ -202,12 +223,18 @@ async function mcpAlreadyRegistered(client, options) {
 }
 
 async function registerMcp(client, options, log, warn) {
-  const binary = onPath(client.binary);
-  if (!binary) {
+  const target = locateClient(client.binary);
+  if (!target) {
     log(`mcp     ${client.label}: skipped (no ${client.binary} found)`);
     return "skipped";
   }
-  if (await mcpAlreadyRegistered(client, options)) {
+  if (target.shim) {
+    warn(
+      `mcp     ${client.label}: ${shimMessage(client.binary, target.path, client.binEnv)}`
+    );
+    return "failed";
+  }
+  if (await mcpAlreadyRegistered(target, options)) {
     log(`mcp     ${client.label}: already registered`);
     return "unchanged";
   }
@@ -222,7 +249,7 @@ async function registerMcp(client, options, log, warn) {
     return "would-register";
   }
   try {
-    await run(binary, args, { timeout: CLIENT_TIMEOUT_MS });
+    await runClient(target, args, { timeout: CLIENT_TIMEOUT_MS });
     log(`mcp     ${client.label}: registered`);
     return "registered";
   } catch (error) {

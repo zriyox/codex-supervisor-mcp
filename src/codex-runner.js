@@ -2,7 +2,7 @@ import { createWriteStream } from "node:fs";
 import { mkdir, rm, stat } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { execFileSync, spawn } from "node:child_process";
-import { join, resolve } from "node:path";
+import { join, resolve, sep } from "node:path";
 import {
   appendTaskEvent,
   getTask,
@@ -16,10 +16,11 @@ import { TERMINAL_STATUSES } from "./status.js";
 import { worktreesDir } from "./paths.js";
 import { withGoalPreamble } from "./prompt.js";
 import { mergeChangedFiles, readWorktreeChanges } from "./worktree.js";
+import { defaultBinDirs, findBinaryPath, resolveCommand, shimMessage } from "./bin-resolver.js";
 
 const processes = new Map();
 const cancelledTasks = new Set();
-const defaultCodexBin = process.env.CODEX_BIN?.trim() || "codex";
+const CODEX_NPM_ENTRY = { pkg: "@openai/codex", bin: "bin/codex.js" };
 const defaultGitBin = process.env.GIT_BIN?.trim() || "git";
 const allowedReasoningEfforts = new Set(["minimal", "low", "medium", "high"]);
 
@@ -41,7 +42,7 @@ async function exists(path) {
 
 function runCommand(command, args, options = {}) {
   return new Promise((resolvePromise, reject) => {
-    const child = spawn(command, args, { stdio: "ignore", ...options });
+    const child = spawn(command, args, { stdio: "ignore", windowsHide: true, ...options });
     child.on("exit", (code) => {
       if (code === 0) resolvePromise();
       else reject(new Error(`${command} ${args.join(" ")} exited with ${code}`));
@@ -74,10 +75,17 @@ function normalizeOwnedPaths(ownedPaths, projectRoot) {
 }
 
 function pathOverlaps(left, right) {
-  if (left === right) return true;
-  const leftPrefix = left.endsWith("/") ? left : `${left}/`;
-  const rightPrefix = right.endsWith("/") ? right : `${right}/`;
-  return leftPrefix.startsWith(rightPrefix) || rightPrefix.startsWith(leftPrefix);
+  // Windows paths are case-insensitive and may mix separators, so compare on a
+  // normalized form there. macOS and Linux keep the exact previous comparison -
+  // a backslash is a legal filename character on those platforms.
+  const windows = process.platform === "win32";
+  const normalize = (value) => (windows ? value.replace(/[\\/]+/g, sep).toLowerCase() : value);
+  const mine = normalize(left);
+  const theirs = normalize(right);
+  if (mine === theirs) return true;
+  const minePrefix = mine.endsWith(sep) ? mine : `${mine}${sep}`;
+  const theirsPrefix = theirs.endsWith(sep) ? theirs : `${theirs}${sep}`;
+  return minePrefix.startsWith(theirsPrefix) || theirsPrefix.startsWith(minePrefix);
 }
 
 // Two workers claiming overlapping paths will collide when their branches are
@@ -115,11 +123,39 @@ function ownershipConflictError(conflicts) {
   return error;
 }
 
+// The Codex CLI as a spawnable target. On Windows npm installs a `codex.cmd`
+// shim that Node refuses to spawn directly, so bin-resolver.js steps over it and
+// hands back `node <entry>` instead; on macOS and Linux this is the bare name,
+// unchanged. Resolved per dispatch so a CLI installed later is picked up.
+function codexTarget() {
+  const configured = process.env.CODEX_BIN?.trim();
+  const located = configured ? configured : (findBinaryPath("codex", { extraDirs: defaultBinDirs() }) ?? "codex");
+  const target = resolveCommand(located, { npmEntry: CODEX_NPM_ENTRY });
+  if (target.shim) return { error: shimMessage("codex", target.cmd, "CODEX_BIN") };
+  return { cmd: target.cmd, prefixArgs: target.prefixArgs };
+}
+
+function failedStart(record, reason) {
+  const now = new Date().toISOString();
+  return {
+    ok: false,
+    record: {
+      ...record,
+      status: "failed",
+      phase: null,
+      pid: null,
+      error: reason,
+      completed_at: now,
+      updated_at: now
+    }
+  };
+}
+
 // Spawn can fail either by throwing synchronously, or by emitting "error"
 // instead of "spawn". Both paths are handled so a bad CODEX_BIN marks the task
 // failed instead of taking the whole MCP process down.
-async function spawnAndAwaitStart(args, options) {
-  const child = spawn(defaultCodexBin, args, options);
+async function spawnAndAwaitStart(target, args, options) {
+  const child = spawn(target.cmd, [...target.prefixArgs, ...args], options);
   const spawnError = await new Promise((resolvePromise) => {
     let settled = false;
     child.once("spawn", () => {
@@ -142,26 +178,18 @@ async function spawnAndAwaitStart(args, options) {
 // Every write goes through one serialized chain so concurrent stdout/stderr
 // callbacks cannot interleave and persist out of order.
 async function startTrackedRun({ record, args, prompt, logPath, spawnOptions = {} }) {
-  const { child, spawnError } = await spawnAndAwaitStart(args, {
+  const target = codexTarget();
+  if (target.error) return failedStart(record, target.error);
+
+  const { child, spawnError } = await spawnAndAwaitStart(target, args, {
     stdio: ["pipe", "pipe", "pipe"],
     env: { ...process.env, NO_COLOR: "1" },
+    windowsHide: true,
     ...spawnOptions
   });
 
   if (spawnError) {
-    const now = new Date().toISOString();
-    return {
-      ok: false,
-      record: {
-        ...record,
-        status: "failed",
-        phase: null,
-        pid: null,
-        error: `failed to spawn ${defaultCodexBin}: ${spawnError.message}`,
-        completed_at: now,
-        updated_at: now
-      }
-    };
+    return failedStart(record, `failed to spawn ${target.cmd}: ${spawnError.message}`);
   }
 
   const now = new Date().toISOString();
@@ -442,30 +470,87 @@ export async function resumeCodexWorker({ taskId, prompt }) {
   return started.record;
 }
 
-function isLikelyCodexProcess(pid) {
+// A pid recorded on disk is only signalled once it is confirmed to still be a
+// Codex worker, so a recycled pid belonging to an unrelated process is never
+// killed. Windows has no `ps`: CIM is the only reliable source for a full command
+// line, and the full line matters because the npm shim is bypassed by running
+// `node <entry>`, which puts the word "codex" in the arguments, not the image
+// name. `tasklist` is the fallback when PowerShell is unavailable.
+function describeProcess(pid) {
+  const options = { encoding: "utf8", timeout: 2000, windowsHide: true };
   try {
-    const command = execFileSync("ps", ["-p", String(pid), "-o", "command="], {
-      encoding: "utf8",
-      timeout: 2000
-    }).trim();
-    return command.includes("codex");
+    if (process.platform === "win32") {
+      try {
+        const viaCim = execFileSync(
+          "powershell",
+          [
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            `(Get-CimInstance Win32_Process -Filter "ProcessId=${Number(pid)}").CommandLine`
+          ],
+          options
+        ).trim();
+        if (viaCim) return viaCim;
+      } catch {
+        // fall through to the image-name probe below
+      }
+      return execFileSync("tasklist", ["/FI", `PID eq ${Number(pid)}`, "/FO", "CSV", "/NH"], options).trim();
+    }
+    return execFileSync("ps", ["-p", String(pid), "-o", "command="], options).trim();
   } catch {
-    return false;
+    return "";
   }
+}
+
+function isLikelyCodexProcess(pid) {
+  const description = describeProcess(pid);
+  return description.includes("codex");
+}
+
+// Ends a worker and, on Windows, its whole process tree: the direct child there
+// is the JS wrapper around the native Codex binary, so terminating it alone
+// would leave the real CLI running and the task stuck in `running`.
+function terminateChild(child) {
+  if (process.platform === "win32" && child.pid) {
+    try {
+      execFileSync("taskkill", ["/PID", String(child.pid), "/T", "/F"], {
+        stdio: "ignore",
+        timeout: 5000,
+        windowsHide: true
+      });
+      return;
+    } catch {
+      // fall back to the handle-based kill below
+    }
+  }
+  child.kill("SIGTERM");
+}
+
+function terminatePid(pid) {
+  if (process.platform === "win32") {
+    execFileSync("taskkill", ["/PID", String(pid), "/T", "/F"], {
+      stdio: "ignore",
+      timeout: 5000,
+      windowsHide: true
+    });
+    return;
+  }
+  process.kill(pid, "SIGTERM");
 }
 
 export async function cancelCodexWorker(taskId) {
   const child = processes.get(taskId);
   if (child) {
     cancelledTasks.add(taskId);
-    child.kill("SIGTERM");
+    terminateChild(child);
     return { cancelled: true, via: "process_handle", pid: child.pid ?? null };
   }
   // Another MCP process owns the handle; fall back to the pid recorded on disk.
   const task = await getTask(taskId);
   if (task?.pid && (await isPidAlive(task.pid)) && isLikelyCodexProcess(task.pid)) {
     try {
-      process.kill(task.pid, "SIGTERM");
+      terminatePid(task.pid);
       return { cancelled: true, via: "pid", pid: task.pid };
     } catch (error) {
       return { cancelled: false, reason: "kill_failed", message: error.message, pid: task.pid };
