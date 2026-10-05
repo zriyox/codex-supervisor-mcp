@@ -1,4 +1,4 @@
-import { createWriteStream } from "node:fs";
+import { createWriteStream, existsSync } from "node:fs";
 import { mkdir, rm, stat } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { execFileSync, spawn } from "node:child_process";
@@ -470,20 +470,37 @@ export async function resumeCodexWorker({ taskId, prompt }) {
   return started.record;
 }
 
+// `powershell` by name is not always on PATH for a process a GUI client
+// started, so prefer the copy that ships with Windows. Only the CIM path needs
+// it; the rest of this file shells out to nothing but taskkill and git.
+function powershellBin() {
+  const root = process.env.SystemRoot?.trim() || "C:\\Windows";
+  const full = join(root, "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
+  return existsSync(full) ? full : "powershell";
+}
+
 // A pid recorded on disk is only signalled once it is confirmed to still be a
 // Codex worker, so a recycled pid belonging to an unrelated process is never
 // killed. Windows has no `ps`: CIM is the only reliable source for a full command
 // line, and the full line matters because the npm shim is bypassed by running
 // `node <entry>`, which puts the word "codex" in the arguments, not the image
-// name. `tasklist` is the fallback when PowerShell is unavailable.
+// name. `tasklist` is the fallback when PowerShell is unavailable - it only
+// reports the image name, so it can confirm a native codex.exe but never a
+// `node <entry>` worker.
+//
+// The timeout is generous on purpose: this runs once per cross-process cancel,
+// and a cold Windows PowerShell on a fresh machine routinely takes several
+// seconds to print anything. A tight timeout here silently degrades to the
+// useless tasklist probe, and the cancel comes back "process_not_found".
 function describeProcess(pid) {
-  const options = { encoding: "utf8", timeout: 2000, windowsHide: true };
+  const options = { encoding: "utf8", timeout: 15000, windowsHide: true };
   try {
     if (process.platform === "win32") {
       try {
         const viaCim = execFileSync(
-          "powershell",
+          powershellBin(),
           [
+            "-NoLogo",
             "-NoProfile",
             "-NonInteractive",
             "-Command",

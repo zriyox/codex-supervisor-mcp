@@ -151,11 +151,29 @@ await test("R1-1 status stays in the lifecycle set and phase carries progress", 
   });
 });
 
-await test("R1-2 a killed worker becomes lost, not failed", async () => {
+await test("R1-2 a killed worker becomes lost, or failed with code 1 on Windows", async () => {
   await withServer({ FAKE_CODEX_SCENARIO: "hang" }, async (client) => {
     const created = await call(client, "create_codex_worker", describe({ title: "lost-worker" }));
     const running = await waitFor(client, created.id, (task) => task.status === "running");
     process.kill(running.pid, "SIGKILL");
+    // Windows has no signals: a worker killed by another process comes back as a
+    // plain exit code (libuv terminates it with TerminateProcess(handle, 1)),
+    // which is indistinguishable from a worker that exited 1 on its own. The
+    // supervisor therefore reports what it can prove - failed with exit_code 1 -
+    // rather than inventing a signal the platform never delivered. `lost` stays
+    // reachable on Windows through crash recovery, when the supervisor itself
+    // dies and finds the orphan on the next start.
+    if (process.platform === "win32") {
+      const killed = await waitFor(
+        client,
+        created.id,
+        (task) => task.status !== "running" && task.status !== "queued"
+      );
+      assert.equal(killed.status, "failed");
+      assert.equal(killed.exit_code, 1, "libuv terminates a killed process with code 1");
+      assert.equal(killed.phase, null);
+      return;
+    }
     const reconciled = await waitFor(client, created.id, (task) => task.status === "lost");
     assert.equal(reconciled.status, "lost");
     assert.equal(reconciled.phase, null);
