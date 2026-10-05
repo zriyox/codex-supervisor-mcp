@@ -55,6 +55,37 @@ check("an empty or non-string name passes through", () => {
   }
 });
 
+check("a JS entry point is run under node on every platform", () => {
+  // The value CODEX_BIN naturally takes on Windows: the npm package's own entry
+  // point. Neither kernel can spawn it directly, so node goes in front.
+  for (const platform of ["win32", "darwin", "linux"]) {
+    assert.deepEqual(
+      resolveCommand(platform === "win32" ? "C:\\p\\codex.js" : "/p/codex.js", {
+        platform,
+        nodePath: "NODE"
+      }),
+      { cmd: "NODE", prefixArgs: [platform === "win32" ? "C:\\p\\codex.js" : "/p/codex.js"], shim: false }
+    );
+  }
+  for (const ext of [".cjs", ".mjs", ".JS"]) {
+    assert.deepEqual(resolveCommand(`/p/codex${ext}`, { platform: "darwin", nodePath: "NODE" }), {
+      cmd: "NODE",
+      prefixArgs: [`/p/codex${ext}`],
+      shim: false
+    });
+  }
+});
+
+check("non-win32 still passes through a path-bearing name that is not JS", () => {
+  for (const name of ["/p/codex", "/p/run.sh", "/p/codex.exe"]) {
+    assert.deepEqual(resolveCommand(name, { platform: "darwin" }), {
+      cmd: name,
+      prefixArgs: [],
+      shim: false
+    });
+  }
+});
+
 check("win32 uses a native .exe when the install is not npm", () => {
   const exe = w.join("C:\\Program Files\\nodejs", "codex.exe");
   const target = resolveCommand("codex", {

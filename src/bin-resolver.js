@@ -23,6 +23,8 @@ const DIRECT_EXTS = new Set([".exe", ".com"]);
 const SHIM_EXTS = new Set([".cmd", ".bat", ".ps1"]);
 /** Fallback when PATHEXT is unset, matching the Windows default. */
 const DEFAULT_PATHEXT = ".COM;.EXE;.BAT;.CMD";
+/** Extensions that need node in front of them on every platform. */
+const JS_EXTS = new Set([".js", ".cjs", ".mjs"]);
 
 /**
  * Well-known global install directories, probed after PATH. A CLI installed with
@@ -125,9 +127,17 @@ export function findBinaryPath(binary, options = {}) {
 /**
  * Resolve a command name into a spawnable target.
  *
+ * A JS entry point (`.js` / `.cjs` / `.mjs`) is run under node on every
+ * platform, because a script is not something either kernel can spawn on its
+ * own: Windows refuses outright, and POSIX only manages it while the shebang
+ * and the executable bit survive - which a checkout or a copy can drop. This
+ * matters for `CODEX_BIN`, whose natural value is the npm package's own entry
+ * point (`node_modules/@openai/codex/bin/codex.js`) - the same file the shim
+ * bypass produces.
+ *
  * Pass-through cases (behaviour identical to a bare `spawn(name, argv)`):
- *   - any name containing a path separator - an explicit path is the caller's
- *     business, and the tests rely on this
+ *   - any other name containing a path separator - an explicit path is the
+ *     caller's business, and the tests rely on this
  *   - any non-win32 platform - macOS and Linux behaviour must not change
  *   - win32 with no PATH match - preserve the ordinary ENOENT
  *
@@ -145,11 +155,16 @@ export function resolveCommand(name, options = {}) {
   if (typeof name !== "string" || !name) return passthrough;
 
   const platform = options.platform ?? process.platform;
+  const nodePath = options.nodePath ?? process.execPath;
+
+  if (JS_EXTS.has(pathImpl(platform).extname(name).toLowerCase())) {
+    return { cmd: nodePath, prefixArgs: [name], shim: false };
+  }
+
   if (!isWindows(platform)) return passthrough;
 
   const env = options.env ?? process.env;
   const exists = options.exists ?? existsSync;
-  const nodePath = options.nodePath ?? process.execPath;
   const bypass = (shimPath) => npmBypass(shimPath, options.npmEntry, exists, nodePath);
 
   const dirs = String(env.PATH ?? env.Path ?? "")

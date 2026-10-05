@@ -1,5 +1,11 @@
 # codex-supervisor-mcp
 
+[![npm version](https://img.shields.io/npm/v/codex-supervisor-mcp.svg)](https://www.npmjs.com/package/codex-supervisor-mcp)
+[![npm downloads](https://img.shields.io/npm/dm/codex-supervisor-mcp.svg)](https://www.npmjs.com/package/codex-supervisor-mcp)
+[![license](https://img.shields.io/npm/l/codex-supervisor-mcp.svg)](LICENSE)
+[![CI](https://github.com/zriyox/codex-supervisor-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/zriyox/codex-supervisor-mcp/actions/workflows/ci.yml)
+[![node](https://img.shields.io/badge/node-%3E%3D22.13.0-339933.svg)](package.json)
+
 让一个主线程（Claude Code、Codex、任何 MCP 客户端）同时指挥多个 Codex worker 干活。
 
 一个 worker 一个独立 Git worktree，一个 worker 一个原生 Codex goal，状态全部落盘。主线程负责派单、等待、读结果、断线重连、取消。
@@ -33,40 +39,48 @@ Codex worker  ──►  data/runs/<taskId>.jsonl      原始 JSONL 事件流
 
 ## 安装
 
-需要 Node.js >= 22 和 `codex` CLI 在 `PATH` 里。macOS、Linux、Windows 都支持。
+前置：**Node.js >= 22.13.0**（`node:sqlite` 在这个版本之前没有无 flag 的构建）和 `codex` CLI 在 `PATH` 里。macOS、Linux、Windows 都支持。
+
+### 快速开始
 
 ```bash
+# 1. 装
 npm install -g codex-supervisor-mcp
+
+# 2. 确认挂上了
+claude mcp list | grep codex-supervisor
+codex mcp list  | grep codex-supervisor
 ```
 
-全局安装会自动完成两件事（`postinstall`）：
+全局安装的 `postinstall` 会自动做两件事，**不需要手动配置**：
 
 1. 把配套 skill 装进检测到的客户端目录：`~/.claude/skills/`、`~/.agents/skills/`、`~/.codex/skills/`。
-2. 用客户端自带的 CLI 注册 MCP：`claude mcp add -s user` / `codex mcp add`。
+2. 用客户端自带的 CLI 注册 MCP：`claude mcp add -s user` / `codex mcp add`，注册的是 `node <包内绝对路径>`。
 
-目标 skill 已存在且内容不同时，先写一份 `SKILL.md.bak-<时间戳>` 再覆盖。任何一步失败都不会让安装失败。
+skill 已存在且内容不同时，先写一份 `SKILL.md.bak-<时间戳>` 再覆盖。任何一步失败都不会让安装失败。
 
-重跑、修复、或只装某一个客户端：
+### 手动挂载
+
+`postinstall` 没跑到（`--ignore-scripts`、`npx`、pnpm 之类）时，自己补一条：
+
+| 客户端 | 命令 |
+|---|---|
+| Claude Code | `claude mcp add -s user codex-supervisor -- npx -y codex-supervisor-mcp` |
+| Codex | `codex mcp add codex-supervisor -- npx -y codex-supervisor-mcp` |
+
+重跑、修复、只装某一个客户端，或者先看它打算干什么：
 
 ```bash
-codex-supervisor-setup                      # 自动检测客户端
+codex-supervisor-setup                      # 自动检测客户端，补装 skill + 注册 MCP
 codex-supervisor-setup --target claude,codex
-codex-supervisor-setup --skill-only         # 只装 skill
-codex-supervisor-setup --dry-run            # 只打印计划
+codex-supervisor-setup --skill-only         # 只装 skill，不碰 MCP 配置
+codex-supervisor-setup --mcp-only           # 只注册 MCP，不装 skill
+codex-supervisor-setup --dry-run            # 只打印计划，不改任何东西
 ```
 
-### Windows
+### 挂到 GUI 客户端
 
-支持 Windows，两条实现细节值得知道：
-
-- npm 装的 CLI 在 Windows 上是 `codex.cmd` 而不是可执行文件，Node 从 18.20 / 20.12 起拒绝直接 `spawn` 它（CVE-2024-27980 之后的行为，报 `EINVAL`）。这里不用 `shell: true` 绕——那样 shell 会变成子进程，取消时只杀掉 shell 而真正的 Codex 还在跑，状态机会卡在 `running`。做法是绕到 npm 包自己的入口（`node_modules/@openai/codex/bin/codex.js`），用 `node` 起它。
-- 跨进程取消用 `taskkill /PID <pid> /T /F` 结束整棵进程树；确认这个 pid 还是 Codex 用 PowerShell 的 `Get-CimInstance Win32_Process` 读命令行（拿不到时退到 `tasklist`）。`ps` 只在 macOS / Linux 上用。
-
-除了 `PATH`，还会探 `%APPDATA%\npm`、`%LOCALAPPDATA%\pnpm`、`%LOCALAPPDATA%\Volta\bin`、`%ProgramFiles%\nodejs`。
-
-自动安装只在**全局安装**时发生。`npx`、`--ignore-scripts`、以及被别人当项目依赖装的场景都不会触发。要跳过用 `CODEX_SUPERVISOR_SKIP_SETUP=1`；要补装手动跑一次 `codex-supervisor-setup`。
-
-### 手动配置到 Claude Code
+自己建/改下面的配置文件，加这一段（GUI 客户端不会跑 `postinstall`）：
 
 ```json
 {
@@ -79,11 +93,46 @@ codex-supervisor-setup --dry-run            # 只打印计划
 }
 ```
 
-### 配置到 Codex
+| 客户端 | macOS | Windows | Linux |
+|---|---|---|---|
+| Claude Desktop | `~/Library/Application Support/Claude/claude_desktop_config.json` | `%APPDATA%\Claude\claude_desktop_config.json` | `~/.config/Claude/claude_desktop_config.json` |
+| Cursor | `~/.cursor/mcp.json` | `%APPDATA%\Cursor\mcp.json` | `~/.config/cursor/mcp.json` |
+| Windsurf | `~/.codeium/windsurf/mcp_config.json` | `%APPDATA%\Codeium\windsurf\mcp_config.json` | `~/.config/.codeium/windsurf/mcp_config.json` |
+
+### npx 的坑
+
+`npx` 不跑 `postinstall`，所以 **skill 不会自动装、MCP 也不会自动注册**，只有 MCP server 本身能起来。要用配套 skill 就还是得 `npm install -g`，或者手动跑一次 `codex-supervisor-setup`。
+
+### 卸载
 
 ```bash
-codex mcp add codex-supervisor -- npx -y codex-supervisor-mcp
+npm uninstall -g codex-supervisor-mcp
+claude mcp remove -s user codex-supervisor
+codex mcp remove codex-supervisor
+rm -rf ~/.claude/skills/codex-supervisor ~/.agents/skills/codex-supervisor ~/.codex/skills/codex-supervisor
+rm -rf ~/.codex-supervisor      # 状态目录：sqlite、事件流、worktree 全在这
 ```
+
+### Windows
+
+三条实现细节值得知道：
+
+- npm 装的 CLI 在 Windows 上是 `codex.cmd` 而不是可执行文件，Node 从 18.20 / 20.12 起拒绝直接 `spawn` 它（CVE-2024-27980 之后的行为，报 `EINVAL`）。这里不用 `shell: true` 绕——那样 shell 会变成子进程，取消时只杀掉 shell 而真正的 Codex 还在跑，状态机会卡在 `running`。做法是绕到 npm 包自己的入口（`node_modules/@openai/codex/bin/codex.js`），用 `node` 起它；`CODEX_BIN` 指向 `.js` 时同样处理。
+- 跨进程取消用 `taskkill /PID <pid> /T /F` 结束整棵进程树；确认这个 pid 还是 Codex 用 PowerShell 的 `Get-CimInstance Win32_Process` 读命令行（拿不到时退到 `tasklist`）。`ps` 只在 macOS / Linux 上用。
+- 除了 `PATH`，还会探 `%APPDATA%\npm`、`%LOCALAPPDATA%\pnpm`、`%LOCALAPPDATA%\Volta\bin`、`%ProgramFiles%\nodejs`。
+
+自动安装只在**全局安装**时发生。`npx`、`--ignore-scripts`、以及被别人当项目依赖装的场景都不会触发。要跳过用 `CODEX_SUPERVISOR_SKIP_SETUP=1`。
+
+### 疑难排查
+
+| 症状 | 原因 | 处理 |
+|---|---|---|
+| `claude mcp list` 里没有 `codex-supervisor` | `npx` / `--ignore-scripts` 装法不跑 `postinstall` | 跑 `codex-supervisor-setup`，或用上面的手动挂载 |
+| 派单报 `codex only resolved to a shell shim` | Windows 上只找到 `.cmd`，背后的 npm 包入口不在了 | 重装 `@openai/codex`，或把 `CODEX_BIN` 指到真正的可执行文件 / `codex.js` |
+| worker 起来就 `failed`，错误是 `spawn codex ENOENT` | GUI 客户端启动的进程 `PATH` 里没有 `codex` | 在客户端配置里显式设 `CODEX_BIN` |
+| `Cannot find module 'node:sqlite'` | Node < 22.13.0 | 升 Node |
+| worker 卡在 `lost` | MCP 进程被 kill，worker 成了孤儿 | `list_codex_workers` 结算一次，或 `resume_codex_worker` 接回来 |
+| 报 `ownedPaths overlap with active worker(s)` | 两个 worker 认领了同一片路径 | 换路径，或先 `cancel_codex_worker` 掉占用的那个 |
 
 ## 工具
 
@@ -187,7 +236,7 @@ Codex 原生 goal 有六个状态，映射到 work 状态：
 |---|---|---|
 | `SUPERVISOR_HOME` | `~/.codex-supervisor` | 状态根目录（sqlite / 事件流 / worktree 都在它下面） |
 | `CODEX_HOME` | `~/.codex` | 只读，用来读 Codex 原生的 `goals_1.sqlite` |
-| `CODEX_BIN` | `codex`（走 `PATH`） | Codex CLI 可执行文件路径。Windows 上给裸名字时会按 `PATHEXT` 展开，`.cmd` shim 会被自动绕开 |
+| `CODEX_BIN` | `codex`（走 `PATH`） | Codex CLI 可执行文件路径。Windows 上给裸名字时会按 `PATHEXT` 展开，`.cmd` shim 会被自动绕开；指向 `.js` / `.cjs` / `.mjs` 时自动用 `node` 起它 |
 | `GIT_BIN` | `git`（走 `PATH`） | Git 可执行文件路径 |
 
 如果 MCP 客户端启动时 `PATH` 里没有 `codex`（GUI 启动的应用常见），显式设置 `CODEX_BIN`：
@@ -257,7 +306,7 @@ skill 里写了派单流程、读结果该按什么顺序、`failed` 和 `lost` 
 
 ```bash
 npm install
-npm test               # 确定性测试：截断移植、状态机、v1→v2 迁移、setup、Windows 解析器、17 项端到端回归
+npm test               # 确定性测试：截断、状态机、v1→v2 迁移、setup、Windows 路由、17 项端到端回归
 npm run test:real      # 用真 codex CLI 跑端到端（含跨进程 resume、worktree 隔离）
 npm run smoke          # 基础冒烟（真 codex）
 npm run smoke:mcp      # MCP 协议冒烟
@@ -265,6 +314,8 @@ npm run monitor        # Ink 终端看板
 ```
 
 `npm test` 用 `src/test-fixtures/fake-codex.js` 回放固定的 Codex 事件流，跑得快且确定。`npm run test:real` 会真的调 `codex exec`，慢一些，但它才是「跟最新 Codex 兼容」的证据。
+
+CI 跑 Ubuntu / macOS / Windows 三个平台，另外单独跑一个 Node 22.13.0 的 job 卡住 `engines` 声明的下界（`node:sqlite` 在它之前没有无 flag 的构建）。Windows 那 4 项 `setup-windows-test.js` 用真实文件系统模拟 `%APPDATA%\npm` 下的 `.cmd` shim，验证自动注册 MCP 这条路真的走得通，而不只是「解析函数单测过了」。
 
 ## License
 
