@@ -21,8 +21,13 @@ const sourceSkill = await readFile(
 );
 
 let passed = 0;
+let skipped = 0;
 async function check(name, fn) {
-  await fn();
+  if ((await fn()) === "skip") {
+    skipped += 1;
+    console.log(`skip - ${name}`);
+    return;
+  }
   passed += 1;
   console.log(`ok - ${name}`);
 }
@@ -30,7 +35,11 @@ async function check(name, fn) {
 async function makeHome(layout = ["claude", "codex"]) {
   const home = await mkdtemp(join(tmpdir(), "supervisor-setup-"));
   for (const dir of layout) {
-    await mkdir(join(home, `.${dir}`), { recursive: true });
+    // setup.js treats a client as present when its binary is on PATH or its
+    // skill directory already exists. Creating the directory is what makes
+    // this suite deterministic: a CI runner has neither claude nor codex, so
+    // detection must not depend on the machine's PATH.
+    await mkdir(join(home, `.${dir}`, "skills"), { recursive: true });
   }
   return home;
 }
@@ -116,6 +125,12 @@ await check("CODEX_SUPERVISOR_SKIP_SETUP opts the automatic run out", async () =
 });
 
 await check("a client missing from PATH is still found via its global bin directory", async () => {
+  if (process.platform === "win32") {
+    // This form plants a POSIX shebang script with no extension, which Windows
+    // cannot see at all. The Windows shape of the same check - a codex.cmd
+    // beside the npm entry it wraps - lives in setup-windows-test.js.
+    return "skip";
+  }
   const home = await makeHome(["codex"]);
   const binDir = join(home, ".npm-global", "bin");
   await mkdir(binDir, { recursive: true });
@@ -133,4 +148,4 @@ await check("an unknown argument fails a manual run but not an automatic one", a
   await runSetup(home, ["--nope", "--auto"]);
 });
 
-console.log(`\n${passed} setup checks passed`);
+console.log(`\n${passed} setup checks passed${skipped ? `, ${skipped} skipped` : ""}`);
