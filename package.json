@@ -51,7 +51,7 @@
     "start": "node ./src/mcp-server.js",
     "monitor": "tsx ./src/monitor.jsx",
     "cleanup": "node ./src/cleanup.js",
-    "test": "node ./src/bin-resolver-test.js && node ./src/truncate-test.js && node ./src/status-test.js && node ./src/migration-test.js && node ./src/setup-test.js && node ./src/regression-test.js",
+    "test": "node ./src/bin-resolver-test.js && node ./src/truncate-test.js && node ./src/status-test.js && node ./src/migration-test.js && node ./src/setup-test.js && node ./src/setup-windows-test.js && node ./src/regression-test.js",
     "test:real": "node ./src/real-codex-test.js",
     "smoke": "node ./src/smoke-test.js",
     "smoke:followup": "node ./src/followup-smoke-test.js",
