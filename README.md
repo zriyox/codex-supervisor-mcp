@@ -201,6 +201,8 @@ starting → thinking → command → editing → reporting
 
 `failed` 和 `lost` 分开是有用的：前者要看日志找原因，后者直接重跑。
 
+Windows 上没有信号，所以这两者在那里只有一种能判出来。libuv 杀进程走的是 `TerminateProcess(handle, 1)`，外部 kill 和进程自己 `exit(1)` 落到父进程手里完全一样（都是 `exit_code=1`、`signal=null`）。这种情况下报能证明的那个——`failed` 加退出码——而不是编一个平台根本没收到的信号名。Windows 上的 `lost` 仍然会发生，走的是 MCP 进程消失、下次启动结算孤儿那条路。
+
 ### goal 和 work 的映射
 
 Codex 原生 goal 有六个状态，映射到 work 状态：
