@@ -1,6 +1,6 @@
 {
   "name": "codex-supervisor-mcp",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "type": "module",
   "description": "MCP server that dispatches and supervises parallel Codex CLI workers, one isolated Git worktree each, with a persisted work state machine.",
   "license": "MIT",
@@ -23,10 +23,12 @@
     "supervisor"
   ],
   "bin": {
-    "codex-supervisor-mcp": "./src/mcp-server.js"
+    "codex-supervisor-mcp": "./src/mcp-server.js",
+    "codex-supervisor-setup": "./src/setup.js"
   },
   "files": [
     "src/mcp-server.js",
+    "src/setup.js",
     "src/codex-runner.js",
     "src/task-store.js",
     "src/goal-store.js",
@@ -43,10 +45,12 @@
     "LICENSE"
   ],
   "scripts": {
+    "postinstall": "node ./src/setup.js --auto --quiet",
+    "setup": "node ./src/setup.js",
     "start": "node ./src/mcp-server.js",
     "monitor": "tsx ./src/monitor.jsx",
     "cleanup": "node ./src/cleanup.js",
-    "test": "node ./src/truncate-test.js && node ./src/status-test.js && node ./src/migration-test.js && node ./src/regression-test.js",
+    "test": "node ./src/truncate-test.js && node ./src/status-test.js && node ./src/migration-test.js && node ./src/setup-test.js && node ./src/regression-test.js",
     "test:real": "node ./src/real-codex-test.js",
     "smoke": "node ./src/smoke-test.js",
     "smoke:followup": "node ./src/followup-smoke-test.js",

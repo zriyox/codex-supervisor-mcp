@@ -1,0 +1,135 @@
+// Coverage for the skill installer: fresh install, idempotency, backup before
+// overwrite, dry-run, target filtering, and the postinstall guard.
+//
+// Only the skill half is exercised here because it is pure filesystem work.
+// Registering the MCP shells out to the `claude` and `codex` CLIs, so that path
+// is verified manually rather than in this deterministic suite.
+import assert from "node:assert/strict";
+import { execFile } from "node:child_process";
+import { existsSync } from "node:fs";
+import { mkdir, mkdtemp, readFile, readdir, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
+
+const run = promisify(execFile);
+const setupPath = fileURLToPath(new URL("./setup.js", import.meta.url));
+const sourceSkill = await readFile(
+  fileURLToPath(new URL("../skills/codex-supervisor/SKILL.md", import.meta.url)),
+  "utf8"
+);
+
+let passed = 0;
+async function check(name, fn) {
+  await fn();
+  passed += 1;
+  console.log(`ok - ${name}`);
+}
+
+async function makeHome(layout = ["claude", "codex"]) {
+  const home = await mkdtemp(join(tmpdir(), "supervisor-setup-"));
+  for (const dir of layout) {
+    await mkdir(join(home, `.${dir}`), { recursive: true });
+  }
+  return home;
+}
+
+function runSetup(home, args = [], env = {}) {
+  return run(process.execPath, [setupPath, ...args], {
+    env: { ...process.env, HOME: home, npm_config_global: "false", ...env }
+  });
+}
+
+const skillAt = (home, client) => join(home, `.${client}`, "skills", "codex-supervisor", "SKILL.md");
+
+await check("a fresh run installs the skill into every present client", async () => {
+  const home = await makeHome();
+  await runSetup(home, ["--skill-only"]);
+  for (const client of ["claude", "codex"]) {
+    assert.equal(await readFile(skillAt(home, client), "utf8"), sourceSkill, `${client} skill content`);
+  }
+  assert.equal(existsSync(join(home, ".claude.json")), false, "must not create client config");
+});
+
+await check("a second run is idempotent and leaves no backup", async () => {
+  const home = await makeHome();
+  await runSetup(home, ["--skill-only"]);
+  await runSetup(home, ["--skill-only"]);
+  const dir = join(home, ".claude", "skills", "codex-supervisor");
+  assert.deepEqual((await readdir(dir)).sort(), ["SKILL.md"]);
+});
+
+await check("a locally modified skill is backed up before being overwritten", async () => {
+  const home = await makeHome();
+  await runSetup(home, ["--skill-only"]);
+  await writeFile(skillAt(home, "claude"), "locally edited\n");
+  await runSetup(home, ["--skill-only"]);
+  const dir = join(home, ".claude", "skills", "codex-supervisor");
+  const files = (await readdir(dir)).sort();
+  assert.equal(files.length, 2, `expected a backup file, got ${files.join(", ")}`);
+  assert.match(files.find((name) => name.startsWith("SKILL.md.bak-")) ?? "", /^SKILL\.md\.bak-\d+$/);
+  assert.equal(await readFile(skillAt(home, "claude"), "utf8"), sourceSkill);
+});
+
+await check("--force overwrites without keeping a backup", async () => {
+  const home = await makeHome();
+  await runSetup(home, ["--skill-only"]);
+  await writeFile(skillAt(home, "claude"), "locally edited\n");
+  await runSetup(home, ["--skill-only", "--force"]);
+  const dir = join(home, ".claude", "skills", "codex-supervisor");
+  assert.deepEqual((await readdir(dir)).sort(), ["SKILL.md"]);
+});
+
+await check("--dry-run reports work without writing anything", async () => {
+  const home = await makeHome();
+  const { stdout } = await runSetup(home, ["--skill-only", "--dry-run"]);
+  assert.match(stdout, /would install/);
+  assert.equal(existsSync(join(home, ".claude", "skills", "codex-supervisor")), false);
+});
+
+await check("--target only touches the named client", async () => {
+  const home = await makeHome();
+  await runSetup(home, ["--skill-only", "--target", "claude"]);
+  assert.equal(existsSync(skillAt(home, "claude")), true);
+  assert.equal(existsSync(skillAt(home, "codex")), false);
+});
+
+await check("--auto stays silent unless the install is global", async () => {
+  const nonGlobal = await makeHome();
+  await runSetup(nonGlobal, ["--auto"], { npm_config_global: "false" });
+  assert.equal(existsSync(join(nonGlobal, ".claude", "skills", "codex-supervisor")), false);
+
+  const global = await makeHome();
+  await runSetup(global, ["--auto", "--skill-only"], { npm_config_global: "true" });
+  assert.equal(existsSync(skillAt(global, "claude")), true);
+});
+
+await check("CODEX_SUPERVISOR_SKIP_SETUP opts the automatic run out", async () => {
+  const home = await makeHome();
+  await runSetup(home, ["--auto", "--skill-only"], {
+    npm_config_global: "true",
+    CODEX_SUPERVISOR_SKIP_SETUP: "1"
+  });
+  assert.equal(existsSync(join(home, ".claude", "skills", "codex-supervisor")), false);
+});
+
+await check("a client missing from PATH is still found via its global bin directory", async () => {
+  const home = await makeHome(["codex"]);
+  const binDir = join(home, ".npm-global", "bin");
+  await mkdir(binDir, { recursive: true });
+  await writeFile(join(binDir, "codex"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+
+  const { stdout } = await runSetup(home, ["--mcp-only", "--target", "codex"], {
+    PATH: "/usr/bin:/bin"
+  });
+  assert.match(stdout, /already registered/, "expected the off-PATH binary to be detected");
+});
+
+await check("an unknown argument fails a manual run but not an automatic one", async () => {
+  const home = await makeHome();
+  await assert.rejects(runSetup(home, ["--nope"]), /Unknown argument/);
+  await runSetup(home, ["--nope", "--auto"]);
+});
+
+console.log(`\n${passed} setup checks passed`);

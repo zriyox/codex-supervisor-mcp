@@ -26,7 +26,7 @@ import { approxTokenCount, truncateEventStrings } from "./truncate.js";
 
 const server = new McpServer({
   name: "codex-supervisor",
-  version: "0.3.0"
+  version: "0.4.0"
 });
 
 const OVERVIEW_BYTE_BUDGET = 7000;

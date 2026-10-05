@@ -39,7 +39,25 @@ Codex worker  ──►  data/runs/<taskId>.jsonl      原始 JSONL 事件流
 npm install -g codex-supervisor-mcp
 ```
 
-### 配置到 Claude Code
+全局安装会自动完成两件事（`postinstall`）：
+
+1. 把配套 skill 装进检测到的客户端目录：`~/.claude/skills/`、`~/.agents/skills/`、`~/.codex/skills/`。
+2. 用客户端自带的 CLI 注册 MCP：`claude mcp add -s user` / `codex mcp add`。
+
+目标 skill 已存在且内容不同时，先写一份 `SKILL.md.bak-<时间戳>` 再覆盖。任何一步失败都不会让安装失败。
+
+重跑、修复、或只装某一个客户端：
+
+```bash
+codex-supervisor-setup                      # 自动检测客户端
+codex-supervisor-setup --target claude,codex
+codex-supervisor-setup --skill-only         # 只装 skill
+codex-supervisor-setup --dry-run            # 只打印计划
+```
+
+自动安装只在**全局安装**时发生。`npx`、`--ignore-scripts`、以及被别人当项目依赖装的场景都不会触发。要跳过用 `CODEX_SUPERVISOR_SKIP_SETUP=1`；要补装手动跑一次 `codex-supervisor-setup`。
+
+### 手动配置到 Claude Code
 
 ```json
 {
