@@ -73,7 +73,11 @@ const first = await withServer(async (client) => {
     ownedPaths: ["README.md"],
     goal: { objective: "Have the real codex CLI answer PONG without touching files" }
   });
-  console.log(`  worker=${created.id} status=${created.status} pid=${created.pid}`);
+  assert.ok(["queued", "running"].includes(created.status), `unexpected dispatch status ${created.status}`);
+  assert.ok(created.worktree_path, "a dispatch receipt must carry the worktree path");
+  assert.equal(created.branch, `codex/${created.id}`);
+  assert.equal(created.prompt, undefined, "a dispatch receipt must not echo the task text back");
+  console.log(`  worker=${created.id} status=${created.status} worktree=${created.worktree_path}`);
 
   const seenStatuses = new Set();
   const seenPhases = new Set();
@@ -110,6 +114,15 @@ const first = await withServer(async (client) => {
   const summary = await call(client, "get_worker_summary", { task_id: created.id });
   assert.equal(summary.thread_id, current.thread_id);
   console.log(`  summary: ${summary.summary.split("\n")[0]}`);
+
+  // The overview and wait responses clip the last message, so the full report
+  // has to come back through its own door.
+  const result = await call(client, "get_worker_result", { task_id: created.id });
+  assert.equal(result.status, "completed");
+  assert.equal(result.source, "event_stream");
+  assert.ok(result.reports.length >= 1, "expected at least one report");
+  assert.match(result.reports.at(-1), /PONG/, `unexpected report: ${result.reports.at(-1)}`);
+  console.log(`  report: ${JSON.stringify(result.reports.at(-1))}`);
 
   const goal = await call(client, "get_worker_goal", { task_id: created.id });
   assert.equal(goal.objective, "Have the real codex CLI answer PONG without touching files");
