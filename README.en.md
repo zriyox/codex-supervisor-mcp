@@ -31,17 +31,21 @@ Point several agents at one repo and they overwrite each other, and afterwards n
 
 ## How is this different from Claude Code subagents?
 
-A subagent still runs a Claude model, billed at Anthropic's rates. Dispatch three and you pay for three.
+One thing that used to be a difference is not one anymore: a Claude Code subagent can run in its own worktree (`isolation: worktree`; see "Isolate subagents with worktrees" in the [official worktrees docs](https://docs.claude.com/en/docs/claude-code/worktrees)). File isolation is built in now, so don't install this plugin for that.
+
+The real gap is the model. A subagent's `model` field takes a Claude alias or a full Claude model ID (`sonnet` / `opus` / `haiku` / `inherit`); a non-Claude model like DeepSeek has no way in, and every token is billed at Anthropic's rates. Dispatch three and you pay for three.
 
 What gets dispatched here is a `codex exec` subprocess, and the `model` argument is passed straight through to the Codex CLI (`src/codex-runner.js:336`). A worker's model has nothing to do with the main thread's. Keep the main thread on Claude for judgment, put the workers on DeepSeek, and configure the provider in Codex's `config.toml`. The token-heavy work lands on the workers. The main thread reads the `get_orchestration_overview` table, and pulls a diff from the worker's worktree when it wants one.
 
 | | Claude Code subagent | codex-supervisor worker |
 |---|---|---|
-| Model | Claude models | Set per worker with `model`, can differ from the main thread |
-| Working directory | Shared with the main thread | One Git worktree per worker |
-| Two workers writing the same file | Not checked | `ownedPaths` is intersected before dispatch; on overlap no worktree is created and you get `ownership_conflict` |
+| Models it can run | Claude only: an alias or a full Claude model ID | `model` goes to the Codex CLI, so DeepSeek works |
+| What does the work | Claude Code itself | A separate `codex exec` process |
+| Working directory | Shared with the main thread by default, or `isolation: worktree` | One Git worktree per worker |
+| Two workers writing the same file | Separated by worktrees, with no declared paths and no conflict check | `ownedPaths` is intersected before dispatch; on overlap no worktree is created and you get `ownership_conflict` |
 | Main thread context | Subagent results come back into it | Events go to `data/runs/<taskId>.jsonl`; the overview runs on a hard 7000-byte budget (`src/mcp-server.js:32`) |
 | Main thread process dies | Workers die with it | `thread_id` is in sqlite; `resume_codex_worker` reattaches the same session |
+| What can drive it | Claude Code only | Any MCP client |
 | Watching a worker work | Only the conclusion it returns | Raw JSONL, read through `kinds` / `limit` / `maxChars` |
 
 ## Architecture
