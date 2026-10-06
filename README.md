@@ -1,5 +1,7 @@
 # codex-supervisor-mcp
 
+[English](README.en.md) | 中文
+
 [![npm version](https://img.shields.io/npm/v/codex-supervisor-mcp.svg)](https://www.npmjs.com/package/codex-supervisor-mcp)
 [![npm downloads](https://img.shields.io/npm/dm/codex-supervisor-mcp.svg)](https://www.npmjs.com/package/codex-supervisor-mcp)
 [![license](https://img.shields.io/npm/l/codex-supervisor-mcp.svg)](LICENSE)
