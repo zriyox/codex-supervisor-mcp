@@ -27,6 +27,21 @@
 | 换个会话就接不上之前的 worker | `resume_codex_worker` 走 `codex exec resume <thread_id>`，接的是同一个 Codex 会话 |
 | 分不清「跑失败了」和「进程没了」 | 状态机把 `failed` 和 `lost` 分开 |
 
+## 和 Claude Code 的 subagent 有什么区别
+
+subagent 跑的还是 Claude 系列模型，账单走 Anthropic 的价目表，派三个就是三份。
+
+派出去的是 `codex exec` 子进程，`model` 参数原样透传给 Codex CLI（`src/codex-runner.js:336`）。worker 用什么模型跟主线程没关系：主线程留在 Claude 上做判断，worker 可以挂 DeepSeek，在 Codex 的 `config.toml` 里配好 provider 就行。重活都在 worker 那边，主线程读的是 `get_orchestration_overview` 那张表，要看 diff 自己去 worker 的 worktree 里取。
+
+| | Claude Code subagent | codex-supervisor worker |
+|---|---|---|
+| 模型 | Claude 系列 | `model` 参数指定，可以和主线程不同 |
+| 工作目录 | 和主线程同一个 | 一个 worker 一个 Git worktree |
+| 两个 worker 写同一个文件 | 没有检查 | 派单前求 `ownedPaths` 交集，重叠就不建 worktree，报 `ownership_conflict` |
+| 主线程上下文 | subagent 的结果回到主线程 | 事件写 `data/runs/<taskId>.jsonl`，总览走 7000 字节硬预算（`src/mcp-server.js:32`） |
+| 主线程进程挂了 | worker 一起没 | `thread_id` 落 sqlite，`resume_codex_worker` 接回同一个会话 |
+| 看 worker 干活的过程 | 只有它返回的结论 | 原始 JSONL 按 `kinds` / `limit` / `maxChars` 读 |
+
 ## 架构
 
 ```
