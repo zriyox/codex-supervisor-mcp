@@ -18,11 +18,13 @@ description: 把 Codex CLI 当并行 worker 派活、盯进度、收结果。用
 ## 一次派单
 
 1. 拆活。每路写清楚：干什么、能写哪些文件、怎么算做完。
-2. `create_codex_worker` 派出去。
-3. 派完就 `wait_codex_workers` 等，别轮询。
-4. 收结果走 `get_worker_summary`，别一上来读事件流。
+2. `create_codex_worker` 派出去。返回的是一张精简回执（`id`、`worktree_path`、`branch`、`owned_paths`、`status`），任务原文不回传，派十一路也不会把你的提示词抄十一遍。
+3. 派完就 `wait_codex_workers` 等。默认只等 2 分钟，到点返回进度快照，worker 照跑；拿同一批 `task_ids` 接着调，直到 `timed_out: false`。
+4. 收结果走 `get_worker_result`，拿完整汇报，别一上来读事件流。
 
 `ownedPaths` 和 `goal` 必填，不是可选项。
+
+`wait_codex_workers` 的等待预算管的是这一次调用，不是 worker。返回里 `still_running: true` 是等满了，不是活挂了，按 `next_step` 接着调就行。别把 `timeoutMinutes` 开到超过客户端的 MCP 工具超时——那样被掐掉的是这次调用，丢的是这次的结果。
 
 | 参数 | 怎么填 |
 |---|---|
@@ -47,10 +49,13 @@ wait_codex_workers        （task_ids: [...], mode: "all"）
 | 想干什么 | 用哪个 | 代价 |
 |---|---|---|
 | 看全部 worker 现在什么状态 | `get_orchestration_overview` | ~1750 token，封顶 |
-| 收一路活的结果 | `get_worker_summary` | 一段话 |
+| 收一路活的完整结论 | `get_worker_result` | 汇报全文，大活可能上万字 |
+| 只想知道活着还是完了 | `get_worker_summary` | 一段话 |
 | 看某个 worker 干了什么 | `get_codex_worker_events` | 用 `limit` / `kinds` / `maxChars` 压 |
 | 看某个 worker 的完整记录 | `get_codex_worker_status` | 中等，比 overview 一行细 |
 | 看 goal 和 token 消耗 | `get_worker_goal` | 很小 |
+
+**收结论必须走 `get_worker_result`。** `wait_codex_workers` 返回里的 `last_message` 会被截到 400 字只留开头，`get_orchestration_overview` 干脆不给这一列。拿截断版当结论，后面的证据、数字和结论全会漏掉。`get_worker_result` 还会带回 `status`、`exit_code`、`changed_files`，顺便就能判断是真跑完还是崩了。
 
 `get_codex_worker_events` 的三个闸门：`kinds` 先过滤再取 `limit`；`maxChars` 把超长字符串中间截断；不知道有哪些 `kinds` 时先看返回里的 `available_kinds`。
 
@@ -100,6 +105,8 @@ wait_codex_workers        （task_ids: [...], mode: "all"）
 ## 常见坑
 
 - **worker 的命绑在 MCP 进程上**。MCP 被 kill，正在跑的 worker 会被留下，下次读状态时结算成 `lost`。
+- **worktree 是从 `HEAD` 建的，你工作区里没 commit 的东西不在里面**。未提交的修改和未跟踪文件 worker 既看不到也写不到。要让它读到就把绝对路径写进 `task`，或者先把改动 commit。它自己的改动落在 `codex/<taskId>` 分支上，不碰你的工作区。
+- **它只管"跑完了"，不管写得对不对**。终态来自 Codex 的 `turn.completed` 和进程退出码，`exit_code: 0` 只说明没崩。每批活回来，验收得自己做：跑校验、抽看内容。
 - **`ownedPaths` 冲突是好事**。说明两路活会踩同一个文件，这时候该改拆法，不是绕过检测。
 - **worktree 只隔离工作区，不隔离端口和数据库**。多路活要是都会连同一个 dev server 或同一个库，得自己错开。
 - **`cancel_codex_worker` 跨进程靠 pid**。要求那个 pid 的命令行里带 `codex`，防止误杀复用 pid 的进程。
@@ -109,6 +116,6 @@ wait_codex_workers        （task_ids: [...], mode: "all"）
 一批活全部到终态后：
 
 1. `get_orchestration_overview` 确认没有 `needs_attention`
-2. 逐路 `get_worker_summary`
+2. 逐路 `get_worker_result` 拿完整汇报，对着验收标准核内容
 3. 失败的区分 `failed`（查原因）和 `lost`（重跑）
 4. 改动在各自 worktree 的 `codex/<taskId>` 分支上，合并由主线程决定
