@@ -24,6 +24,7 @@ try {
     "get_codex_worker_status",
     "get_orchestration_overview",
     "get_worker_goal",
+    "get_worker_result",
     "get_worker_summary",
     "list_codex_workers",
     "resume_codex_worker",

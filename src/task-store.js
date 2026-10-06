@@ -2,6 +2,7 @@ import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { dataDir, dbPath, runsDir } from "./paths.js";
+import { extractAgentMessage } from "./event-parser.js";
 import { ACTIVE_STATUSES, PHASES } from "./status.js";
 
 let db;
@@ -404,6 +405,31 @@ export async function listTaskEventKinds(taskId) {
     SELECT event_type AS kind, COUNT(*) AS count
     FROM task_events WHERE task_id = ? GROUP BY event_type ORDER BY count DESC
   `).all(taskId);
+}
+
+// A worker's report is the only thing a supervisor usually wants back, and the
+// task row keeps just the most recent one. This reads them out of the raw
+// stream newest-first: `payload LIKE` is a cheap prefilter, and every row that
+// survives it is verified through the same extraction the state machine uses.
+export async function readAgentMessages(taskId, limit = 1) {
+  await ensureFilesystem();
+  const rows = openDb().prepare(`
+    SELECT payload FROM task_events
+    WHERE task_id = ? AND event_type = 'item.completed' AND payload LIKE '%"agent_message"%'
+    ORDER BY seq DESC LIMIT ?
+  `).all(taskId, limit * 5 + 10);
+  const messages = [];
+  for (const row of rows) {
+    let text = null;
+    try {
+      text = extractAgentMessage(JSON.parse(row.payload));
+    } catch {
+      text = null;
+    }
+    if (text) messages.push(text);
+    if (messages.length >= limit) break;
+  }
+  return messages.reverse();
 }
 
 export async function taskCount() {

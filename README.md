@@ -182,7 +182,7 @@ rm -rf ~/.codex-supervisor      # 状态目录：sqlite、事件流、worktree �
 
 ## 工具
 
-13 个工具。
+14 个工具。
 
 | 工具 | 入参 | 作用 |
 |---|---|---|
@@ -191,11 +191,12 @@ rm -rf ~/.codex-supervisor      # 状态目录：sqlite、事件流、worktree �
 | `resume_codex_worker` | `task_id`, `prompt` | 接**同一个** Codex 会话继续跑 |
 | `list_codex_workers` | `status`, `includeHistory`, `includeDetails` | 列出 worker，默认只看在跑的 |
 | `get_orchestration_overview` | `status`, `limit` | 全部 worker 的紧凑状态表，默认给主线程用 |
-| `wait_codex_workers` | `task_ids`, `mode`(any/all), `timeoutMinutes`, `includeEvents`, `eventLimit`, `eventMaxChars`, `eventKinds` | 阻塞等到终态，回摘要 |
+| `wait_codex_workers` | `task_ids`, `mode`(any/all), `timeoutMinutes`, `timeoutMs`, `includeEvents`, `eventLimit`, `eventMaxChars`, `eventKinds` | 等终态，回摘要。默认只等 2 分钟，到点带进度快照返回，worker 照跑；接着调同一个工具继续等 |
 | `get_codex_worker_status` | `task_id` | 单个 worker 的完整记录 |
 | `get_codex_worker_events` | `task_id`, `limit`, `maxChars`, `kinds` | 读原始事件流 |
 | `get_worker_goal` | `task_id` | 读 worker 的 goal（supervisor 侧 + Codex 原生） |
 | `get_worker_summary` | `task_id` | 单个 worker 的一段话总结，主线程收尾时读这个 |
+| `get_worker_result` | `task_id`, `limit`, `maxChars` | 读 worker 自己的完整收尾汇报。总览和 `wait_codex_workers` 把最后一条消息截到 400 字只留开头，要结论读这个 |
 | `get_session_works` | `session_id` | 一个 session 派出去的全部 worker，按时间升序。主线程挂了之后靠它找回那批活 |
 | `search_works` | `query`, `limit` | 在 title / goal / prompt / last_message 里做子串匹配，从新到旧 |
 | `cancel_codex_worker` | `task_id` | 终止 worker，进程句柄不在本进程时按 pid 兜底 |
@@ -304,6 +305,10 @@ Codex 原生 goal 有六个状态，映射到 work 状态：
 ## 已知限制
 
 - **worker 的生命周期绑在 MCP 进程上**：`codex` 是 MCP 进程的子进程，MCP 被 kill 时 worker 会被留下。这些 worker 会在下一次 `list_codex_workers` / `get_orchestration_overview` 时被结算成 `lost`。真正的解法是常驻 daemon，见 Roadmap。
+- **worktree 从 `HEAD` 建，未提交的改动不在里面**：`ensureWorktree` 走的是 `git worktree add --detach <dir> HEAD`（`src/codex-runner.js:64`）。主线程工作区里没 commit 的修改和未跟踪文件，worker 在自己的 worktree 里看不到。要让它读写这些文件，就在 task 里给绝对路径，或者先把改动 commit。worker 的改动落在 `codex/<taskId>` 分支上，不碰主线程的工作区。
+- **只隔离工作目录**：临时目录（`TMPDIR`）、数据库、端口这些进程级资源是共用的，多个 worker 同时写同一个临时文件照样互相踩。要隔开得自己在 task 里指定各自的临时目录、库名和端口。
+- **只管「跑完了」，不管写得对不对**：终态来自 Codex 的 `turn.completed` 和进程退出码，`exit_code: 0` 只说明它没崩。产出对不对得主线程自己核，跑校验、抽看内容。
+- **长任务别指望一次 `wait_codex_workers` 等到底**：客户端给 MCP 工具调用设的超时是硬墙（`.mcp.json` 里的 `timeout`，或 `MCP_TOOL_TIMEOUT`），撞上就把这次调用掐掉。默认 2 分钟带进度返回，靠反复调而不是一次等到黑。
 - **不往 Codex 原生 goal 写数据**：`goals_1.sqlite` 归 Codex 所有，本 MCP 只读。worker 起来后由它自己调 Codex 的 `create_goal` 建原生 goal，本 MCP 只负责在派单时把这段指令拼进 prompt。
 - **原生 goal 依赖模型照做**：`codex exec` 不会自动建 goal，是派单时那段指令让 worker 建的。模型偶尔漏调，这时 `native_goal` 为 `null`，`get_worker_goal` 退回派单时记录的那份，不影响状态机。
 - **`search_works` 是子串匹配，不是全文索引**：几百条 work 的规模下 `LIKE` 扫描足够快，也省掉一套索引的维护成本。上到几万条再谈别的。

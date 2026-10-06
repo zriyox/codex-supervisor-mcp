@@ -20,6 +20,17 @@ function inferAgentMessage(item) {
   return item?.text ?? item?.message ?? item?.content ?? item?.output_text ?? null;
 }
 
+// The stored event stream is raw Codex JSONL, so reading a worker's own report
+// back out means walking `item.completed` events whose item is an
+// agent_message. The live state machine and the on-demand result reader share
+// this one extraction.
+export function extractAgentMessage(event) {
+  const item = getItem(event);
+  const itemType = item?.type ?? item?.kind ?? item?.name ?? null;
+  if (itemType !== "agent_message") return null;
+  return inferAgentMessage(item);
+}
+
 // Codex reports edits as {"changes":[{"path": "...", "kind": "add"}]}. The
 // older flat shapes are kept for compatibility with other event producers.
 function inferChangedFiles(item) {

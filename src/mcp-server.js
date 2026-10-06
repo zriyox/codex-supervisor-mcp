@@ -12,6 +12,7 @@ import {
   getTask,
   getTasks,
   listTaskEventKinds,
+  readAgentMessages,
   readTaskEvents,
   readTasks,
   readTasksBySession,
@@ -22,7 +23,7 @@ import {
 import { readNativeGoal } from "./goal-store.js";
 import { mergeChangedFiles, readWorktreeChanges } from "./worktree.js";
 import { ACTIVE_STATUSES, TERMINAL_STATUSES, TASK_STATUSES, isGoalNeedingAttention } from "./status.js";
-import { approxTokenCount, truncateEventStrings } from "./truncate.js";
+import { approxTokenCount, truncateEventStrings, truncateMiddleChars } from "./truncate.js";
 
 const server = new McpServer({
   name: "codex-supervisor",
@@ -92,6 +93,42 @@ function summarizeTask(task) {
     started_at: task.started_at,
     completed_at: task.completed_at,
     exit_code: task.exit_code
+  };
+}
+
+// The dispatch receipt. Dispatch used to return the whole task record, which
+// echoes the task text - and for a follow-up, the parent prompt plus 20 raw
+// events - back to the caller on every call. Dispatching eleven workers made
+// the main thread pay for its own instructions eleven times, and pushed the
+// result into the client's MCP output cap. Read the rest per worker with
+// get_worker_summary / get_worker_result when you actually need it.
+function receipt(task) {
+  return {
+    id: task.id,
+    title: task.title,
+    worker: task.worker,
+    status: task.status,
+    phase: task.phase ?? null,
+    cwd: task.cwd,
+    project_root: task.project_root,
+    worktree_path: task.worktree_path,
+    branch: task.worktree_path ? `codex/${task.id}` : null,
+    sandbox: task.sandbox,
+    model: task.model,
+    reasoning_effort: task.reasoning_effort,
+    thread_id: task.thread_id,
+    session_id: task.session_id ?? null,
+    followup_of: task.followup_of,
+    resumed_from: task.resumed_from,
+    depends_on: task.depends_on ?? [],
+    owned_paths: task.owned_paths ?? [],
+    goal_objective: task.goal_objective,
+    goal_token_budget: task.goal_token_budget,
+    error: task.error ?? null,
+    run_count: task.run_count ?? 0,
+    run_log: task.run_log,
+    created_at: task.created_at,
+    updated_at: task.updated_at
   };
 }
 
@@ -245,7 +282,8 @@ server.registerTool(
   },
   async (input) => {
     try {
-      return textResult(await createCodexWorker({ ...input, sessionId: input.session_id ?? null }));
+      const record = await createCodexWorker({ ...input, sessionId: input.session_id ?? null });
+      return textResult(receipt(record));
     } catch (error) {
       return errorResult(error);
     }
@@ -278,14 +316,13 @@ server.registerTool(
   },
   async ({ task_id, followup_prompt, session_id, ...options }) => {
     try {
-      return textResult(
-        await createFollowupWorker({
+      const record = await createFollowupWorker({
           taskId: task_id,
           followupPrompt: followup_prompt,
           sessionId: session_id ?? null,
           ...options
-        })
-      );
+        });
+      return textResult(receipt(record));
     } catch (error) {
       return errorResult(error);
     }
@@ -305,7 +342,8 @@ server.registerTool(
   },
   async ({ task_id, prompt }) => {
     try {
-      return textResult(await resumeCodexWorker({ taskId: task_id, prompt }));
+      const record = await resumeCodexWorker({ taskId: task_id, prompt });
+      return textResult(receipt(record));
     } catch (error) {
       return errorResult(error);
     }
@@ -358,11 +396,12 @@ server.registerTool(
   "wait_codex_workers",
   {
     title: "Wait for Codex workers",
-    description: "Block until selected Codex workers reach a terminal status, then return summaries.",
+    description:
+      "Block until selected Codex workers reach a terminal status, then return summaries. The wait budget bounds this call, not the workers: when it runs out you get a progress snapshot and the workers keep running, so call this again with the same task_ids to keep waiting. Keep the budget under your client's MCP tool timeout, or the client kills the call instead of the wait returning.",
     inputSchema: {
       task_ids: z.array(z.string().min(1)).min(1),
       mode: z.enum(["any", "all"]).default("all"),
-      timeoutMinutes: z.number().int().min(1).max(360).default(30),
+      timeoutMinutes: z.number().int().min(1).max(360).default(2),
       timeoutMs: z.number().int().min(1000).max(21600000).optional(),
       pollMs: z.number().int().min(250).max(10000).default(1000),
       includeEvents: z.boolean().default(true),
@@ -413,9 +452,18 @@ server.registerTool(
       }))
     );
 
+    const budgetLabel =
+      effectiveTimeoutMs >= 60000
+        ? `${Math.round(effectiveTimeoutMs / 60000)}-minute`
+        : `${Math.round(effectiveTimeoutMs / 1000)}-second`;
+
     return textResult({
       mode,
       timed_out: timedOut,
+      still_running: timedOut,
+      next_step: timedOut
+        ? `Workers are still running; the ${budgetLabel} wait budget ran out, not the workers. Call wait_codex_workers again with the same task_ids, or use get_orchestration_overview for a cheap progress read. Raise timeoutMinutes only if your client's MCP tool timeout allows it.`
+        : null,
       waited_ms: Date.now() - startedAt,
       timeout_ms: effectiveTimeoutMs,
       timeout_minutes: Math.round(effectiveTimeoutMs / 60000),
@@ -559,6 +607,51 @@ server.registerTool(
       await upsertTask({ ...task, changed_files: summary.changed_files, updated_at: new Date().toISOString() });
     }
     return textResult(summary);
+  }
+);
+
+server.registerTool(
+  "get_worker_result",
+  {
+    title: "Get worker result",
+    description:
+      "Read a worker's own final report in full. The overview and the wait response clip the last message so a batch stays inside a context budget; this is the door for the actual conclusion. Returns the last N agent messages plus the status fields needed to tell a real finish from a crash.",
+    inputSchema: {
+      task_id: z.string().min(1),
+      limit: z.number().int().min(1).max(20).default(1),
+      maxChars: z.number().int().min(0).max(1000000).optional()
+    }
+  },
+  async ({ task_id, limit, maxChars }) => {
+    const task = await getTask(task_id);
+    if (!task) return textResult({ error: "task_not_found", task_id });
+    let reports = await readAgentMessages(task_id, limit);
+    let source = "event_stream";
+    if (reports.length === 0 && task.last_message) {
+      // Older rows can predate this tool, but the task row keeps the newest
+      // report even when the stream query finds nothing.
+      reports = [task.last_message];
+      source = "task_row";
+    }
+    const truncated = maxChars === undefined ? reports : reports.map((text) => truncateMiddleChars(text, maxChars));
+    const changed = mergeChangedFiles(task.changed_files, readWorktreeChanges(task.worktree_path));
+    return textResult({
+      task_id,
+      title: task.title,
+      status: task.status,
+      phase: task.phase ?? null,
+      exit_code: task.exit_code ?? null,
+      thread_id: task.thread_id,
+      session_id: task.session_id ?? null,
+      worktree_path: task.worktree_path,
+      goal_status: task.goal_status,
+      changed_files: changed,
+      report_count: truncated.length,
+      reports: truncated,
+      source,
+      error: task.error ?? null,
+      completed_at: task.completed_at ?? null
+    });
   }
 );
 

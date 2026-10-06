@@ -182,7 +182,7 @@ Auto-install only happens on a **global install**. `npx`, `--ignore-scripts`, an
 
 ## Tools
 
-Thirteen of them.
+Fourteen of them.
 
 | Tool | Arguments | What it does |
 |---|---|---|
@@ -191,11 +191,12 @@ Thirteen of them.
 | `resume_codex_worker` | `task_id`, `prompt` | Continue the **same** Codex session |
 | `list_codex_workers` | `status`, `includeHistory`, `includeDetails` | List workers; running ones only by default |
 | `get_orchestration_overview` | `status`, `limit` | A compact status table for every worker, meant for the main thread |
-| `wait_codex_workers` | `task_ids`, `mode`(any/all), `timeoutMinutes`, `includeEvents`, `eventLimit`, `eventMaxChars`, `eventKinds` | Block until a terminal state, then return summaries |
+| `wait_codex_workers` | `task_ids`, `mode`(any/all), `timeoutMinutes`, `timeoutMs`, `includeEvents`, `eventLimit`, `eventMaxChars`, `eventKinds` | Wait for a terminal state, then return summaries. The default wait is 2 minutes: when it runs out you get a progress snapshot and the workers keep going, so call it again |
 | `get_codex_worker_status` | `task_id` | The full record for one worker |
 | `get_codex_worker_events` | `task_id`, `limit`, `maxChars`, `kinds` | Read the raw event stream |
 | `get_worker_goal` | `task_id` | Read a worker's goal (supervisor side and native Codex side) |
 | `get_worker_summary` | `task_id` | One paragraph about a worker; what the main thread reads when wrapping up |
+| `get_worker_result` | `task_id`, `limit`, `maxChars` | A worker's own final report, in full. The overview and `wait_codex_workers` clip the last message to 400 characters and keep only the head; read this for the conclusion |
 | `get_session_works` | `session_id` | Every worker dispatched under one session, oldest first. This is how a dead main thread finds its batch again |
 | `search_works` | `query`, `limit` | Substring match over title / goal / prompt / last_message, newest first |
 | `cancel_codex_worker` | `task_id` | Stop a worker; falls back to the pid when the process handle isn't in this process |
@@ -304,6 +305,10 @@ When the MCP client starts without `codex` on `PATH`, which is common for GUI-la
 ## Known limitations
 
 - **A worker's lifetime is tied to the MCP process.** `codex` is a child of the MCP process, so killing the MCP process leaves workers behind. They get settled as `lost` on the next `list_codex_workers` / `get_orchestration_overview`. The real fix is a resident daemon, see the Roadmap.
+- **The worktree is created from `HEAD`, so uncommitted work isn't in it.** `ensureWorktree` runs `git worktree add --detach <dir> HEAD` (`src/codex-runner.js:64`). Modified and untracked files sitting in the main thread's checkout don't exist inside the worker's worktree. Give the task absolute paths, or commit first. The worker's own changes land on the `codex/<taskId>` branch and never touch the main checkout.
+- **Only the working directory is isolated.** Temp directories (`TMPDIR`), databases, and ports are process-level resources and stay shared, so two workers writing the same temp file still collide. Give each one its own paths, database name, and port in the task if you need that.
+- **It reports "it finished", not "it's correct".** Terminal states come from Codex's `turn.completed` and the process exit code; `exit_code: 0` only means it didn't crash. Judging the output is the main thread's job: run the checks, spot-read the content.
+- **Don't expect one `wait_codex_workers` call to cover a long job.** Your client's MCP tool timeout is a hard wall (the `timeout` field in `.mcp.json`, or `MCP_TOOL_TIMEOUT`), and hitting it kills the call. The default wait returns after 2 minutes with a progress snapshot; loop instead of waiting once.
 - **Nothing is written to Codex's native goal store.** `goals_1.sqlite` belongs to Codex and this MCP only reads it. Once a worker starts, it calls Codex's own `create_goal`; this MCP only splices that instruction into the prompt at dispatch time.
 - **Native goals depend on the model complying.** `codex exec` does not create a goal on its own; the instruction at dispatch time is what makes the worker create one. The model occasionally skips it, in which case `native_goal` is `null` and `get_worker_goal` falls back to the copy recorded at dispatch. The state machine is unaffected.
 - **`search_works` is substring matching, not a full-text index.** At a few hundred works, a `LIKE` scan is fast enough and costs nothing to maintain. Talk about something else at tens of thousands.
