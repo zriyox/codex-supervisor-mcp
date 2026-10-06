@@ -107,6 +107,29 @@ codex-supervisor-setup --dry-run            # 只打印计划，不改任何东�
 
 `npx` 不跑 `postinstall`，所以 **skill 不会自动装、MCP 也不会自动注册**，只有 MCP server 本身能起来。要用配套 skill 就还是得 `npm install -g`，或者手动跑一次 `codex-supervisor-setup`。
 
+### 更新
+
+```bash
+npm install -g codex-supervisor-mcp@latest
+npm ls -g --depth=0 | grep codex-supervisor    # 确认版本号真的变了
+```
+
+`postinstall` 会重跑一遍：skill 按内容比对，不一样就备份 `SKILL.md.bak-<时间戳>` 再覆盖；MCP 已经注册过的客户端跳过。
+
+三个已知的坑：
+
+- **刚发布的版本，registry 的 `latest` 会延迟几分钟**。装完发现版本号没变，就等一会儿再装，或者直接写死版本：`npm install -g codex-supervisor-mcp@0.5.3`。
+- **`npm link` / `npm i -g .` 装出来的是软链**。这种情况改 `src/` 立即生效，但改 `skills/SKILL.md` 不会自动同步，要手动跑一次 `codex-supervisor-setup`。想换回正式安装，直接 `npm install -g codex-supervisor-mcp@latest` 就会覆盖掉软链。
+- **换 Node 版本会让注册失效**。注册的是绝对路径（`~/.nvm/versions/node/<版本>/lib/node_modules/...`），而 `postinstall` 看到「已注册」就跳过，不会改写路径。这时先摘掉再装：
+
+```bash
+claude mcp remove -s user codex-supervisor
+codex mcp remove codex-supervisor
+npm install -g codex-supervisor-mcp@latest
+```
+
+只想重跑安装、不升级版本，用 `codex-supervisor-setup`。
+
 ### 卸载
 
 ```bash
@@ -119,13 +142,11 @@ rm -rf ~/.codex-supervisor      # 状态目录：sqlite、事件流、worktree �
 
 ### Windows
 
-三条实现细节值得知道：
-
 - npm 装的 CLI 在 Windows 上是 `codex.cmd` 而不是可执行文件，Node 从 18.20 / 20.12 起拒绝直接 `spawn` 它（CVE-2024-27980 之后的行为，报 `EINVAL`）。这里不用 `shell: true` 绕——那样 shell 会变成子进程，取消时只杀掉 shell 而真正的 Codex 还在跑，状态机会卡在 `running`。做法是绕到 npm 包自己的入口（`node_modules/@openai/codex/bin/codex.js`），用 `node` 起它；`CODEX_BIN` 指向 `.js` 时同样处理。
 - 跨进程取消用 `taskkill /PID <pid> /T /F` 结束整棵进程树；确认这个 pid 还是 Codex 用 PowerShell 的 `Get-CimInstance Win32_Process` 读命令行（拿不到时退到 `tasklist`）。`ps` 只在 macOS / Linux 上用。
 - 除了 `PATH`，还会探 `%APPDATA%\npm`、`%LOCALAPPDATA%\pnpm`、`%LOCALAPPDATA%\Volta\bin`、`%ProgramFiles%\nodejs`。
 
-自动安装只在**全局安装**时发生。`npx`、`--ignore-scripts`、以及被别人当项目依赖装的场景都不会触发。要跳过用 `CODEX_SUPERVISOR_SKIP_SETUP=1`。
+自动安装只在**全局安装**时发生。`npx`、`--ignore-scripts`、以及被别人当项目依赖装的场景都不会触发。想跳过就设 `CODEX_SUPERVISOR_SKIP_SETUP=1`。
 
 ### 疑难排查
 
@@ -205,7 +226,7 @@ starting → thinking → command → editing → reporting
 
 `failed` 和 `lost` 分开是有用的：前者要看日志找原因，后者直接重跑。
 
-Windows 上没有信号，所以这两者在那里只有一种能判出来。libuv 杀进程走的是 `TerminateProcess(handle, 1)`，外部 kill 和进程自己 `exit(1)` 落到父进程手里完全一样（都是 `exit_code=1`、`signal=null`）。这种情况下报能证明的那个——`failed` 加退出码——而不是编一个平台根本没收到的信号名。Windows 上的 `lost` 仍然会发生，走的是 MCP 进程消失、下次启动结算孤儿那条路。
+Windows 上没有信号，所以这两个状态只判得出一个。libuv 杀进程走的是 `TerminateProcess(handle, 1)`，外部 kill 和进程自己 `exit(1)` 落到父进程手里完全一样（都是 `exit_code=1`、`signal=null`）。这种情况下报能证明的那个——`failed` 加退出码——而不是编一个平台根本没收到的信号名。Windows 上的 `lost` 仍然会发生，走的是 MCP 进程消失、下次启动结算孤儿那条路。
 
 ### goal 和 work 的映射
 
