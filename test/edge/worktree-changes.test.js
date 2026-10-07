@@ -18,7 +18,8 @@ async function worktreeFrom(repo, name) {
   return { wt, base, branch: `codex/${name}` };
 }
 
-const names = (files, wt) => files.map((f) => f.slice(wt.length + 1)).sort();
+// Relative to the worktree, with forward slashes on every platform.
+const names = (files, wt) => files.map((f) => f.slice(wt.length + 1).replaceAll("\\", "/")).sort();
 
 test("spaces, unicode, nested dirs, renames and deletions are all listed once", async () => {
   const { dir } = await makeRepo(join(home, "repo-names"));

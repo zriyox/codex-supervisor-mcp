@@ -2,7 +2,7 @@
 // explicit and derived titles, odd ids, and hostile paths.
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { dispatchArgs, makeRepo, startWebServer, tempHome, waitFor, withMcp } from "./helpers.js";
 
@@ -61,7 +61,7 @@ test("a session id with a slash round-trips through the URL", async () => {
 test("worker detail carries the live diff, reports, commands, token usage and event kinds", async () => {
   const { body } = await web.get(`/api/workers/${ids.a}`);
   assert.equal(body.id, ids.a);
-  assert.deepEqual(body.changed_files.map((f) => f.split("/").pop()).sort(), ["committed.txt", "uncommitted.txt"]);
+  assert.deepEqual(body.changed_files.map((f) => basename(f)).sort(), ["committed.txt", "uncommitted.txt"]);
   assert.equal(body.reports.length, 1);
   assert.match(body.reports[0], /committed one file/);
   assert.equal(body.commands.length, 1);

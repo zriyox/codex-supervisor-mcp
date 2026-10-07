@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, dirname } from "node:path";
+import { basename, join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { DatabaseSync } from "node:sqlite";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -573,7 +573,7 @@ await test("R7-1 work a worker committed on its branch is reported as changed", 
     assert.equal(created.base_commit, second, "the receipt names the commit the worktree was cut from");
     const final = await waitFor(client, created.id, (task) => task.status === "completed");
 
-    const names = (files) => files.map((file) => file.split("/").pop()).sort();
+    const names = (files) => files.map((file) => basename(file)).sort();
     assert.deepEqual(names(final.changed_files), ["committed.txt", "uncommitted.txt"], "status must list committed and uncommitted work");
     const result = await call(client, "get_worker_result", { task_id: created.id });
     assert.deepEqual(names(result.changed_files), ["committed.txt", "uncommitted.txt"], "get_worker_result must agree");
@@ -594,7 +594,7 @@ await test("R7-2 a row without base_commit falls back to the branch reflog", asy
     db.prepare("UPDATE tasks SET base_commit = NULL, changed_files = '[]' WHERE id = ?").run(created.id);
     db.close();
     const result = await call(client, "get_worker_result", { task_id: created.id });
-    const names = result.changed_files.map((file) => file.split("/").pop()).sort();
+    const names = result.changed_files.map((file) => basename(file)).sort();
     assert.deepEqual(names, ["committed.txt", "uncommitted.txt"]);
   });
 });

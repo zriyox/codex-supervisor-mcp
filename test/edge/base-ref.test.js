@@ -2,7 +2,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { mkdir } from "node:fs/promises";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { dispatchArgs, git, makeRepo, tempHome, waitFor, withMcp } from "./helpers.js";
 
 test("tag, short sha, branch name and full sha all cut the worktree from that commit", async () => {
@@ -32,7 +32,7 @@ test("a worker cut from another worker's branch sees that worker's commit", asyn
     assert.equal(b.base_commit, aHead, "b starts where a finished");
     await waitFor(call, b.id, (t) => t.status === "completed");
     const result = await call("get_worker_result", { task_id: b.id });
-    const names = result.changed_files.map((f) => f.split("/").pop()).sort();
+    const names = result.changed_files.map((f) => basename(f)).sort();
     assert.deepEqual(names, ["committed.txt", "uncommitted.txt"], "b's own work only, not a's commit, is reported as b's change");
   });
 });
