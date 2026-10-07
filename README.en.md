@@ -121,7 +121,9 @@ resume_codex_worker     when it must change something, one follow-up, amended in
 land_codex_worker       checked, then landed on the integration branch
 ```
 
-The last block was 25 steps; the main-brain session ran it end to end with nothing in its context but the brief and each worker's report. One worker per step came from trying it the other way: when a step is wrong, one `resume_codex_worker` asks for `--amend` into the same commit and the main brain checks again before landing; a worker that did three steps cannot be fixed that way, since steps 6 and 7 already sit on top of a wrong step 5.
+The last block was 25 steps. One main-brain session watched all 25, with nothing in its context but the brief and each worker's report; the workers' output never reached it.
+
+Why one worker does one step: when step 5 is wrong, the worker that did step 5 gets one `resume_codex_worker`, amends its own commit, the main brain checks again, and only then lands it. A worker that did steps 5, 6 and 7 cannot be fixed that way: 6 and 7 already sit on top of 5, so fixing 5 means redoing them too.
 
 ## What the board shows
 
