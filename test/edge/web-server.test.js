@@ -171,3 +171,38 @@ test("a taken port is reported in one sentence with the way out, exit code 1", a
     first.stop();
   }
 });
+
+// ---- pagination
+
+test("the overview and a session page with limit/offset and say whether there is more", async () => {
+  const first = await web.get("/api/overview?limit=1&offset=0");
+  assert.equal(first.body.sessions.length, 1);
+  assert.equal(first.body.total_sessions, 3);
+  assert.equal(first.body.has_more, true);
+  const second = await web.get("/api/overview?limit=1&offset=1");
+  assert.equal(second.body.sessions.length, 1);
+  assert.notEqual(second.body.sessions[0].id, first.body.sessions[0].id, "offset moves to the next session");
+  const last = await web.get("/api/overview?limit=2&offset=2");
+  assert.equal(last.body.sessions.length, 1);
+  assert.equal(last.body.has_more, false);
+  const beyond = await web.get("/api/overview?limit=5&offset=50");
+  assert.equal(beyond.body.sessions.length, 0);
+  assert.equal(beyond.body.has_more, false);
+  assert.equal(beyond.body.total_workers, 5, "totals describe the whole store, not the page");
+
+  const page = await web.get(`/api/sessions/${encodeURIComponent("s/with slash")}?limit=1&offset=0`);
+  assert.equal(page.body.workers.length, 1);
+  assert.equal(page.body.worker_count, 2, "the session summary counts every worker");
+  assert.equal(page.body.has_more, true);
+  assert.equal(page.body.workers[0].id, ids.a, "workers come in dispatch order");
+  const next = await web.get(`/api/sessions/${encodeURIComponent("s/with slash")}?limit=1&offset=1`);
+  assert.equal(next.body.workers[0].id, ids.b);
+  assert.equal(next.body.has_more, false);
+
+  const clamped = await web.get("/api/overview?limit=99999&offset=-5");
+  assert.equal(clamped.body.limit, 200);
+  assert.equal(clamped.body.offset, 0);
+  const garbage = await web.get("/api/overview?limit=abc&offset=xyz");
+  assert.equal(garbage.body.limit, 20);
+  assert.equal(garbage.body.offset, 0);
+});

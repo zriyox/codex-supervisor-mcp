@@ -27,6 +27,18 @@ description: 把 Codex CLI 当并行 worker 派活、盯进度、收结果。用
 
 `wait_codex_workers` 的等待预算管的是这一次调用，不是 worker。返回里 `still_running: true` 是等满了，不是活挂了，按 `next_step` 接着调就行。别把 `timeoutMinutes` 开到超过客户端的 MCP 工具超时——那样被掐掉的是这次调用，丢的是这次的结果。
 
+## 长任务怎么等
+
+一路活要跑二十分钟、一小时，正确的等法只有一种：**反复调 `wait_codex_workers`**，每次默认 2 分钟，回来看一眼 `still_running`，没完就再调。中间想省一点上下文就改调 `get_orchestration_overview`。
+
+**不要自己写 shell 循环去 `grep` / `tail` `data/runs/<taskId>.jsonl`**，哪怕看起来更省事。原因：
+
+- 那个文件只是 Codex 的原始输出。进程被杀、`failed`、`lost`、`exit_code` 这些只有状态机知道，文件里没有。你的循环会在一个已经死掉的 worker 上一直 `sleep`。
+- `turn.completed` 出现不等于活完成：进程退出后 `exit_code` 才落，`wait` 等的是这个；resume 过的 worker 文件里有多条 `turn.completed`，按条数判断会误判。
+- 用户在终端里看到的是一行 `until grep ... sleep 15` 的黑盒，不知道你在等什么、等了多久；`wait` 的返回有每路的状态和进度。
+
+要盯某一路的具体动作，用 `get_codex_worker_status`（`current_action` 是它正在跑的命令）；要看它说了什么，用 `get_worker_result`。
+
 | 参数 | 怎么填 |
 |---|---|
 | `task` | 这一路具体干什么。要能让对方直接开工，别写"优化一下" |
@@ -124,7 +136,7 @@ wait_codex_workers        （task_ids: [...], mode: "all"）
 
 ## 看板
 
-用户想用眼睛看这批活在干什么时，告诉他起 `codex-supervisor-web`（全局装过）或 `npx -p codex-supervisor-mcp codex-supervisor-web`，开 `http://127.0.0.1:7877`。看板按 session 分组，显示的就是派单时记的 `session_title`，所以标题要写得让人一眼看懂。
+用户想用眼睛看这批活在干什么时，告诉他起 `codex-supervisor-web`（全局装过）或 `npx -p codex-supervisor-mcp codex-supervisor-web`，开 `http://127.0.0.1:7877`。看板按 session 分组，显示的就是派单时记的 `session_title`，所以标题要写得让人一眼看懂。看板里每路 worker 有个「旁问」tab，用户可以直接问它（fork 出只读旁路会话，不影响 worker），所以不用替用户去 resume 一路 worker 就为了问个问题。
 
 ## 收尾
 

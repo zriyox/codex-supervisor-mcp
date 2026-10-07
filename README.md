@@ -84,7 +84,7 @@ npx -p codex-supervisor-mcp codex-supervisor-web
 
 它读哪个状态目录：环境里有 `SUPERVISOR_HOME` 就用它；没有就从当前目录往上找 `.mcp.json`，里面 `codex-supervisor` 配了 `SUPERVISOR_HOME` 就用那个；都没有才用默认的 `~/.codex-supervisor`。启动时会打印用的是哪个、从哪来的。在项目目录里敲一下就对上了，不用再传路径。
 
-端口用 `SUPERVISOR_WEB_PORT` 改。端口被占（多半是已经有一个看板在跑）会直接说明并退出。看板只读，不派单也不取消。
+端口用 `SUPERVISOR_WEB_PORT` 改。端口被占（多半是已经有一个看板在跑）会直接说明并退出。看板不派单也不取消；「旁问」会起一个只读的 Codex 旁路会话，见下面。
 
 ## 看板里有什么
 
@@ -93,7 +93,8 @@ npx -p codex-supervisor-mcp codex-supervisor-web
 | 左栏 | 每个 session 一行：标题（派单时的 `session_title`，没写就用各路 goal 拼一句）、worker 数、几路在跑、最近活动时间。左下角是当前版本和更新提示 |
 | session 页 | 标题、说明、首次派单和最近活动时间；一行统计（总数 / 运行中 / 完成 / 失败 / 丢失）；有 worker 在跑时列出每路正在执行的命令，静止时给最近一条汇报 |
 | worker 台账 | 一行一路：状态、标题、正在跑的命令或最后一句汇报、耗时、改了几个文件（按 worktree 真实 diff 算，含已 commit 的）、跑了几条命令、更新时间。鼠标停在标题上弹出 goal 全文、负责的路径、分支 |
-| worker 抽屉 | 耗时 / 退出码 / 运行次数；模型、token、沙箱、thread、session；分支、基线提交、worktree 路径；Codex 启动提示折叠；下面五个 tab：汇报（markdown 渲染）、改动、命令、事件（虚拟滚动）、任务书 |
+| worker 抽屉 | 顶上是状态、标题、goal、正在跑的命令和一行关键数字（耗时 / 文件 / 命令 / token / 退出码）；下面七个 tab：概览（开始结束、模型、沙箱、thread、分支、基线、worktree、负责的路径）、汇报（markdown 渲染）、改动、命令、事件（虚拟滚动）、任务书、旁问。抽屉和中间那条分隔线可以拖，双击还原 |
+| 旁问 | 对这路 worker 提问，就是 Codex 自己的 `/btw`：从它的 Codex 线程 `fork` 出一个只读旁路会话来答，能读它的 worktree 和磁盘上任何文件，改不了东西，也不碰它正在跑的活。第一问 fork，后面几问 `resume` 同一个旁路会话，可以多轮；思考、跑的命令（带退出码和输出）、答案按步骤实时出现。每一轮的问题和输出落在 sqlite 的 `side_turns` 表里：切 tab、关抽屉、刷新页面都不会断，回来自动接上回放；另一个标签页也能接上看或者停掉它；没人看的一轮照样跑完，结果留着；看板重启时正在跑的一轮标成「中断」。「结束并清空」会 `codex delete` 掉旁路会话并清掉记录。0.5 之前派的 worker 没记 thread id，问不了 |
 
 浅色深色跟系统走。只用系统字体，没有外网资源。
 

@@ -226,6 +226,9 @@ async function startTrackedRun({ record, args, prompt, logPath, spawnOptions = {
   }
 
   const now = new Date().toISOString();
+  // A new run starts clean. A resumed worker used to carry the error from
+  // the run that was lost, so a worker that was plainly running still showed
+  // "process disappeared" until it finished.
   let live = {
     ...record,
     status: "running",
@@ -235,6 +238,9 @@ async function startTrackedRun({ record, args, prompt, logPath, spawnOptions = {
     completed_at: null,
     exit_code: null,
     signal: null,
+    error: null,
+    current_action: null,
+    current_command: null,
     run_count: (record.run_count ?? 0) + 1,
     updated_at: now
   };

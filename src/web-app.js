@@ -22,6 +22,7 @@ import { readTaskChanges } from "./worktree.js";
 import { ACTIVE_STATUSES } from "./status.js";
 import { supervisorRoot } from "./paths.js";
 import { checkForUpdate } from "./update-check.js";
+import { attachToTurn, endSideSession, runSideTurn, sideSessionState, stopSideTurn } from "./side-chat.js";
 
 const here = fileURLToPath(new URL(".", import.meta.url));
 const distDir = resolve(here, "..", "web", "dist");
@@ -157,7 +158,20 @@ function sessionRow(key, tasks, meta = null) {
   };
 }
 
-async function overview() {
+// Pagination for the lists: `limit` rows after `offset`, newest activity
+// first for sessions, dispatch order for workers. The page says whether
+// there is more so the board loads the rest as the user scrolls.
+function pageParams(url, defaultLimit) {
+  const limit = Math.min(200, Math.max(1, Number(url.searchParams.get("limit") ?? defaultLimit) || defaultLimit));
+  const offset = Math.max(0, Number(url.searchParams.get("offset") ?? 0) || 0);
+  return { limit, offset };
+}
+
+function paginate(items, { limit, offset }) {
+  return { items: items.slice(offset, offset + limit), total: items.length, offset, limit, has_more: offset + limit < items.length };
+}
+
+async function overview({ limit, offset } = { limit: 20, offset: 0 }) {
   await reconcileDetachedActiveTasks();
   const tasks = await readTasks();
   const metas = new Map((await readSessions()).map((row) => [row.id, row]));
@@ -171,23 +185,33 @@ async function overview() {
     if (a.active_count !== b.active_count) return b.active_count - a.active_count;
     return String(b.last_activity_at ?? "").localeCompare(String(a.last_activity_at ?? ""));
   });
+  const page = paginate(sessions, { limit, offset });
   return {
     generated_at: new Date().toISOString(),
     store: supervisorRoot,
     total_workers: tasks.length,
     active_workers: tasks.filter((task) => ACTIVE_STATUSES.has(task.status)).length,
-    sessions
+    total_sessions: sessions.length,
+    offset: page.offset,
+    limit: page.limit,
+    has_more: page.has_more,
+    sessions: page.items
   };
 }
 
-async function session(key) {
+async function session(key, { limit, offset } = { limit: 40, offset: 0 }) {
   await reconcileDetachedActiveTasks();
   const tasks = (await readTasks()).filter((task) => sessionKey(task) === key);
   if (tasks.length === 0) return null;
   const meta = (await readSessions()).find((row) => row.id === key) ?? null;
+  const ordered = [...tasks].sort((a, b) => String(a.created_at ?? "").localeCompare(String(b.created_at ?? "")));
+  const page = paginate(ordered, { limit, offset });
   return {
     ...sessionRow(key, tasks, meta),
-    workers: tasks.map(workerRow)
+    offset: page.offset,
+    limit: page.limit,
+    has_more: page.has_more,
+    workers: page.items.map(workerRow)
   };
 }
 
@@ -229,6 +253,48 @@ async function events(taskId, url) {
   return { task_id: taskId, events: await readTaskEvents(taskId, limit, kinds) };
 }
 
+// Read a JSON request body, capped so a stray client cannot fill memory.
+function readJson(req, limit = 2 * 1024 * 1024) {
+  return new Promise((resolve, reject) => {
+    let size = 0;
+    const chunks = [];
+    req.on("data", (chunk) => {
+      size += chunk.length;
+      if (size > limit) {
+        reject(Object.assign(new Error("request body too large"), { code: "too_large" }));
+        req.destroy();
+        return;
+      }
+      chunks.push(chunk);
+    });
+    req.on("end", () => {
+      const text = Buffer.concat(chunks).toString("utf8");
+      if (!text.trim()) return resolve({});
+      try {
+        resolve(JSON.parse(text));
+      } catch (error) {
+        reject(Object.assign(new Error(`invalid JSON body: ${error.message}`), { code: "bad_json" }));
+      }
+    });
+    req.on("error", reject);
+  });
+}
+
+// The last user message of an AI SDK useChat request, as plain text.
+function lastUserText(body) {
+  if (typeof body?.text === "string") return body.text;
+  const messages = Array.isArray(body?.messages) ? body.messages : [];
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    const m = messages[i];
+    if (m?.role !== "user") continue;
+    const parts = Array.isArray(m.parts) ? m.parts : [];
+    const text = parts.filter((p) => p?.type === "text").map((p) => p.text ?? "").join("\n").trim();
+    if (text) return text;
+    if (typeof m.content === "string" && m.content.trim()) return m.content.trim();
+  }
+  return "";
+}
+
 function json(res, status, body) {
   const text = JSON.stringify(body);
   res.writeHead(status, {
@@ -265,14 +331,52 @@ async function route(req, res) {
   const url = new URL(req.url ?? "/", `http://${host}`);
   const parts = url.pathname.split("/").filter(Boolean);
   if (parts[0] !== "api") return serveStatic(res, url.pathname);
+
+  // The side chat is the one place the board does something: it forks the
+  // worker's Codex thread for a read-only side question.
+  if (parts[1] === "workers" && parts.length >= 4 && parts[3] === "chat") {
+    const taskId = decodeURIComponent(parts[2]);
+    const task = await getTask(taskId);
+    if (!task) return json(res, 404, { error: "task_not_found" });
+    const action = parts[4] ?? null;
+    // GET .../chat/<chatId>/stream is what the AI SDK client calls to
+    // resume: replay the running turn, or 204 when nothing is running.
+    if (req.method === "GET" && parts.length === 6 && parts[5] === "stream") {
+      attachToTurn(taskId, res);
+      return undefined;
+    }
+    if (req.method === "GET" && !action) return json(res, 200, { task_id: taskId, can_ask: Boolean(task.thread_id), worker_status: task.status, ...(await sideSessionState(taskId)) });
+    if (req.method === "DELETE" && !action) return json(res, 200, { task_id: taskId, ...(await endSideSession(taskId)) });
+    if (req.method === "POST" && action === "stop") return json(res, 200, { task_id: taskId, ...stopSideTurn(taskId) });
+    if (req.method === "POST" && !action) {
+      let body;
+      try {
+        body = await readJson(req);
+      } catch (error) {
+        return json(res, 400, { error: error.code ?? "bad_request", message: error.message });
+      }
+      const text = lastUserText(body);
+      if (!text) return json(res, 400, { error: "empty_question", message: "send a user message with text" });
+      try {
+        await runSideTurn({ task, text, res });
+      } catch (error) {
+        if (res.headersSent) return undefined;
+        const status = error.code === "busy" ? 409 : error.code === "no_thread" ? 400 : error.code === "codex_missing" ? 503 : 500;
+        return json(res, status, { error: error.code ?? "side_chat_failed", message: error.message });
+      }
+      return undefined;
+    }
+    return json(res, 405, { error: "method_not_allowed" });
+  }
+
   if (req.method !== "GET") return json(res, 405, { error: "method_not_allowed" });
 
-  if (parts[1] === "overview" && parts.length === 2) return json(res, 200, await overview());
+  if (parts[1] === "overview" && parts.length === 2) return json(res, 200, await overview(pageParams(url, 20)));
   if (parts[1] === "version" && parts.length === 2) {
     return json(res, 200, await checkForUpdate({ force: url.searchParams.get("force") === "1" }));
   }
   if (parts[1] === "sessions" && parts.length === 3) {
-    const body = await session(decodeURIComponent(parts[2]));
+    const body = await session(decodeURIComponent(parts[2]), pageParams(url, 40));
     return body ? json(res, 200, body) : json(res, 404, { error: "session_not_found" });
   }
   if (parts[1] === "workers" && parts.length === 3) {

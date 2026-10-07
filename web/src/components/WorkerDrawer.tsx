@@ -7,6 +7,8 @@ import { clock, duration, relativeToWorktree, tokens } from "../lib/format";
 import { StatusText } from "./StatusMark";
 import { EventStream } from "./EventStream";
 import { Markdown } from "./Markdown";
+import { SideChat } from "./SideChat";
+import { PanelFade, Segmented } from "./Segmented";
 
 interface Props {
   workerId: string;
@@ -108,11 +110,13 @@ function Commands({ worker }: { worker: WorkerDetail }) {
 }
 
 const TABS = [
+  { value: "overview", label: "概览" },
   { value: "report", label: "汇报" },
   { value: "changes", label: "改动" },
   { value: "commands", label: "命令" },
   { value: "events", label: "事件" },
-  { value: "prompt", label: "任务书" }
+  { value: "prompt", label: "任务书" },
+  { value: "ask", label: "旁问" }
 ] as const;
 type TabValue = (typeof TABS)[number]["value"];
 
@@ -140,12 +144,13 @@ export function WorkerDrawer({ workerId, onClose, onOpenWorker }: Props) {
       {!worker && <p className="t-subhead p-8 text-label-2">{error ? `读取失败：${error.message}` : "读取中…"}</p>}
       {worker && (
         <>
-          <header className="shrink-0 px-6 pt-5">
+          {/* 1. Identity: who this worker is and what it is doing now. Fixed. */}
+          <header className="shrink-0 border-b border-separator-soft px-6 pt-5 pb-4">
             <div className="flex items-start gap-3">
               <div className="min-w-0 flex-1">
                 <StatusText status={worker.status} phase={worker.phase} className="t-footnote" />
                 <h2 className="t-title2 mt-1">{worker.title}</h2>
-                {worker.goal && <p className="t-subhead mt-1 text-label-2">{worker.goal}</p>}
+                {worker.goal && <p className="t-subhead mt-1 line-clamp-2 text-label-2" title={worker.goal}>{worker.goal}</p>}
               </div>
               <button type="button" onClick={onClose} aria-label="关闭" className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-fill text-label-2 hover:bg-fill-2">
                 <X size={14} weight="bold" />
@@ -154,60 +159,85 @@ export function WorkerDrawer({ workerId, onClose, onOpenWorker }: Props) {
             {worker.status === "running" && worker.current_action && (
               <p className="t-footnote mono mt-3 truncate text-orange" title={worker.current_action}>{worker.current_action}</p>
             )}
-            {worker.error && <p className="t-subhead mt-3 rounded-lg bg-red/10 px-3 py-2 text-red">{worker.error}</p>}
+            {worker.error && (worker.status === "running" || worker.status === "queued"
+              ? <p className="t-footnote mt-3 text-label-2">上次运行：{worker.error}</p>
+              : <p className="t-footnote mt-3 rounded-lg bg-red/10 px-3 py-1.5 text-red">{worker.error}</p>)}
+
+            {/* 2. The numbers that matter, one line. */}
+            <div className="t-footnote mono tabular mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-label-2">
+              <span title="耗时">{duration(worker.duration_ms)}</span>
+              <span title="改动的文件数（worktree 真实 diff）">{worker.changed_files.length} 文件</span>
+              <span title="跑过的命令数">{worker.command_count} 命令</span>
+              <span title={`输入 ${worker.usage.input_tokens}（缓存命中 ${worker.usage.cached_input_tokens}）/ 输出 ${worker.usage.output_tokens}`}>
+                {tokens(worker.usage.input_tokens)} in · {tokens(worker.usage.output_tokens)} out
+              </span>
+              {worker.exit_code !== null && <span title="退出码">exit {worker.exit_code}</span>}
+              {worker.run_count > 1 && <span>第 {worker.run_count} 次运行</span>}
+            </div>
           </header>
 
-          <div className="min-h-0 flex-1 overflow-y-auto px-6 pb-8">
-            <Group>
-              <KV label="耗时">{duration(worker.duration_ms)}</KV>
-              <KV label="开始" mono>{clock(worker.started_at ?? worker.created_at)}</KV>
-              <KV label="结束" mono>{clock(worker.completed_at)}</KV>
-              <KV label="退出码" mono>{worker.exit_code ?? "—"}</KV>
-              <KV label="运行次数" mono>{worker.run_count}</KV>
-            </Group>
-            <Group>
-              <KV label="模型" mono>{worker.model ?? "默认"}</KV>
-              <KV label="tokens" mono title={`输入 ${worker.usage.input_tokens}（缓存命中 ${worker.usage.cached_input_tokens}）/ 输出 ${worker.usage.output_tokens} / ${worker.usage.turns} turn`}>
-                {tokens(worker.usage.input_tokens)} in · {tokens(worker.usage.output_tokens)} out
-              </KV>
-              <KV label="沙箱" mono>{worker.sandbox}</KV>
-              <KV label="thread" mono title={worker.thread_id ?? ""}>{worker.thread_id ?? "—"}</KV>
-              <KV label="worker" mono title={worker.id}>{worker.id}</KV>
-              <KV label="session" mono>{worker.session_id ?? "—"}</KV>
-              {worker.pid && worker.status === "running" && <KV label="pid" mono>{worker.pid}</KV>}
-            </Group>
-            <Group>
-              <KV label="分支" mono title={worker.branch ?? ""}>{worker.branch ?? "—"}</KV>
-              <KV label="基线" mono title={worker.base_commit ?? ""}>{worker.base_commit ? worker.base_commit.slice(0, 12) : "—"}</KV>
-              <KV label="worktree" mono title={worker.worktree_path ?? ""}>{worker.worktree_path ?? "—"}</KV>
-              {parent && (
-                <KV label={worker.followup_of ? "接续自" : "续跑自"} mono>
-                  <button type="button" className="text-blue" onClick={() => onOpenWorker(parent)}>{parent}</button>
-                </KV>
-              )}
-            </Group>
-            {worker.notices && <Notices text={worker.notices} />}
+          {/* 3. Tabs fixed, content below scrolls. The side chat owns its own scroll. */}
+          <Tabs.Root value={tab} onValueChange={(v) => setTab(v as TabValue)} className="flex min-h-0 flex-1 flex-col">
+            <div className="mx-6 mt-3">
+              <Segmented value={tab} segments={TABS.map((t) => ({ value: t.value, label: t.label, count: counts[t.value] }))} />
+            </div>
 
-            <Tabs.Root value={tab} onValueChange={(v) => setTab(v as TabValue)} className="mt-6">
-              {/* Segmented control: equal segments, selected one raised. */}
-              <Tabs.List className="relative grid grid-cols-5 rounded-lg bg-fill p-0.5">
-                {TABS.map((t) => (
-                  <Tabs.Tab key={t.value} value={t.value} className="t-footnote relative z-10 flex h-8 items-center justify-center gap-1 rounded-md font-medium text-label-2 outline-none transition-colors data-[selected]:text-label focus-visible:ring-2 focus-visible:ring-blue">
-                    {t.label}
-                    {counts[t.value] ? <span className="tabular text-label-3">{counts[t.value]}</span> : null}
-                    {tab === t.value && <motion.span layoutId="segment" className="absolute inset-0 -z-10 rounded-md bg-bg-2 shadow-[0_1px_3px_rgb(0_0_0/0.12)]" transition={{ type: "spring", stiffness: 500, damping: 40 }} />}
-                  </Tabs.Tab>
-                ))}
-              </Tabs.List>
-              <div className="mt-3">
+            {/* The side chat stays mounted while the drawer is open, so
+                switching tabs never drops a stream it is watching. */}
+            <Tabs.Panel value="ask" keepMounted className={`min-h-0 flex-1 flex-col px-6 pb-4 pt-3 ${tab === "ask" ? "flex" : "hidden"}`}>
+              <SideChat workerId={worker.id} canAsk={Boolean(worker.thread_id)} running={worker.status === "running"} />
+            </Tabs.Panel>
+            {tab !== "ask" && (
+              <div className="min-h-0 flex-1 overflow-y-auto px-6 pb-8 pt-3">
+                <PanelFade id={tab}>
+                <Tabs.Panel value="overview">
+                  <Group title="运行">
+                    <KV label="开始" mono>{clock(worker.started_at ?? worker.created_at)}</KV>
+                    <KV label="结束" mono>{clock(worker.completed_at)}</KV>
+                    <KV label="耗时">{duration(worker.duration_ms)}</KV>
+                    <KV label="退出码" mono>{worker.exit_code ?? "—"}</KV>
+                    <KV label="运行次数" mono>{worker.run_count}</KV>
+                    {worker.pid && worker.status === "running" && <KV label="pid" mono>{worker.pid}</KV>}
+                  </Group>
+                  <Group title="模型与会话">
+                    <KV label="模型" mono>{worker.model ?? "默认"}</KV>
+                    <KV label="tokens" mono title={`输入 ${worker.usage.input_tokens}（缓存命中 ${worker.usage.cached_input_tokens}）/ 输出 ${worker.usage.output_tokens} / ${worker.usage.turns} turn`}>
+                      {tokens(worker.usage.input_tokens)} in · {tokens(worker.usage.output_tokens)} out
+                    </KV>
+                    <KV label="沙箱" mono>{worker.sandbox}</KV>
+                    <KV label="thread" mono title={worker.thread_id ?? ""}>{worker.thread_id ?? "—"}</KV>
+                    <KV label="worker" mono title={worker.id}>{worker.id}</KV>
+                    <KV label="session" mono>{worker.session_id ?? "—"}</KV>
+                  </Group>
+                  <Group title="代码">
+                    <KV label="分支" mono title={worker.branch ?? ""}>{worker.branch ?? "—"}</KV>
+                    <KV label="基线" mono title={worker.base_commit ?? ""}>{worker.base_commit ? worker.base_commit.slice(0, 12) : "—"}</KV>
+                    <KV label="worktree" mono title={worker.worktree_path ?? ""}>{worker.worktree_path ?? "—"}</KV>
+                    <KV label="项目" mono title={worker.project_root}>{worker.project_root}</KV>
+                    {parent && (
+                      <KV label={worker.followup_of ? "接续自" : "续跑自"} mono>
+                        <button type="button" className="text-blue" onClick={() => onOpenWorker(parent)}>{parent}</button>
+                      </KV>
+                    )}
+                  </Group>
+                  {worker.owned_paths.length > 0 && (
+                    <Group title="负责的路径">
+                      {worker.owned_paths.map((p) => (
+                        <div key={p} className="t-footnote mono flex min-h-[32px] items-center py-1 text-label" title={p}><span className="truncate">{relativeToWorktree(p, worker.project_root)}</span></div>
+                      ))}
+                    </Group>
+                  )}
+                  {worker.notices && <Notices text={worker.notices} />}
+                </Tabs.Panel>
                 <Tabs.Panel value="report"><Reports worker={worker} /></Tabs.Panel>
                 <Tabs.Panel value="changes"><Changes worker={worker} /></Tabs.Panel>
                 <Tabs.Panel value="commands"><Commands worker={worker} /></Tabs.Panel>
-                <Tabs.Panel value="events" className="h-[60vh]"><EventStream events={eventData?.events ?? []} /></Tabs.Panel>
+                <Tabs.Panel value="events" className="h-[70vh]"><EventStream events={eventData?.events ?? []} /></Tabs.Panel>
                 <Tabs.Panel value="prompt"><pre className="inset t-subhead whitespace-pre-wrap break-words px-4 py-3 font-sans text-label">{worker.prompt ?? "—"}</pre></Tabs.Panel>
+                </PanelFade>
               </div>
-            </Tabs.Root>
-          </div>
+            )}
+          </Tabs.Root>
         </>
       )}
     </motion.section>

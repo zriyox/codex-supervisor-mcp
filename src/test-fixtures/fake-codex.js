@@ -40,9 +40,51 @@ process.stdin.on("end", () => {
 });
 
 async function main() {
+  if (args[0] === "delete") {
+    if (process.env.FAKE_CODEX_DELETE_LOG) {
+      const { appendFileSync } = await import("node:fs");
+      appendFileSync(process.env.FAKE_CODEX_DELETE_LOG, `${args[1]}\n`);
+    }
+    process.exit(0);
+  }
   if (scenario === "exit-immediately") process.exit(3);
   // Output is driven by the stdin "end" handler above.
   if (scenario === "echo-prompt") return;
+
+  // A side question: `exec fork <thread> -` forks, `exec resume <fork> -`
+  // continues the fork. The reply echoes the mode and the question, plus
+  // one reasoning block and one read-only command, so a test can check the
+  // whole chunk sequence the board turns this into.
+  if (args[0] === "exec" && (args[1] === "fork" || (args[1] === "resume" && scenario === "side-chat"))) {
+    const mode = args[1];
+    const target = args.filter((a) => !a.startsWith("-")).at(-1) === "-" ? args.filter((a) => !a.startsWith("-")).at(-2) : args.filter((a) => !a.startsWith("-")).at(-1);
+    const question = Buffer.concat(await new Promise((resolve) => {
+      const chunks = [];
+      process.stdin.on("data", (c) => chunks.push(c));
+      process.stdin.on("end", () => resolve(chunks));
+      setTimeout(() => resolve(chunks), 1500);
+    })).toString("utf8").trim();
+    if (scenario === "side-chat-fail") {
+      emit({ type: "thread.started", thread_id: mode === "fork" ? "fork-" + threadId : target });
+      emit({ type: "turn.started" });
+      emit({ type: "turn.failed", error: { message: "model refused" } });
+      return;
+    }
+    emit({ type: "thread.started", thread_id: mode === "fork" ? `fork-${threadId}` : target });
+    emit({ type: "item.completed", item: { id: "item_0", type: "error", message: "Codex is ignoring 1 unrecognized configuration setting." } });
+    emit({ type: "turn.started" });
+    if (scenario === "side-chat-hang") {
+      setInterval(() => {}, 1000);
+      return;
+    }
+    emit({ type: "item.completed", item: { id: "item_1", type: "reasoning", text: `thinking about: ${question}` } });
+    emit({ type: "item.started", item: { id: "item_2", type: "command_execution", command: "cat README.md", status: "in_progress" } });
+    await wait(stepMs);
+    emit({ type: "item.completed", item: { id: "item_2", type: "command_execution", command: "cat README.md", exit_code: 0, status: "completed", aggregated_output: "# readme\n" } });
+    emit({ type: "item.completed", item: { id: "item_3", type: "agent_message", text: `[${mode} of ${target}] answer to: ${question}` } });
+    emit({ type: "turn.completed", usage: { input_tokens: 10, cached_input_tokens: 5, output_tokens: 3 } });
+    return;
+  }
 
   if (args[0] === "exec" && args[1] === "resume") {
     if (scenario === "resume-fail") process.exit(4);

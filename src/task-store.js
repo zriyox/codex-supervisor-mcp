@@ -171,6 +171,31 @@ const SESSIONS_DDL = `
     );
   `;
 
+// Side questions asked from the board. One side session per worker (the
+// forked Codex thread), many turns under it. A turn keeps the stream chunks
+// it produced, so a page that comes back can replay what it missed and the
+// conversation survives a board restart.
+const SIDE_DDL = `
+    CREATE TABLE IF NOT EXISTS side_sessions (
+      task_id TEXT PRIMARY KEY,
+      fork_thread_id TEXT,
+      created_at TEXT NOT NULL,
+      ended_at TEXT
+    );
+    CREATE TABLE IF NOT EXISTS side_turns (
+      id TEXT PRIMARY KEY,
+      task_id TEXT NOT NULL,
+      question TEXT NOT NULL,
+      status TEXT NOT NULL,
+      chunks TEXT NOT NULL DEFAULT '[]',
+      usage TEXT,
+      error TEXT,
+      started_at TEXT NOT NULL,
+      ended_at TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_side_turns_task ON side_turns(task_id, started_at);
+  `;
+
 function sleepSync(ms) {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
@@ -205,6 +230,7 @@ function initializeSchema(dbInstance) {
       dbInstance.exec(TASK_EVENTS_INDEX_DDL);
       dbInstance.exec(TASKS_SESSION_INDEX_DDL);
       dbInstance.exec(SESSIONS_DDL);
+      dbInstance.exec(SIDE_DDL);
       dbInstance.exec("COMMIT;");
     } catch (error) {
       try {
@@ -435,6 +461,85 @@ export async function getSession(sessionId) {
 export async function readSessions() {
   await ensureFilesystem();
   return openDb().prepare("SELECT * FROM sessions").all();
+}
+
+// ---- side sessions and turns
+
+export async function getSideSession(taskId) {
+  await ensureFilesystem();
+  return openDb().prepare("SELECT * FROM side_sessions WHERE task_id = ? AND ended_at IS NULL").get(taskId) ?? null;
+}
+
+export async function openSideSession(taskId) {
+  await ensureFilesystem();
+  const now = new Date().toISOString();
+  openDb()
+    .prepare(`INSERT INTO side_sessions (task_id, fork_thread_id, created_at, ended_at) VALUES (?, NULL, ?, NULL)
+              ON CONFLICT(task_id) DO UPDATE SET fork_thread_id = NULL, created_at = excluded.created_at, ended_at = NULL`)
+    .run(taskId, now);
+  return getSideSession(taskId);
+}
+
+export async function setSideSessionFork(taskId, forkThreadId) {
+  await ensureFilesystem();
+  openDb().prepare("UPDATE side_sessions SET fork_thread_id = ? WHERE task_id = ? AND ended_at IS NULL").run(forkThreadId, taskId);
+}
+
+export async function closeSideSession(taskId) {
+  await ensureFilesystem();
+  const db = openDb();
+  const row = db.prepare("SELECT * FROM side_sessions WHERE task_id = ? AND ended_at IS NULL").get(taskId) ?? null;
+  const now = new Date().toISOString();
+  db.prepare("UPDATE side_sessions SET ended_at = ? WHERE task_id = ? AND ended_at IS NULL").run(now, taskId);
+  db.prepare("DELETE FROM side_turns WHERE task_id = ?").run(taskId);
+  return row;
+}
+
+export async function insertSideTurn(turn) {
+  await ensureFilesystem();
+  openDb()
+    .prepare(`INSERT INTO side_turns (id, task_id, question, status, chunks, usage, error, started_at, ended_at)
+              VALUES (@id, @task_id, @question, @status, @chunks, @usage, @error, @started_at, @ended_at)`)
+    .run({
+      id: turn.id,
+      task_id: turn.task_id,
+      question: turn.question,
+      status: turn.status,
+      chunks: JSON.stringify(turn.chunks ?? []),
+      usage: turn.usage ? JSON.stringify(turn.usage) : null,
+      error: turn.error ?? null,
+      started_at: turn.started_at,
+      ended_at: turn.ended_at ?? null
+    });
+}
+
+export async function updateSideTurn(id, fields) {
+  await ensureFilesystem();
+  const sets = [];
+  const params = { id };
+  for (const [key, value] of Object.entries(fields)) {
+    sets.push(`${key} = @${key}`);
+    params[key] = key === "chunks" || key === "usage" ? (value === null ? null : JSON.stringify(value)) : value;
+  }
+  if (sets.length === 0) return;
+  openDb().prepare(`UPDATE side_turns SET ${sets.join(", ")} WHERE id = @id`).run(params);
+}
+
+export async function readSideTurns(taskId) {
+  await ensureFilesystem();
+  return openDb()
+    .prepare("SELECT * FROM side_turns WHERE task_id = ? ORDER BY started_at ASC")
+    .all(taskId)
+    .map((row) => ({ ...row, chunks: decodeJson(row.chunks, []), usage: row.usage ? decodeJson(row.usage, null) : null }));
+}
+
+// A board that restarts cannot own a turn that was running when it died.
+export async function interruptRunningSideTurns() {
+  await ensureFilesystem();
+  const now = new Date().toISOString();
+  return openDb()
+    .prepare("UPDATE side_turns SET status = 'interrupted', error = COALESCE(error, 'the board restarted while this turn was running'), ended_at = ? WHERE status = 'running'")
+    .run(now).changes;
 }
 
 export async function getTasks(taskIds) {

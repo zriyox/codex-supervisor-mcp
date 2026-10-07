@@ -70,3 +70,53 @@ test("a worker that lingers after turn.completed is not reported until its exit 
     assert.equal(waited.workers[0].exit_code, 0);
   });
 });
+
+test("resuming a lost worker clears the error from the lost run", async () => {
+  const home = await tempHome("supervisor-resume-clean-");
+  const ws = join(home, "workspace");
+  let lostId;
+  await withMcp({ SUPERVISOR_HOME: home, FAKE_CODEX_SCENARIO: "hang" }, async ({ call }) => {
+    const created = await call("create_codex_worker", dispatchArgs("will-be-lost", ws));
+    const running = await (async () => {
+      const deadline = Date.now() + 10000;
+      for (;;) {
+        const t = await call("get_codex_worker_status", { task_id: created.id });
+        if (t.pid && t.thread_id) return t;
+        if (Date.now() > deadline) throw new Error("never started");
+        await new Promise((r) => setTimeout(r, 60));
+      }
+    })();
+    process.kill(running.pid, "SIGKILL");
+    lostId = created.id;
+    const deadline = Date.now() + 10000;
+    for (;;) {
+      const t = await call("get_codex_worker_status", { task_id: created.id });
+      if (t.status === "lost") {
+        assert.match(t.error, /killed by signal|disappeared/);
+        break;
+      }
+      if (Date.now() > deadline) throw new Error(`still ${t.status}`);
+      await new Promise((r) => setTimeout(r, 100));
+    }
+  });
+  // A fresh MCP process with a well-behaved fake resumes the same row.
+  await withMcp({ SUPERVISOR_HOME: home }, async ({ call }) => {
+    const resumed = await call("resume_codex_worker", { task_id: lostId, prompt: "carry on" });
+    assert.equal(resumed.status, "running");
+    assert.equal(resumed.error, null, "the receipt of the new run carries no stale error");
+    const status = await call("get_codex_worker_status", { task_id: lostId });
+    assert.equal(status.error, null, "the row has no stale error while the new run is alive");
+    const final = await (async () => {
+      const deadline = Date.now() + 10000;
+      for (;;) {
+        const t = await call("get_codex_worker_status", { task_id: lostId });
+        if (t.status !== "running") return t;
+        if (Date.now() > deadline) throw new Error("did not finish");
+        await new Promise((r) => setTimeout(r, 60));
+      }
+    })();
+    assert.equal(final.status, "completed");
+    assert.equal(final.error, null);
+    assert.equal(final.run_count, 2);
+  });
+});

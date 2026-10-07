@@ -6,7 +6,10 @@ import { WorkerLedger } from "./WorkerLedger";
 import { CardRow, HoverCard } from "./HoverCard";
 
 interface Props {
-  session: SessionDetail;
+  pages: SessionDetail[];
+  hasMore: boolean;
+  loadingMore: boolean;
+  loadMore: () => void;
   selectedWorker: string | null;
   onSelectWorker: (id: string) => void;
 }
@@ -20,7 +23,8 @@ function Stat({ label, value, tone = "" }: { label: string; value: number; tone?
   );
 }
 
-export function SessionBoard({ session, selectedWorker, onSelectWorker }: Props) {
+export function SessionBoard({ pages, hasMore, loadingMore, loadMore, selectedWorker, onSelectWorker }: Props) {
+  const session = pages[0]!;
   const live = session.active_count > 0;
   const c = session.counts;
   const name = session.title ?? sessionLabel(session.id, session.unsessioned);
@@ -88,7 +92,7 @@ export function SessionBoard({ session, selectedWorker, onSelectWorker }: Props)
 
       <div className="min-h-0 flex-1 overflow-y-auto px-8 pb-8">
         <div className="group-header mb-2">Worker（按派单顺序）</div>
-        <WorkerLedger session={session} selected={selectedWorker} onSelect={onSelectWorker} />
+        <WorkerLedger pages={pages} hasMore={hasMore} loadingMore={loadingMore} loadMore={loadMore} selected={selectedWorker} onSelect={onSelectWorker} />
       </div>
     </div>
   );

@@ -144,7 +144,7 @@ export async function startWebServer(env) {
   const { spawn } = await import("node:child_process");
   const port = 17000 + Math.floor(Math.random() * 2000);
   const child = spawn(process.execPath, [join(repoRoot, "src", "web-server.js")], {
-    env: { ...process.env, CODEX_SUPERVISOR_NO_UPDATE_CHECK: "1", ...env, SUPERVISOR_WEB_PORT: String(port) },
+    env: { ...process.env, CODEX_BIN: fakeCodex, CODEX_SUPERVISOR_NO_UPDATE_CHECK: "1", ...env, SUPERVISOR_WEB_PORT: String(port) },
     stdio: ["ignore", "pipe", "pipe"]
   });
   const base = `http://127.0.0.1:${port}`;

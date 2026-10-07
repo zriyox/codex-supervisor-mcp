@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
+import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 
 export type Status = "queued" | "running" | "completed" | "failed" | "cancelled" | "lost";
 export type Phase = "starting" | "thinking" | "command" | "editing" | "reporting" | null;
@@ -31,6 +31,10 @@ export interface Overview {
   store: string;
   total_workers: number;
   active_workers: number;
+  total_sessions: number;
+  offset: number;
+  limit: number;
+  has_more: boolean;
   sessions: SessionSummary[];
 }
 
@@ -69,6 +73,9 @@ export interface WorkerRow {
 }
 
 export interface SessionDetail extends SessionSummary {
+  offset: number;
+  limit: number;
+  has_more: boolean;
   workers: WorkerRow[];
 }
 
@@ -135,20 +142,30 @@ export function useVersion() {
   });
 }
 
+const SESSION_PAGE = 20;
+const WORKER_PAGE = 40;
+
+// Lists load a page at a time; the rail and the ledger ask for the next page
+// when their last row scrolls into view. Polling refetches every loaded
+// page, so a running batch keeps updating without resetting the scroll.
 export function useOverview() {
-  return useQuery({
+  return useInfiniteQuery({
     queryKey: ["overview"],
-    queryFn: () => get<Overview>("/api/overview"),
-    refetchInterval: (query) => ((query.state.data?.active_workers ?? 0) > 0 ? LIVE_MS : IDLE_MS)
+    queryFn: ({ pageParam }) => get<Overview>(`/api/overview?limit=${SESSION_PAGE}&offset=${pageParam}`),
+    initialPageParam: 0,
+    getNextPageParam: (last) => (last.has_more ? last.offset + last.limit : undefined),
+    refetchInterval: (query) => ((query.state.data?.pages[0]?.active_workers ?? 0) > 0 ? LIVE_MS : IDLE_MS)
   });
 }
 
 export function useSession(id: string | null) {
-  return useQuery({
+  return useInfiniteQuery({
     queryKey: ["session", id],
-    queryFn: () => get<SessionDetail>(`/api/sessions/${encodeURIComponent(id!)}`),
+    queryFn: ({ pageParam }) => get<SessionDetail>(`/api/sessions/${encodeURIComponent(id!)}?limit=${WORKER_PAGE}&offset=${pageParam}`),
+    initialPageParam: 0,
+    getNextPageParam: (last) => (last.has_more ? last.offset + last.limit : undefined),
     enabled: id !== null,
-    refetchInterval: (query) => ((query.state.data?.active_count ?? 0) > 0 ? LIVE_MS : IDLE_MS)
+    refetchInterval: (query) => ((query.state.data?.pages[0]?.active_count ?? 0) > 0 ? LIVE_MS : IDLE_MS)
   });
 }
 

@@ -84,7 +84,7 @@ Open `http://127.0.0.1:7877`. The left column lists sessions with the title give
 
 Which store it opens: `SUPERVISOR_HOME` from the environment if set; otherwise the nearest `.mcp.json` above the current directory, if its `codex-supervisor` entry sets `SUPERVISOR_HOME`; otherwise the default `~/.codex-supervisor`. The startup line says which one and where it came from, so running it inside the project directory is enough.
 
-`SUPERVISOR_WEB_PORT` changes the port. A taken port (usually a board that is already running) is reported in one line and the process exits. The board reads. It does not dispatch or cancel.
+`SUPERVISOR_WEB_PORT` changes the port. A taken port (usually a board that is already running) is reported in one line and the process exits. The board does not dispatch or cancel; the ask tab starts a read-only Codex side session, described below.
 
 ## What the board shows
 
@@ -93,9 +93,10 @@ Which store it opens: `SUPERVISOR_HOME` from the environment if set; otherwise t
 | Left column | One line per session: title (the `session_title` from dispatch, or a line built from the workers' goals when none was given), worker count, how many are running, last activity. The current version and any update notice sit at the bottom |
 | Session page | Title, note, first dispatch and last activity; a count line (total / running / completed / failed / lost); while workers run, the command each one is executing; when idle, the last report |
 | Worker ledger | One row per worker: status, title, the running command or the last line reported, time taken, files changed (the worktree's real diff, committed work included), commands run, last update. Hovering the title shows the full goal, the owned paths and the branch |
-| Worker drawer | Duration / exit code / run count; model, tokens, sandbox, thread, session; branch, base commit, worktree path; Codex startup notices folded away; five tabs: report (rendered markdown), changes, commands, events (virtualized), task text |
+| Worker drawer | Status, title, goal, the running command and one line of numbers (duration / files / commands / tokens / exit code) at the top; seven tabs below: overview (start and end, model, sandbox, thread, branch, base commit, worktree, owned paths), report (rendered markdown), changes, commands, events (virtualized), task text, ask. The divider between the main column and the drawer drags; double-click resets it |
+| Ask | A side question about this worker, the way Codex's own `/btw` works: its Codex thread is forked into a read-only side session that answers. The fork can read the worktree and any file on disk, changes nothing, and never touches the worker's own thread, running or not. The first question forks, later ones `resume` the same side session, so it is multi-turn; reasoning, the commands it ran (with exit code and output) and the answer appear step by step as Codex finishes them. Every turn's question and output is stored in the `side_turns` table: switching tabs, closing the drawer or reloading never cuts a turn off, the page re-attaches and replays; another tab can attach too, or stop it; a turn nobody watches still runs to the end and keeps its answer; a turn that was running when the board restarted is marked interrupted. "End" runs `codex delete` on the side session and clears the history. Workers dispatched before 0.5 recorded no thread id and cannot be asked |
 
-Light and dark follow the system. System fonts only, nothing fetched from the network.
+Lists load lazily: 20 sessions per page in the rail, 40 workers per page in the ledger, the next page fetched as you scroll to the end; while something runs the loaded pages refresh every 2.5 seconds. Light and dark follow the system. System fonts only, nothing fetched from the network.
 
 ## Tools
 

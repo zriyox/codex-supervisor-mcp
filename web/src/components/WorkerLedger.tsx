@@ -1,12 +1,16 @@
 import { motion } from "motion/react";
 import type { SessionDetail, WorkerRow } from "../api";
+import { useLoadMore } from "../lib/useLoadMore";
 import { clock, duration, plain, relative } from "../lib/format";
 import { StatusText } from "./StatusMark";
 import { CardRow, HoverCard } from "./HoverCard";
 import { relativeToWorktree, shortId } from "../lib/format";
 
 interface Props {
-  session: SessionDetail;
+  pages: SessionDetail[];
+  hasMore: boolean;
+  loadingMore: boolean;
+  loadMore: () => void;
   selected: string | null;
   onSelect: (id: string) => void;
 }
@@ -57,8 +61,11 @@ function Row({ worker, active, onSelect, index }: { worker: WorkerRow; active: b
   );
 }
 
-export function WorkerLedger({ session, selected, onSelect }: Props) {
-  const workers = [...session.workers].sort((a, b) => String(a.created_at ?? "").localeCompare(String(b.created_at ?? "")));
+export function WorkerLedger({ pages, hasMore, loadingMore, loadMore, selected, onSelect }: Props) {
+  // Pages arrive in dispatch order already; keep them as they come.
+  const workers = pages.flatMap((p) => p.workers);
+  const total = pages[0]?.worker_count ?? workers.length;
+  const sentinel = useLoadMore(hasMore, loadingMore, loadMore);
   return (
     <section className="inset overflow-hidden">
       <div className={`grid ${GRID} gap-x-4 border-b border-separator-soft px-4 py-2`}>
@@ -74,6 +81,9 @@ export function WorkerLedger({ session, selected, onSelect }: Props) {
           <Row key={worker.id} worker={worker} index={index} active={worker.id === selected} onSelect={() => onSelect(worker.id)} />
         ))}
       </ol>
+      <div ref={sentinel} className="t-caption border-t border-separator-soft px-4 py-2.5 text-center text-label-3">
+        {hasMore ? (loadingMore ? "加载中…" : `已显示 ${workers.length} / ${total}，继续滚动加载`) : `共 ${total} 路`}
+      </div>
     </section>
   );
 }

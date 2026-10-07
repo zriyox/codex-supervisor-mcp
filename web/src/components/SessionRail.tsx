@@ -1,9 +1,13 @@
 import { useVersion, type Overview, type SessionSummary } from "../api";
+import { useLoadMore } from "../lib/useLoadMore";
 import { relative, sessionLabel } from "../lib/format";
 import { StatusDot } from "./StatusMark";
 
 interface Props {
-  overview: Overview | undefined;
+  pages: Overview[] | undefined;
+  hasMore: boolean;
+  loadingMore: boolean;
+  loadMore: () => void;
   selected: string | null;
   onSelect: (id: string) => void;
 }
@@ -58,10 +62,12 @@ function VersionFooter() {
   );
 }
 
-export function SessionRail({ overview, selected, onSelect }: Props) {
-  const sessions = overview?.sessions ?? [];
+export function SessionRail({ pages, hasMore, loadingMore, loadMore, selected, onSelect }: Props) {
+  const overview = pages?.[0];
+  const sessions = pages?.flatMap((p) => p.sessions) ?? [];
   const live = sessions.filter((s) => s.active_count > 0);
   const idle = sessions.filter((s) => s.active_count === 0);
+  const sentinel = useLoadMore(hasMore, loadingMore, loadMore);
   return (
     <aside className="flex h-full min-h-0 flex-col border-r border-separator-soft bg-bg-2">
       <div className="px-5 pt-5 pb-3">
@@ -80,6 +86,9 @@ export function SessionRail({ overview, selected, onSelect }: Props) {
         <div className="group-header px-3 pt-4 pb-1">全部</div>
         {idle.map((s) => <Row key={s.id} session={s} active={s.id === selected} onSelect={() => onSelect(s.id)} />)}
         {overview && sessions.length === 0 && <p className="t-subhead px-3 py-6 text-label-2">还没有 worker。</p>}
+        <div ref={sentinel} className="t-caption py-3 text-center text-label-3">
+          {hasMore ? (loadingMore ? "加载中…" : `还有 ${(overview?.total_sessions ?? 0) - sessions.length} 个`) : overview && sessions.length > 0 ? `共 ${sessions.length} 个 session` : ""}
+        </div>
       </nav>
       <VersionFooter />
       {overview && (
