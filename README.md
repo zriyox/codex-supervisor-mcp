@@ -8,6 +8,8 @@
 [![CI](https://github.com/zriyox/codex-supervisor-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/zriyox/codex-supervisor-mcp/actions/workflows/ci.yml)
 [![node](https://img.shields.io/badge/node-%3E%3D22.13.0-339933.svg)](package.json)
 
+官网 [codex-supervisor.zriyo.com](https://codex-supervisor.zriyo.com) · 给模型读的 [llms.txt](https://codex-supervisor.zriyo.com/llms.txt)
+
 让几个 agent 同时改一个仓库，结果是互相覆盖、没人说得清谁改了什么，主线程的上下文还被 worker 的输出塞满。
 
 **codex-supervisor-mcp** 是一个 Codex MCP server，把「派单」和「记账」从模型上下文里拿出来放到磁盘上：一个主线程（Claude Code、Codex 或任何 MCP 客户端）同时指挥多个 Codex CLI worker，一个 worker 一个 Git worktree，状态落盘到 SQLite，附一个网页看板。

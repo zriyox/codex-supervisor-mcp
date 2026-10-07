@@ -8,6 +8,8 @@ English | [中文](README.md)
 [![CI](https://github.com/zriyox/codex-supervisor-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/zriyox/codex-supervisor-mcp/actions/workflows/ci.yml)
 [![node](https://img.shields.io/badge/node-%3E%3D22.13.0-339933.svg)](package.json)
 
+Website [codex-supervisor.zriyo.com](https://codex-supervisor.zriyo.com) · for models [llms.txt](https://codex-supervisor.zriyo.com/llms.txt)
+
 Point several agents at one repository and they overwrite each other, nobody can say who changed what, and the main thread's context fills up with worker output.
 
 **codex-supervisor-mcp** is a Codex MCP server that takes dispatch and bookkeeping out of the model's context and puts them on disk: one main thread (Claude Code, Codex, or any MCP client) runs several Codex CLI workers at once, one Git worktree per worker, state in SQLite, a web board on top.

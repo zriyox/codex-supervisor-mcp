@@ -3,12 +3,12 @@
   "version": "0.7.2",
   "type": "module",
   "description": "MCP server that dispatches and supervises parallel Codex CLI workers, one isolated Git worktree each, with a persisted work state machine.",
+  "homepage": "https://codex-supervisor.zriyo.com",
   "license": "MIT",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/zriyox/codex-supervisor-mcp.git"
   },
-  "homepage": "https://github.com/zriyox/codex-supervisor-mcp#readme",
   "bugs": {
     "url": "https://github.com/zriyox/codex-supervisor-mcp/issues"
   },
