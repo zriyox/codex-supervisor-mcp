@@ -8,317 +8,206 @@
 [![CI](https://github.com/zriyox/codex-supervisor-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/zriyox/codex-supervisor-mcp/actions/workflows/ci.yml)
 [![node](https://img.shields.io/badge/node-%3E%3D22.13.0-339933.svg)](package.json)
 
-让一个主线程（Claude Code、Codex、任何 MCP 客户端）同时指挥多个 Codex worker 干活。
+让一个主线程（Claude Code、Codex，或任何 MCP 客户端）同时指挥多个 Codex worker 干活。一个 worker 一个 Git worktree，状态全部落盘，附一个网页看板盯进度。
 
 ![演示：一个 Claude Code 主线程同时派 3 个 Codex worker，各自独立 worktree，并行跑完后合并提交](https://raw.githubusercontent.com/zriyox/codex-supervisor-mcp/main/assets/demo.gif)
 
-*30 秒演示（真跑，非摆拍）：Claude Code 主线程 `create_codex_worker` ×3 → 三个 worker 在各自 worktree 里并行干活 → 主线程收 3 份 diff 合并成一次 commit。*
+*30 秒演示（真跑）：主线程 `create_codex_worker` ×3，三个 worker 在各自 worktree 里并行干活，主线程收 3 份 diff 合成一次 commit。*
 
-一个 worker 一个独立 Git worktree，一个 worker 一个原生 Codex goal，状态全部落盘。主线程负责派单、等待、读结果、断线重连、取消。
+## 它是什么
 
-## 它解决什么
-
-直接让多个 agent 同时改一个仓库，结果是互相覆盖、没人知道谁改了什么。这个 MCP 把「派单」和「记账」从模型上下文里拿出来，落到磁盘上：
+直接让几个 agent 同时改一个仓库，结果是互相覆盖，没人说得清谁改了什么。这个 MCP 把「派单」和「记账」从模型上下文里拿出来，放到磁盘上：
 
 | 问题 | 做法 |
 |---|---|
-| 多个 worker 互相踩文件 | 每个 worker 一个 Git worktree；`ownedPaths` 在派单前做冲突检测 |
-| 主线程上下文塞不下 worker 的过程 | 事件流写 `data/runs/<taskId>.jsonl`；读事件有 `limit` / `maxChars` / `kinds` 三个闸门 |
-| 主线程读一次就被顶爆上下文 | `get_orchestration_overview` 把全部 worker 压到 2k token 以内 |
-| 进程重启后不知道谁还在跑 | `supervisor.sqlite` 里一行一个 work 快照，含 `thread_id` |
-| 换个会话就接不上之前的 worker | `resume_codex_worker` 走 `codex exec resume <thread_id>`，接的是同一个 Codex 会话 |
-| 分不清「跑失败了」和「进程没了」 | 状态机把 `failed` 和 `lost` 分开 |
+| 几个 worker 互相踩文件 | 一个 worker 一个 Git worktree，`ownedPaths` 在派单前查冲突 |
+| worker 的过程塞爆主线程上下文 | 事件写 `data/runs/<taskId>.jsonl`，读的时候有 `limit` / `maxChars` / `kinds` 三道闸 |
+| 主线程读一次状态就顶满 | `get_orchestration_overview` 把全部 worker 压进 7000 字节 |
+| 进程重启后不知道谁还在跑 | `supervisor.sqlite` 一行一个 work，带 `thread_id` |
+| 换个会话接不上之前的 worker | `resume_codex_worker` 走 `codex exec resume <thread_id>`，接的是同一个 Codex 会话 |
+| 分不清「跑失败」和「进程没了」 | 状态机把 `failed` 和 `lost` 分开 |
+| 看不见一批活现在到哪了 | `codex-supervisor-web` 开一个看板，按 session 看每路 worker 在干什么 |
 
-## 和 Claude Code 的 subagent 有什么区别
+worker 跑的是 `codex exec`，`model` 参数原样透传。主线程留在 Claude 上做判断，worker 可以挂 DeepSeek 或任何 Codex 配了 provider 的模型，账单分开算。
 
-先说一条已经不是差异的：Claude Code 的 subagent 现在能自己开 worktree 了（`isolation: worktree`，见 [官方 worktrees 文档](https://docs.claude.com/en/docs/claude-code/worktrees) 里的 "Isolate subagents with worktrees"）。文件隔离这件事官方已经做了，别为了这个装本插件。
+## 五分钟跑起来
 
-真正的差别在模型。subagent 的 `model` 字段只能填 Claude 的别名或完整 Claude 模型 ID（`sonnet` / `opus` / `haiku` / `inherit`），DeepSeek 这类非 Claude 模型填不进去，账单也全走 Anthropic 的价目表，派三个就是三份。
+前置：Node.js 22.13.0 以上，`codex` CLI 在 `PATH` 里。macOS、Linux、Windows 都行。
 
-派出去的是 `codex exec` 子进程，`model` 参数原样透传给 Codex CLI（`src/codex-runner.js:336`）。worker 用什么模型跟主线程没关系：主线程留在 Claude 上做判断，worker 可以挂 DeepSeek，在 Codex 的 `config.toml` 里配好 provider 就行。重活都在 worker 那边，主线程读的是 `get_orchestration_overview` 那张表，要看 diff 自己去 worker 的 worktree 里取。
-
-| | Claude Code subagent | codex-supervisor worker |
-|---|---|---|
-| 能跑什么模型 | 只能选 Claude：别名或完整 Claude 模型 ID | `model` 透传给 Codex CLI，DeepSeek 也能挂 |
-| 干活的是谁 | Claude Code 自己 | 独立的 `codex exec` 进程 |
-| 工作目录 | 默认和主线程同一个，可设 `isolation: worktree` | 一个 worker 一个 Git worktree |
-| 两个 worker 写同一个文件 | 靠 worktree 隔开，没有路径声明和冲突检查 | 派单前求 `ownedPaths` 交集，重叠就不建 worktree，报 `ownership_conflict` |
-| 主线程上下文 | subagent 的结果回到主线程 | 事件写 `data/runs/<taskId>.jsonl`，总览走 7000 字节硬预算（`src/mcp-server.js:32`） |
-| 主线程进程挂了 | worker 一起没 | `thread_id` 落 sqlite，`resume_codex_worker` 接回同一个会话 |
-| 谁能驱动 | 只有 Claude Code | 任意 MCP 客户端 |
-| 看 worker 干活的过程 | 只有它返回的结论 | 原始 JSONL 按 `kinds` / `limit` / `maxChars` 读 |
-
-## 架构
-
-```
-MCP client (Claude Code / Codex / ...)
-   │  stdio (MCP)
-   ▼
-codex-supervisor-mcp
-   │  spawn: codex exec --json
-   ▼
-Codex worker  ──►  data/runs/<taskId>.jsonl      原始 JSONL 事件流
-              ──►  supervisor.sqlite              tasks + task_events
-              ──►  worktrees/<taskId>/            独立 Git worktree
-```
-
-## 安装
-
-前置：**Node.js >= 22.13.0**（`node:sqlite` 在这个版本之前没有无 flag 的构建）和 `codex` CLI 在 `PATH` 里。macOS、Linux、Windows 都支持。
-
-### 快速开始
+### 1. 装
 
 ```bash
-# 1. 装
 npm install -g codex-supervisor-mcp
+```
 
-# 2. 确认挂上了
+全局安装的 `postinstall` 会自动做两件事：把配套 skill 装进 `~/.claude/skills/`、`~/.agents/skills/`、`~/.codex/skills/`；用 `claude mcp add -s user` 和 `codex mcp add` 把 MCP 注册上。确认一下：
+
+```bash
 claude mcp list | grep codex-supervisor
 codex mcp list  | grep codex-supervisor
 ```
 
-全局安装的 `postinstall` 会自动做两件事，**不需要手动配置**：
+没看到就手动补（`npx`、`--ignore-scripts`、pnpm 这些装法不跑 `postinstall`）：
 
-1. 把配套 skill 装进检测到的客户端目录：`~/.claude/skills/`、`~/.agents/skills/`、`~/.codex/skills/`。
-2. 用客户端自带的 CLI 注册 MCP：`claude mcp add -s user` / `codex mcp add`，注册的是 `node <包内绝对路径>`。
+```bash
+claude mcp add -s user codex-supervisor -- npx -y codex-supervisor-mcp
+codex mcp add codex-supervisor -- npx -y codex-supervisor-mcp
+```
 
-skill 已存在且内容不同时，先写一份 `SKILL.md.bak-<时间戳>` 再覆盖。任何一步失败都不会让安装失败。
+重启 Claude Code / Codex，MCP 进程才会换成新装的。
 
-### 手动挂载
+### 2. 派第一批活
 
-`postinstall` 没跑到（`--ignore-scripts`、`npx`、pnpm 之类）时，自己补一条：
+在 Claude Code 里直接说人话，skill 会让它走正确的流程：
 
-| 客户端 | 命令 |
+> 把这三个模块的单测补齐，用 codex-supervisor 分三路并行跑，session 叫「补单测」。
+
+主线程背后做的事是这样（你也可以自己调工具）：
+
+```
+create_codex_worker ×3   每路带 session_id、session_title、ownedPaths、goal
+wait_codex_workers       默认等 2 分钟，到点返回快照，没完就接着等
+get_worker_result ×3     收每路的完整汇报和改动清单
+```
+
+每路的改动在各自的 `codex/<taskId>` 分支上，合不合、怎么合由主线程定。
+
+### 3. 开看板
+
+```bash
+codex-supervisor-web
+# 没全局装也能起：
+npx -p codex-supervisor-mcp codex-supervisor-web
+```
+
+打开 `http://127.0.0.1:7877`。左栏按 session 列，显示派单时写的标题和还有几路在跑；点进去是这个 session 的 worker 台账；再点一路，右边抽屉是它的完整汇报、改动清单、命令、事件流、任务书和 token 消耗。有 worker 在跑时 2.5 秒刷一次，静止时 8 秒。
+
+端口用 `SUPERVISOR_WEB_PORT` 改，状态目录用 `SUPERVISOR_HOME` 改（要和 MCP 用的同一个）。看板只读，不派单也不取消。
+
+## 看板里有什么
+
+| 位置 | 内容 |
 |---|---|
-| Claude Code | `claude mcp add -s user codex-supervisor -- npx -y codex-supervisor-mcp` |
-| Codex | `codex mcp add codex-supervisor -- npx -y codex-supervisor-mcp` |
+| 左栏 | 每个 session 一行：标题（派单时的 `session_title`，没写就用各路 goal 拼一句）、worker 数、几路在跑、最近活动时间。左下角是当前版本和更新提示 |
+| session 页 | 标题、说明、首次派单和最近活动时间；一行统计（总数 / 运行中 / 完成 / 失败 / 丢失）；有 worker 在跑时列出每路正在执行的命令，静止时给最近一条汇报 |
+| worker 台账 | 一行一路：状态、标题、正在跑的命令或最后一句汇报、耗时、改了几个文件（按 worktree 真实 diff 算，含已 commit 的）、跑了几条命令、更新时间。鼠标停在标题上弹出 goal 全文、负责的路径、分支 |
+| worker 抽屉 | 耗时 / 退出码 / 运行次数；模型、token、沙箱、thread、session；分支、基线提交、worktree 路径；Codex 启动提示折叠；下面五个 tab：汇报（markdown 渲染）、改动、命令、事件（虚拟滚动）、任务书 |
 
-重跑、修复、只装某一个客户端，或者先看它打算干什么：
-
-```bash
-codex-supervisor-setup                      # 自动检测客户端，补装 skill + 注册 MCP
-codex-supervisor-setup --target claude,codex
-codex-supervisor-setup --skill-only         # 只装 skill，不碰 MCP 配置
-codex-supervisor-setup --mcp-only           # 只注册 MCP，不装 skill
-codex-supervisor-setup --dry-run            # 只打印计划，不改任何东西
-```
-
-### 挂到 GUI 客户端
-
-自己建/改下面的配置文件，加这一段（GUI 客户端不会跑 `postinstall`）：
-
-```json
-{
-  "mcpServers": {
-    "codex-supervisor": {
-      "command": "npx",
-      "args": ["-y", "codex-supervisor-mcp"]
-    }
-  }
-}
-```
-
-| 客户端 | macOS | Windows | Linux |
-|---|---|---|---|
-| Claude Desktop | `~/Library/Application Support/Claude/claude_desktop_config.json` | `%APPDATA%\Claude\claude_desktop_config.json` | `~/.config/Claude/claude_desktop_config.json` |
-| Cursor | `~/.cursor/mcp.json` | `%APPDATA%\Cursor\mcp.json` | `~/.config/cursor/mcp.json` |
-| Windsurf | `~/.codeium/windsurf/mcp_config.json` | `%APPDATA%\Codeium\windsurf\mcp_config.json` | `~/.config/.codeium/windsurf/mcp_config.json` |
-
-### npx 的坑
-
-`npx` 不跑 `postinstall`，所以 **skill 不会自动装、MCP 也不会自动注册**，只有 MCP server 本身能起来。要用配套 skill 就还是得 `npm install -g`，或者手动跑一次 `codex-supervisor-setup`。
-
-### 更新
-
-```bash
-npm install -g codex-supervisor-mcp@latest
-npm ls -g --depth=0 | grep codex-supervisor    # 确认版本号真的变了
-```
-
-`postinstall` 会重跑一遍：skill 按内容比对，不一样就备份 `SKILL.md.bak-<时间戳>` 再覆盖；MCP 已经注册过的客户端跳过。
-
-三个已知的坑：
-
-- **刚发布的版本，registry 的 `latest` 会延迟几分钟**。装完发现版本号没变，就等一会儿再装，或者直接写死版本：`npm install -g codex-supervisor-mcp@0.5.3`。
-- **`npm link` / `npm i -g .` 装出来的是软链**。这种情况改 `src/` 立即生效，但改 `skills/SKILL.md` 不会自动同步，要手动跑一次 `codex-supervisor-setup`。想换回正式安装，直接 `npm install -g codex-supervisor-mcp@latest` 就会覆盖掉软链。
-- **换 Node 版本会让注册失效**。注册的是绝对路径（`~/.nvm/versions/node/<版本>/lib/node_modules/...`），而 `postinstall` 看到「已注册」就跳过，不会改写路径。这时先摘掉再装：
-
-```bash
-claude mcp remove -s user codex-supervisor
-codex mcp remove codex-supervisor
-npm install -g codex-supervisor-mcp@latest
-```
-
-只想重跑安装、不升级版本，用 `codex-supervisor-setup`。
-
-### 卸载
-
-```bash
-npm uninstall -g codex-supervisor-mcp
-claude mcp remove -s user codex-supervisor
-codex mcp remove codex-supervisor
-rm -rf ~/.claude/skills/codex-supervisor ~/.agents/skills/codex-supervisor ~/.codex/skills/codex-supervisor
-rm -rf ~/.codex-supervisor      # 状态目录：sqlite、事件流、worktree 全在这
-```
-
-### Windows
-
-- npm 装的 CLI 在 Windows 上是 `codex.cmd` 而不是可执行文件，Node 从 18.20 / 20.12 起拒绝直接 `spawn` 它（CVE-2024-27980 之后的行为，报 `EINVAL`）。这里不用 `shell: true` 绕——那样 shell 会变成子进程，取消时只杀掉 shell 而真正的 Codex 还在跑，状态机会卡在 `running`。做法是绕到 npm 包自己的入口（`node_modules/@openai/codex/bin/codex.js`），用 `node` 起它；`CODEX_BIN` 指向 `.js` 时同样处理。
-- 跨进程取消用 `taskkill /PID <pid> /T /F` 结束整棵进程树；确认这个 pid 还是 Codex 用 PowerShell 的 `Get-CimInstance Win32_Process` 读命令行（拿不到时退到 `tasklist`）。`ps` 只在 macOS / Linux 上用。
-- 除了 `PATH`，还会探 `%APPDATA%\npm`、`%LOCALAPPDATA%\pnpm`、`%LOCALAPPDATA%\Volta\bin`、`%ProgramFiles%\nodejs`。
-
-自动安装只在**全局安装**时发生。`npx`、`--ignore-scripts`、以及被别人当项目依赖装的场景都不会触发。想跳过就设 `CODEX_SUPERVISOR_SKIP_SETUP=1`。
-
-### 疑难排查
-
-| 症状 | 原因 | 处理 |
-|---|---|---|
-| `claude mcp list` 里没有 `codex-supervisor` | `npx` / `--ignore-scripts` 装法不跑 `postinstall` | 跑 `codex-supervisor-setup`，或用上面的手动挂载 |
-| 派单报 `codex only resolved to a shell shim` | Windows 上只找到 `.cmd`，背后的 npm 包入口不在了 | 重装 `@openai/codex`，或把 `CODEX_BIN` 指到真正的可执行文件 / `codex.js` |
-| worker 起来就 `failed`，错误是 `spawn codex ENOENT` | GUI 客户端启动的进程 `PATH` 里没有 `codex` | 在客户端配置里显式设 `CODEX_BIN` |
-| `Cannot find module 'node:sqlite'` | Node < 22.13.0 | 升 Node |
-| worker 卡在 `lost` | MCP 进程被 kill，worker 成了孤儿 | `list_codex_workers` 结算一次，或 `resume_codex_worker` 接回来 |
-| 报 `ownedPaths overlap with active worker(s)` | 两个 worker 认领了同一片路径 | 换路径，或先 `cancel_codex_worker` 掉占用的那个 |
+浅色深色跟系统走。只用系统字体，没有外网资源。
 
 ## 工具
 
-16 个工具。
+16 个。
 
 | 工具 | 入参 | 作用 |
 |---|---|---|
-| `create_codex_worker` | `task`, `cwd`, **`ownedPaths`**, **`goal`**, `session_id`, `session_title`, `session_note`, `dependsOn`, `baseRef`, `sandbox`, `model`, `reasoningEffort`, `title`, `skipGitRepoCheck` | 起一个 worker。`session_title` / `session_note` 记下这一批活是干什么的，看板和 `get_session_works` 显示它们而不是光秃秃的 id；`baseRef` 指定 worktree 从哪个提交切（默认仓库 `HEAD`），要接着另一路还没合进主线的 `codex/<id>` 分支干就传它 |
-| `create_codex_followup_worker` | `task_id`, `followup_prompt`, `session_id`, + 同上 | 起一个**新会话**，把老 worker 的 prompt、状态、近期事件拼进去 |
-| `resume_codex_worker` | `task_id`, `prompt` | 接**同一个** Codex 会话继续跑 |
-| `list_codex_workers` | `status`, `includeHistory`, `includeDetails` | 列出 worker，默认只看在跑的 |
-| `get_orchestration_overview` | `status`, `limit` | 全部 worker 的紧凑状态表，默认给主线程用 |
-| `wait_codex_workers` | `task_ids`, `mode`(any/all), `timeoutMinutes`, `timeoutMs`, `includeEvents`, `eventLimit`, `eventMaxChars`, `eventKinds` | 等终态，回摘要。默认只等 2 分钟，到点带进度快照返回，worker 照跑；接着调同一个工具继续等。默认**不带**事件（`includeEvents: false`），要事件就自己开 |
-| `get_codex_worker_status` | `task_id`, `includePrompt`, `promptMaxChars` | 单个 worker 的状态：生命周期、phase、当前动作、改动文件、goal、最近的命令，prompt 默认截断。要 prompt 全文传 `includePrompt: true` |
-| `get_codex_worker_events` | `task_id`, `limit`, `maxChars`, `kinds` | 读原始事件流 |
-| `get_worker_goal` | `task_id` | 读 worker 的 goal（supervisor 侧 + Codex 原生） |
-| `get_worker_summary` | `task_id` | 单个 worker 的一段话总结，主线程收尾时读这个 |
-| `get_worker_result` | `task_id`, `limit`, `maxChars` | 读 worker 自己的完整收尾汇报。总览和 `wait_codex_workers` 把最后一条消息截到 400 字只留开头，要结论读这个 |
-| `get_session_works` | `session_id` | 一个 session 派出去的全部 worker，按时间升序。主线程挂了之后靠它找回那批活 |
-| `search_works` | `query`, `limit` | 在 title / goal / prompt / last_message 里做子串匹配，从新到旧 |
-| `describe_session` | `session_id`, `title`, `note` | 给一个 session 记标题和说明，没传的字段保留原值。派单时漏了可以事后补 |
-| `check_for_update` | `force` | 问 npm registry 有没有更新的版本、本机装的文件和发布的 tarball 是否一致。启动时会自动查一次，这个工具用来强制再查 |
-| `cancel_codex_worker` | `task_id` | 终止 worker，进程句柄不在本进程时按 pid 兜底 |
+| `create_codex_worker` | `task`, `cwd`, **`ownedPaths`**, **`goal`**, `session_id`, `session_title`, `session_note`, `dependsOn`, `baseRef`, `sandbox`, `model`, `reasoningEffort`, `title`, `skipGitRepoCheck` | 起一个 worker。`session_title` / `session_note` 记这批活是干什么的；`baseRef` 指定 worktree 从哪个提交切，默认仓库 `HEAD`，要接着另一路没合进主线的 `codex/<id>` 分支干就填它 |
+| `create_codex_followup_worker` | `task_id`, `followup_prompt`, `session_id`, 其余同上 | 开一个新会话，把老 worker 的 prompt、状态、近期事件拼进去 |
+| `resume_codex_worker` | `task_id`, `prompt` | 接同一个 Codex 会话继续跑，`thread_id` 不变 |
+| `wait_codex_workers` | `task_ids`, `mode`(any/all), `timeoutMinutes`, `timeoutMs`, `includeEvents`, `eventLimit`, `eventMaxChars`, `eventKinds` | 等终态。默认 2 分钟，到点带快照返回，worker 照跑；`still_running: true` 时拿同一批 id 接着调。默认不带事件 |
+| `get_orchestration_overview` | `status`, `limit` | 全部 worker 的状态表，封顶 7000 字节。带 `version` 和 `update` |
+| `get_worker_result` | `task_id`, `limit`, `maxChars` | worker 自己的完整汇报，外加 `status` / `exit_code` / `changed_files`。收结论用这个 |
+| `get_worker_summary` | `task_id` | 一段话：goal、状态、改动、最后一条命令和消息 |
+| `get_codex_worker_status` | `task_id`, `includePrompt`, `promptMaxChars` | 单个 worker 的状态细节，prompt 默认截到 300 字 |
+| `get_codex_worker_events` | `task_id`, `limit`, `maxChars`, `kinds` | 原始事件流 |
+| `get_worker_goal` | `task_id` | 派单时记的 goal + Codex 原生 goal（token、用时） |
+| `list_codex_workers` | `status`, `includeHistory`, `includeDetails` | 列 worker，默认只看在跑的 |
+| `get_session_works` | `session_id` | 一个 session 的全部 worker 和它的标题、说明。主线程重启后靠它找回那批活 |
+| `describe_session` | `session_id`, `title`, `note` | 给 session 记标题和说明，没传的字段保留 |
+| `search_works` | `query`, `limit` | 在 title / goal / prompt / last_message 里找子串，从新到旧 |
+| `check_for_update` | `force` | 问 registry 有没有新版本、本机文件和发布的 tarball 是否一致 |
+| `cancel_codex_worker` | `task_id` | 终止 worker。进程句柄不在本进程时按 pid 兜底，先确认那个 pid 跑的是 codex |
 
-### 为什么 `ownedPaths` 和 `goal` 是必填
+### 三个必填项
 
-- `ownedPaths`：这个 worker 允许写的路径（相对 `cwd` 或绝对路径都行）。派单前和所有在跑的 worker 求交集，重叠就拒绝，返回冲突的 `task_id`，不会先建 worktree 再报错。
-- `goal`：`{ objective, tokenBudget? }`。这是主线程做 L1 总结的锚点，也是判断 work 该不该结束的依据。
+- `ownedPaths`：这路 worker 允许写的路径。派单前和所有在跑的 worker 求交集，重叠就拒，返回冲突的 `task_id`，worktree 都不会建。它只在派单时查，不是运行时沙箱。
+- `goal.objective`：一句话说这路活的目标。worker 起手会用它建 Codex 原生 goal，干完标 complete。
+- `session_id`：严格说不是必填，但不传就归不了组，看板和 `get_session_works` 都找不回来。一批活传同一个值，第一路顺手带上 `session_title`。
 
-`dependsOn` 记的是 worker 之间的依赖边，落库，主线程查得到谁等谁。
+### 读结果别撑爆上下文
 
-### 读事件的三个闸门
+| 想干什么 | 用哪个 | 代价 |
+|---|---|---|
+| 看全部 worker 状态 | `get_orchestration_overview` | 7000 字节封顶 |
+| 收一路的结论 | `get_worker_result` | 汇报全文，大活上万字 |
+| 只看活着还是完了 | `get_worker_summary` | 一段话 |
+| 看过程 | `get_codex_worker_events` | 用 `kinds` 先滤、`limit` 限条数、`maxChars` 截长串 |
 
-`get_codex_worker_events` 的三个参数把读的成本压住：
+派单回执是精简的，不回传任务原文。`wait_codex_workers` 的 `last_message` 截到 400 字，`current_action` 截到 300 字，要全文走 `get_worker_result` 和 `get_codex_worker_events`。这些裁剪是为了一次 wait 五路从几十 KB 降到几 KB；客户端把超时的调用挪到后台再把结果当通知回灌时，这个差别很大。
 
-| 参数 | 作用 |
-|---|---|
-| `limit` | 最多几条 |
-| `maxChars` | 单条事件里超长的字符串从中间截断（保留头尾） |
-| `kinds` | 只看指定的几类事件，先过滤再取 `limit` |
+## 和 Claude Code 的 subagent 有什么区别
 
-截断规则是照抄 Codex 自己的 `TruncationPolicy::Bytes`：中间截、保留头尾，前面加
+文件隔离不是差别：subagent 自己也能开 worktree（`isolation: worktree`）。差别在模型和进程。
 
-```
-Warning: truncated output (original token count: N)
-Total output lines: M
-```
+| | Claude Code subagent | codex-supervisor worker |
+|---|---|---|
+| 能跑什么模型 | 只能选 Claude | `model` 透传给 Codex CLI，DeepSeek 也能挂 |
+| 干活的是谁 | Claude Code 自己 | 独立的 `codex exec` 进程 |
+| 两路写同一个文件 | 靠 worktree 隔开，没有路径声明 | 派单前查 `ownedPaths` 交集，重叠直接拒 |
+| 主线程进程挂了 | worker 一起没 | `thread_id` 在 sqlite 里，`resume_codex_worker` 接回同一个会话 |
+| 谁能驱动 | 只有 Claude Code | 任何 MCP 客户端 |
+| 看过程 | 只有它返回的结论 | 原始 JSONL 和网页看板 |
 
-`get_orchestration_overview` 的预算同样是硬保证：字段上限逐级收紧，直到整包 JSON 落在 7000 字节（约 1750 token）以内，返回值里的 `approx_tokens` 就是它自己的实际成本。
+## 状态机
 
-## work 状态机
-
-`status` 是生命周期，一个 work 一个值，不会被进度覆盖：
+`status` 是生命周期，一个 work 一个值：
 
 | 值 | 含义 |
 |---|---|
 | `queued` | 已派单，未启动 |
 | `running` | 运行中 |
 | `completed` | 成功 |
-| `failed` | 失败（非零退出码、`turn.failed`、spawn 失败） |
+| `failed` | 非零退出码、`turn.failed`、spawn 失败 |
 | `cancelled` | 被 `cancel_codex_worker` 中断 |
-| `lost` | 被外部信号杀掉、或 MCP 进程消失，没写终止事件 |
+| `lost` | 被外部信号杀掉、MCP 进程消失、或者行写了但进程从没起来 |
 
-`phase` 只在 `running` 时有值，到终态归 `null`：
+`phase` 只在 `running` 时有值：`starting → thinking → command → editing → reporting`。
 
-```
-starting → thinking → command → editing → reporting
-```
+`failed` 要看日志，`lost` 直接重跑。终态分两步落盘：`turn.completed` 先把 status 置成 completed，进程退出后才写 `exit_code`；`wait_codex_workers` 等到 `exit_code` 落了才返回，直接读 status 撞上 `completed` 配 `exit_code: null` 就过一会再读。
 
-`failed` 和 `lost` 分开是有用的：前者要看日志找原因，后者直接重跑。
+Windows 没有信号，外部 kill 和进程自己 `exit(1)` 在父进程看来一样，所以那里只报 `failed` 加退出码。
 
-Windows 上没有信号，所以这两个状态只判得出一个。libuv 杀进程走的是 `TerminateProcess(handle, 1)`，外部 kill 和进程自己 `exit(1)` 落到父进程手里完全一样（都是 `exit_code=1`、`signal=null`）。这种情况下报能证明的那个——`failed` 加退出码——而不是编一个平台根本没收到的信号名。Windows 上的 `lost` 仍然会发生，走的是 MCP 进程消失、下次启动结算孤儿那条路。
-
-### goal 和 work 的映射
-
-Codex 原生 goal 有六个状态，映射到 work 状态：
-
-| goal 状态 | work status | 说明 |
-|---|---|---|
-| `active` | `running` | 正常推进 |
-| `paused` | `running` | 暂停，等人 |
-| `blocked` | `running` | 卡住，需要主线程介入 |
-| `usageLimited` / `usage_limited` | `failed` | 配额用尽 |
-| `budgetLimited` / `budget_limited` | `failed` | 预算用尽 |
-| `complete` | `completed` | 达成 |
-
-`paused` 和 `blocked` 不是结束，是「需要人管」。`get_orchestration_overview` 会把这两个单独列进 `needs_attention`，不用靠超时猜。
+Codex 原生 goal 的六个状态映射：`active` / `paused` / `blocked` 都算 `running`（后两个进 `needs_attention`），`usageLimited` / `budgetLimited` 算 `failed`，`complete` 算 `completed`。
 
 ## 状态存储
 
-默认写在 `~/.codex-supervisor/`：
+默认在 `~/.codex-supervisor/`：
 
 | 文件 | 内容 |
 |---|---|
-| `data/supervisor.sqlite` | `tasks`（一行一个 work）+ `task_events`（结构化事件，带 `seq`） |
-| `data/runs/<taskId>.jsonl` | Codex `--json` 原始输出，逐行事件 |
-| `worktrees/<taskId>/` | 该 worker 的独立 Git worktree |
+| `data/supervisor.sqlite` | `tasks`（一行一个 work）、`task_events`（结构化事件）、`sessions`（标题和说明） |
+| `data/runs/<taskId>.jsonl` | Codex `--json` 的原始输出 |
+| `data/update-check.json` | 更新检查的缓存 |
+| `worktrees/<taskId>/` | 该 worker 的 Git worktree |
 
-老版本（0.1.x）的库会在第一次打开时自动迁移：`editing` / `command` / `command_completed` / `reporting` 这些原本塞在 `status` 里的过程值会被拆到 `phase`，`status` 归到 `running`，一行不丢。迁移在一个 `BEGIN IMMEDIATE` 事务里做，多个进程同时启动也只会有一个真的迁移。
+`changed_files` 有三个来源：Codex 的 `file_change` 事件；worktree 里的 `git status --porcelain`（未提交的）；`git diff --name-only <base_commit> HEAD`（已提交的）。后两个是兜底。worker 用 shell 改文件不产生 `file_change` 事件，自己 commit 之后 `git status` 又是干净的，一批五路 worker 全这么干过，读回来全是空数组。`base_commit` 派单时记在行上，更早的行退回去读分支 reflog 最老那条。git 读操作都带 `core.quotePath=false`，中文文件名不会变成八进制转义。
 
-`changed_files` 有三个来源：Codex 的 `file_change` 事件、worker 自己 worktree 里的 `git status --porcelain`（未提交的部分）、以及 `git diff --name-only <base_commit> HEAD`（已提交的部分）。后两个是兜底：worker 用 shell 命令（`printf > file`）改文件时不会产生 `file_change` 事件；它自己在分支上 commit 之后 `git status` 又是干净的，一批五路 worker 全这么干过，读回来全是空数组。`base_commit` 在派单时记在行上；更早的行没有这列，就退回去读 `codex/<taskId>` 分支 reflog 里最老的那条，那是分支建出来的位置。
-
-## 看板
-
-包里带一个只读的网页看板，读的是同一个 sqlite：
-
-```bash
-codex-supervisor-web                      # 全局装过之后
-npx -p codex-supervisor-mcp codex-supervisor-web   # 没装也能起
-```
-
-默认开在 `http://127.0.0.1:7877`，`SUPERVISOR_WEB_PORT` / `SUPERVISOR_WEB_HOST` 改端口和地址，`SUPERVISOR_HOME` 指向别的状态目录。
-
-左栏是 session，显示派单时记的 `session_title`（没记就用各路 worker 的 goal 拼一句）和这批活还有几路在跑。点进去是这个 session 的 worker 台账：状态、标题、正在执行的命令或最后一句汇报、耗时、改了几个文件（按 worktree 真实 diff 算，含已 commit 的）、跑了几条命令。再点一路，右侧抽屉给完整汇报（markdown 渲染）、改动清单、命令、原始事件流、任务书，还有 token 消耗和 Codex 原生 goal。有 worker 在跑时每 2.5 秒刷新，静止时 8 秒。
-
-它只读，不派单，不取消。派单的事归 MCP。
+老版本（0.1.x）的库第一次打开时自动迁移，一行不丢。
 
 ## 更新检查
 
-MCP 进程启动时会问一次 npm registry：`latest` 是哪个版本，它的 tarball integrity 是多少。然后和本机比两件事：
+MCP 启动时问一次 npm registry：`latest` 是哪个版本，tarball integrity 是多少。和本机比两样：
 
-- 装的版本号。比 `latest` 低，就在 `get_orchestration_overview`、派单回执、`wait_codex_workers` 的返回里多一个 `update` 字段，带 `latest_version` 和要跑的命令（`npm i -g codex-supervisor-mcp@latest`）。skill 让主线程看到这个字段就转告用户。
-- 装的文件。全局安装时 npm 把解出来的 tarball integrity 记在 `node_modules/.package-lock.json` 里，和 registry 上这个版本的 integrity 不一样，说明本机的文件不是发布的那份，同样提示重装。git checkout 没有这个值，只记 commit。
+- 版本号。比 `latest` 低，`get_orchestration_overview`、派单回执、`wait_codex_workers` 的返回里多一个 `update` 字段，带 `latest_version` 和 `npm i -g codex-supervisor-mcp@latest`。skill 让主线程看到就转告你。
+- 文件。全局安装时 npm 把解出来的 integrity 记在 `node_modules/.package-lock.json`，和 registry 上这个版本的不一样就说明本机文件不是发布的那份，同样提示重装。git checkout 没这个值，只记 commit。
 
-结果缓存一小时，运行中每六小时再查一次。registry 连不上就算了，不报错也不提示，本次结果标 `source: "offline"`。不想联网就设 `CODEX_SUPERVISOR_NO_UPDATE_CHECK=1`；私有 registry 用 `CODEX_SUPERVISOR_REGISTRY`。看板左下角也会显示同一个结果。
+缓存一小时，跑着的时候每六小时再查。registry 连不上不报错，结果标 `source: "offline"`。看板左下角显示同一个结果。`CODEX_SUPERVISOR_NO_UPDATE_CHECK=1` 关掉，`CODEX_SUPERVISOR_REGISTRY` 指到私有源。
 
 ## 环境变量
 
-| 变量 | 默认值 | 作用 |
+| 变量 | 默认 | 作用 |
 |---|---|---|
-| `SUPERVISOR_HOME` | `~/.codex-supervisor` | 状态根目录（sqlite / 事件流 / worktree 都在它下面） |
-| `CODEX_HOME` | `~/.codex` | 只读，用来读 Codex 原生的 `goals_1.sqlite` |
-| `CODEX_BIN` | `codex`（走 `PATH`） | Codex CLI 可执行文件路径。Windows 上给裸名字时会按 `PATHEXT` 展开，`.cmd` shim 会被自动绕开；指向 `.js` / `.cjs` / `.mjs` 时自动用 `node` 起它 |
-| `GIT_BIN` | `git`（走 `PATH`） | Git 可执行文件路径 |
-| `SUPERVISOR_WEB_PORT` / `SUPERVISOR_WEB_HOST` | `7877` / `127.0.0.1` | 看板监听的端口和地址 |
-| `CODEX_SUPERVISOR_NO_UPDATE_CHECK` | 未设 | 设成 `1` 关闭更新检查 |
+| `SUPERVISOR_HOME` | `~/.codex-supervisor` | 状态根目录。MCP 和看板要指同一个 |
+| `CODEX_HOME` | `~/.codex` | 只读，读 Codex 原生的 `goals_1.sqlite` |
+| `CODEX_BIN` | `codex` | Codex CLI 路径。Windows 上 `.cmd` shim 自动绕开，指向 `.js` 时用 `node` 起 |
+| `GIT_BIN` | `git` | Git 路径 |
+| `SUPERVISOR_WEB_PORT` / `SUPERVISOR_WEB_HOST` | `7877` / `127.0.0.1` | 看板监听地址 |
+| `CODEX_SUPERVISOR_NO_UPDATE_CHECK` | 未设 | `1` 关闭更新检查 |
 | `CODEX_SUPERVISOR_REGISTRY` | `https://registry.npmjs.org` | 更新检查用的 registry |
-| `CODEX_SUPERVISOR_UPDATE_TIMEOUT_MS` | `4000` | 更新检查等 registry 的上限 |
+| `CODEX_SUPERVISOR_UPDATE_TIMEOUT_MS` | `4000` | 等 registry 的上限 |
+| `CODEX_SUPERVISOR_SKIP_SETUP` | 未设 | `1` 跳过 `postinstall` 的自动安装 |
 
-如果 MCP 客户端启动时 `PATH` 里没有 `codex`（GUI 启动的应用常见），显式设置 `CODEX_BIN`：
+GUI 客户端起的进程 `PATH` 里常常没有 `codex`，在配置里显式给 `CODEX_BIN`：
 
 ```json
 {
@@ -332,81 +221,114 @@ MCP 进程启动时会问一次 npm registry：`latest` 是哪个版本，它的
 }
 ```
 
+## 安装细节
+
+### GUI 客户端
+
+GUI 不跑 `postinstall`，自己把上面那段 JSON 加进配置文件：
+
+| 客户端 | macOS | Windows | Linux |
+|---|---|---|---|
+| Claude Desktop | `~/Library/Application Support/Claude/claude_desktop_config.json` | `%APPDATA%\Claude\claude_desktop_config.json` | `~/.config/Claude/claude_desktop_config.json` |
+| Cursor | `~/.cursor/mcp.json` | `%APPDATA%\Cursor\mcp.json` | `~/.config/cursor/mcp.json` |
+| Windsurf | `~/.codeium/windsurf/mcp_config.json` | `%APPDATA%\Codeium\windsurf\mcp_config.json` | `~/.config/.codeium/windsurf/mcp_config.json` |
+
+### 重跑安装
+
+```bash
+codex-supervisor-setup                      # 自动检测客户端，补 skill + 注册 MCP
+codex-supervisor-setup --target claude,codex
+codex-supervisor-setup --skill-only
+codex-supervisor-setup --mcp-only
+codex-supervisor-setup --dry-run            # 只打印计划
+```
+
+skill 已存在且内容不同时先备份成 `SKILL.md.bak-<时间戳>` 再覆盖。
+
+### 更新
+
+```bash
+npm install -g codex-supervisor-mcp@latest
+npm ls -g --depth=0 | grep codex-supervisor
+```
+
+然后重启 Claude Code / Codex。三个坑：
+
+- 刚发布的版本 registry 要几分钟才切 `latest`，装完版本没变就等一会，或者写死版本号。
+- `npm link` 装出来的是软链，改 `src/` 立即生效，但 skill 不会自动同步，手动跑 `codex-supervisor-setup`。
+- 换了 Node 版本，注册的绝对路径就失效了。先 `claude mcp remove -s user codex-supervisor` 和 `codex mcp remove codex-supervisor`，再装。
+
+### 卸载
+
+```bash
+npm uninstall -g codex-supervisor-mcp
+claude mcp remove -s user codex-supervisor
+codex mcp remove codex-supervisor
+rm -rf ~/.claude/skills/codex-supervisor ~/.agents/skills/codex-supervisor ~/.codex/skills/codex-supervisor
+rm -rf ~/.codex-supervisor
+```
+
+### Windows
+
+- npm 装的 CLI 是 `codex.cmd`，Node 从 18.20 / 20.12 起拒绝直接 spawn 它（CVE-2024-27980 之后的行为）。这里不用 `shell: true` 绕，那样取消时只杀得掉 shell。做法是绕到 `node_modules/@openai/codex/bin/codex.js`，用 `node` 起。
+- 跨进程取消用 `taskkill /PID <pid> /T /F` 杀整棵树，先用 `Get-CimInstance Win32_Process` 确认那个 pid 跑的是 codex。
+- 除 `PATH` 外还探 `%APPDATA%\npm`、`%LOCALAPPDATA%\pnpm`、`%LOCALAPPDATA%\Volta\bin`、`%ProgramFiles%\nodejs`。
+
+### 排查
+
+| 症状 | 原因 | 处理 |
+|---|---|---|
+| `claude mcp list` 里没有 | 装法不跑 `postinstall` | `codex-supervisor-setup` 或手动 `claude mcp add` |
+| 派单报 `codex only resolved to a shell shim` | Windows 只找到 `.cmd`，背后的包入口没了 | 重装 `@openai/codex`，或 `CODEX_BIN` 指到 `codex.js` |
+| worker 一起来就 `failed`，`spawn codex ENOENT` | 进程 `PATH` 里没有 codex | 配置里设 `CODEX_BIN` |
+| `Cannot find module 'node:sqlite'` | Node 低于 22.13.0 | 升 Node |
+| worker 卡在 `lost` | MCP 进程被杀，worker 成孤儿 | `resume_codex_worker` 接回，或重派 |
+| `ownedPaths overlap with active worker(s)` | 两路认领了同一片路径 | 改拆法，或先取消占着的那路 |
+| 看板打开是空的 | 看板和 MCP 的 `SUPERVISOR_HOME` 不是同一个 | 起看板时传同一个 `SUPERVISOR_HOME` |
+
 ## 已知限制
 
-- **worker 的生命周期绑在 MCP 进程上**：`codex` 是 MCP 进程的子进程，MCP 被 kill 时 worker 会被留下。这些 worker 会在下一次 `list_codex_workers` / `get_orchestration_overview` 时被结算成 `lost`。真正的解法是常驻 daemon，见 Roadmap。
-- **worktree 从一个提交建，未提交的改动不在里面**：默认从仓库 `HEAD` 切，传 `baseRef` 可以换成任何分支、tag 或 sha（解析不到就拒绝派单，错误码 `invalid_base_ref`，不会悄悄退回 `HEAD`）。主线程工作区里没 commit 的修改和未跟踪文件，worker 在自己的 worktree 里看不到。要让它读写这些文件，就在 task 里给绝对路径，或者先把改动 commit。worker 的改动落在 `codex/<taskId>` 分支上，不碰主线程的工作区。
-- **只隔离工作目录**：临时目录（`TMPDIR`）、数据库、端口这些进程级资源是共用的，多个 worker 同时写同一个临时文件照样互相踩。要隔开得自己在 task 里指定各自的临时目录、库名和端口。
-- **`ownedPaths` 是派单前的冲突检测，不是运行时沙箱**：它只挡「两路活登记写同一个文件」，拦不住 worker 在自己 worktree 里新建清单外的文件——sandbox 是 `workspace-write`，写自己 worktree 里的任何路径都合法。校验产出还是得看 diff。
-- **只管「跑完了」，不管写得对不对**：终态来自 Codex 的 `turn.completed` 和进程退出码，`exit_code: 0` 只说明它没崩。产出对不对得主线程自己核，跑校验、抽看内容。
-- **终态分两步落盘，但 wait 只在落稳后返回**：`turn.completed` 先把 `status` 置成 `completed`，进程退出后才写 `exit_code`。`wait_codex_workers` 要等到 `exit_code` 写入（或者进程已经不在）才算这一路到了终态，所以它返回的快照和下一次 `get_codex_worker_status` 读到的是同一份。直接读 status 仍然可能撞上中间态，看到 `completed` 配 `exit_code: null` 就是这种情况，过一会再读。
-- **长任务别指望一次 `wait_codex_workers` 等到底**：客户端给 MCP 工具调用设的超时是硬墙（`.mcp.json` 里的 `timeout`，或 `MCP_TOOL_TIMEOUT`），撞上就把这次调用掐掉。默认 2 分钟带进度返回，靠反复调而不是一次等到黑。
-- **默认读回来的长文本是裁过的**：`current_action` 截到 300 字、`get_codex_worker_status` 的 prompt 截到 300 字（`includePrompt: true` 放开）、`last_message` 在总览和 wait 里截到 400 字（status 里是 4000）。全量都在库里：命令流看 `get_codex_worker_events`，结论看 `get_worker_result`。这样一条 `wait_codex_workers` 往返从几十 KB 降到几 KB——客户端把超时调用挪到后台、再把结果当通知回灌一次时，这份代价小得多。
-- **不往 Codex 原生 goal 写数据**：`goals_1.sqlite` 归 Codex 所有，本 MCP 只读。worker 起来后由它自己调 Codex 的 `create_goal` 建原生 goal，本 MCP 只负责在派单时把这段指令拼进 prompt。
-- **原生 goal 依赖模型照做**：`codex exec` 不会自动建 goal，是派单时那段指令让 worker 建的。模型偶尔漏调，这时 `native_goal` 为 `null`，`get_worker_goal` 退回派单时记录的那份，不影响状态机。
-- **`search_works` 是子串匹配，不是全文索引**：几百条 work 的规模下 `LIKE` 扫描足够快，也省掉一套索引的维护成本。上到几万条再谈别的。
-- **跨进程取消按 pid**：进程句柄不在本进程时，会先确认那个 pid 的命令行里含 `codex`（macOS / Linux 用 `ps`，Windows 用 CIM，退到 `tasklist`），再发 `SIGTERM`（Windows 上是 `taskkill /T /F`），避免误杀被复用的 pid。
-- **`create_codex_followup_worker` 和 `resume_codex_worker` 不是一回事**：前者开新会话、靠文本重述上下文；后者接同一个会话。要细节不丢就用后者。
-- **`session_id` 由派单方自己传，本 MCP 不生成**：一批活传同一个值，`get_session_works` 才能把它们归到一起。不传就是 `NULL`，事后按 session 找不回来。
+- worker 的命绑在 MCP 进程上。MCP 被 kill，worker 留在那，下次读状态结算成 `lost`。解法是常驻 daemon，在 Roadmap 里。
+- worktree 从一个提交切，你工作区里没 commit 的东西不在里面。要让 worker 读到，给绝对路径或先 commit。
+- 只隔离工作目录。临时目录、数据库、端口是共用的，多路 worker 要连同一个 dev server 得自己错开。
+- `ownedPaths` 只在派单时查，拦不住 worker 在自己 worktree 里新建清单外的文件。收活看 diff。
+- 只管「跑完了」不管「对不对」。`exit_code: 0` 只说明没崩，验收得主线程自己做。
+- 一次 `wait_codex_workers` 别指望等到底。客户端的 MCP 工具超时是硬墙，默认 2 分钟返回快照，靠反复调。
+- 不往 Codex 原生 goal 写数据，`goals_1.sqlite` 只读。原生 goal 是 worker 自己建的，模型偶尔漏调，这时 `native_goal` 为 `null`，不影响状态机。
+- `search_works` 是子串匹配，几百条够用，几万条再说。
 
 ## Roadmap
 
-1. ~~去个人化：`CODEX_BIN` / `SUPERVISOR_HOME` / `GIT_BIN` 环境变量~~ ✅
-2. ~~work 状态机：`status` 和 `phase` 拆开，新增 `lost`~~ ✅
-3. ~~工具面：`ownedPaths` / `goal` / `dependsOn`，新增 4 个工具，事件闸门~~ ✅
-4. ~~跨会话续接：`thread_id` 落库 + `resume_codex_worker`~~ ✅
-5. ~~并发稳定性：两个崩溃点、所有权冲突、多进程写库~~ ✅
-6. ~~session 维度：`session_id` 落库 + `get_session_works` 断线重连~~
-7. ~~按关键词找历史 work：`search_works`~~
-8. ~~worker 原生 goal：派单时注入 `create_goal` 指令~~
-9. ~~Windows 支持：`.cmd` shim 绕行、`taskkill` 进程树、跨平台 PATH / `PATHEXT`~~ ✅
-10. 常驻 daemon：派单和进程生命周期从 MCP 进程里拿出来
-11. ~~React 实时看板~~ ✅
-12. ~~session 标题和说明、更新检查~~ ✅
+1. ~~`CODEX_BIN` / `SUPERVISOR_HOME` / `GIT_BIN`~~ ✅
+2. ~~`status` 和 `phase` 拆开，新增 `lost`~~ ✅
+3. ~~`ownedPaths` / `goal` / `dependsOn`，事件闸门~~ ✅
+4. ~~`thread_id` 落库 + `resume_codex_worker`~~ ✅
+5. ~~并发：崩溃点、所有权冲突、多进程写库~~ ✅
+6. ~~`session_id` + `get_session_works`~~ ✅
+7. ~~`search_works`~~ ✅
+8. ~~worker 原生 goal~~ ✅
+9. ~~Windows~~ ✅
+10. ~~网页看板~~ ✅
+11. ~~session 标题、更新检查、`baseRef`、已 commit 的改动可见~~ ✅
+12. 常驻 daemon：派单和进程生命周期从 MCP 进程里拿出来
 
-砍掉不做的（说明理由，免得以后又想起来）：
-
-| 想法 | 为什么不必要 |
-|---|---|
-| 向量检索 | `search_works` 的子串匹配在几百条规模下更快、零维护。两家的官方记忆系统（Codex `memories`、Claude auto-memory）也都是文件检索，不是向量 |
-| `usage_count` 排序 | 实测 80 个 work 里只有 2 个被回头引用过，计数器全是 0/1，排序等于没排 |
-| 复用 Codex 的 `usage_count` | 那个数统计的是"这篇记忆被引用了几次"，跟"主线程查了几次"不是一回事 |
-| 三层记忆索引 | 现在的数据量撑不起一层索引，`get_worker_summary` 已经够了 |
-
-## 配合 skill 用
-
-仓库里带了 `skills/codex-supervisor/SKILL.md`，装完之后可以放到主线程的 skill 目录，让它自己知道什么时候该派单：
-
-```bash
-# Claude Code
-mkdir -p ~/.claude/skills/codex-supervisor
-cp "$(npm root -g)/codex-supervisor-mcp/skills/codex-supervisor/SKILL.md" ~/.claude/skills/codex-supervisor/
-
-# Codex / 其他读取 ~/.agents/skills 的客户端
-mkdir -p ~/.agents/skills/codex-supervisor
-cp "$(npm root -g)/codex-supervisor-mcp/skills/codex-supervisor/SKILL.md" ~/.agents/skills/codex-supervisor/
-```
-
-skill 里写了派单流程、读结果该按什么顺序、`failed` 和 `lost` 怎么区分、断线怎么接。
+不做的：向量检索（子串匹配在这个规模更快、零维护）、`usage_count` 排序（实测 80 个 work 里只有 2 个被回头引用过）、三层记忆索引（数据量撑不起）。
 
 ## 开发
 
 ```bash
 npm install
-npm test               # 确定性测试：截断、状态机、v1→v2 迁移、setup、Windows 路由、23 项端到端回归、40 项边界
-npm run test:edge      # 只跑 test/edge：更新检查（假 registry）、session 标题、baseRef、中文路径、僵尸行、看板 API
-npm run test:real      # 用真 codex CLI 跑端到端（含跨进程 resume、worktree 隔离）
-npm run smoke          # 基础冒烟（真 codex）
+npm test               # 截断、状态机、迁移、setup、Windows 路由、23 项回归、40 项边界
+npm run test:edge      # 只跑 test/edge：假 registry 的更新检查、session 标题、baseRef、中文路径、僵尸行、看板 API
+npm run test:real      # 真 codex CLI 端到端
 npm run smoke:mcp      # MCP 协议冒烟
 npm run monitor        # Ink 终端看板
-npm run web:install    # 看板前端依赖（web/）
-npm run web:build      # 打包看板到 web/dist，发 npm 前自动跑
-npm run web:dev        # 看板热更新开发，/api 代理到 7877
+npm run web:install    # 看板依赖
+npm run web:dev        # 看板开发，/api 代理到 7877
+npm run web:build      # 打包到 web/dist，发 npm 前自动跑
 ```
 
-`npm test` 用 `src/test-fixtures/fake-codex.js` 回放固定的 Codex 事件流，跑得快且确定。`npm run test:real` 会真的调 `codex exec`，慢一些，但它才是「跟最新 Codex 兼容」的证据。
-
-CI 跑 Ubuntu / macOS / Windows 三个平台，另外单独跑一个 Node 22.13.0 的 job 卡住 `engines` 声明的下界（`node:sqlite` 在它之前没有无 flag 的构建）。Windows 那 4 项 `setup-windows-test.js` 用真实文件系统模拟 `%APPDATA%\npm` 下的 `.cmd` shim，验证自动注册 MCP 这条路真的走得通，而不只是「解析函数单测过了」。
+`npm test` 用 `src/test-fixtures/fake-codex.js` 回放固定事件流，快且确定；`npm run test:real` 才是「跟最新 Codex 兼容」的证据。CI 跑 Ubuntu / macOS / Windows，另加一个 Node 22.13.0 的 job 卡 `engines` 下界。
 
 ## License
 
