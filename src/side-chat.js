@@ -22,7 +22,7 @@
 //   turn failed / timed out / stopped  error on the turn, session still usable
 //   board restarted mid-turn ........ turn marked interrupted
 //   session ended ................... fork deleted, history cleared
-import { spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { defaultBinDirs, findBinaryPath, resolveCommand, shimMessage } from "./bin-resolver.js";
 import {
@@ -56,6 +56,21 @@ function codexTarget() {
   const target = resolveCommand(located, { npmEntry: CODEX_NPM_ENTRY });
   if (target.shim) return { error: shimMessage("codex", target.cmd, "CODEX_BIN") };
   return { cmd: target.cmd, prefixArgs: target.prefixArgs };
+}
+
+// Stop a side turn and everything under it. On Windows the direct child is
+// the JS wrapper around the native Codex binary; killing the wrapper alone
+// leaves the real CLI running, so the whole tree goes through taskkill.
+function killTree(child) {
+  if (process.platform === "win32" && child.pid) {
+    try {
+      execFileSync("taskkill", ["/PID", String(child.pid), "/T", "/F"], { stdio: "ignore", timeout: 5000, windowsHide: true });
+      return;
+    } catch {
+      // fall back to the handle below
+    }
+  }
+  child.kill("SIGTERM");
 }
 
 function clip(text, max = OUTPUT_CLIP) {
@@ -321,11 +336,11 @@ export async function runSideTurn({ task, text, res = null }) {
   let stoppedBy = null;
   const timer = setTimeout(() => {
     stoppedBy = "timeout";
-    child.kill("SIGTERM");
+    killTree(child);
   }, TURN_TIMEOUT_MS);
   live.stop = (reason) => {
     stoppedBy = reason;
-    child.kill("SIGTERM");
+    killTree(child);
   };
 
   child.stdout.setEncoding("utf8");
@@ -415,7 +430,7 @@ export async function endSideSession(taskId) {
     if (!target.error) {
       deleted = await new Promise((resolve) => {
         const child = spawn(target.cmd, [...target.prefixArgs, "delete", row.fork_thread_id], { stdio: "ignore", windowsHide: true, env: { ...process.env, NO_COLOR: "1" } });
-        const t = setTimeout(() => { child.kill("SIGTERM"); resolve(false); }, 15000);
+        const t = setTimeout(() => { killTree(child); resolve(false); }, 15000);
         child.on("exit", (code) => { clearTimeout(t); resolve(code === 0); });
         child.on("error", () => { clearTimeout(t); resolve(false); });
       });

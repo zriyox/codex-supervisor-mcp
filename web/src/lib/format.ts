@@ -85,7 +85,7 @@ export function shortId(id: string | null | undefined, keep = 8): string {
 }
 
 export function relativeToWorktree(path: string, worktree: string | null): string {
-  if (worktree && path.startsWith(worktree)) return path.slice(worktree.length).replace(/^\/+/, "");
+  if (worktree && path.startsWith(worktree)) return path.slice(worktree.length).replace(/^[\\/]+/, "");
   return path;
 }
 
