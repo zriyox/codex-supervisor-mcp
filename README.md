@@ -302,7 +302,7 @@ npm run web:dev        # 看板开发，/api 代理到 7877
 npm run web:build      # 打包到 web/dist，发 npm 前自动跑
 ```
 
-CI 跑 Ubuntu / macOS / Windows，另加一个 Node 22.13.0 的 job 卡 `engines` 下界。
+CI 跑 Ubuntu / macOS / Windows，另加一个 Node 22.13.0 的 job 卡 `engines` 下界。改代码和发版的规矩在 [CONTRIBUTING.md](CONTRIBUTING.md)，给仓里 AI 的硬规矩在 [AGENTS.md](AGENTS.md)。
 
 ## License
 
