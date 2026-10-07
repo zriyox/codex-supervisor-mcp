@@ -8,15 +8,15 @@ English | [中文](README.md)
 [![CI](https://github.com/zriyox/codex-supervisor-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/zriyox/codex-supervisor-mcp/actions/workflows/ci.yml)
 [![node](https://img.shields.io/badge/node-%3E%3D22.13.0-339933.svg)](package.json)
 
-**codex-supervisor-mcp** is a Codex MCP server: let one main thread (Claude Code, Codex, or any MCP client) run several Codex CLI workers at once. One Git worktree per worker, every state change on disk, and a web board to watch the batch.
+Point several agents at one repository and they overwrite each other, nobody can say who changed what, and the main thread's context fills up with worker output.
+
+**codex-supervisor-mcp** is a Codex MCP server that takes dispatch and bookkeeping out of the model's context and puts them on disk: one main thread (Claude Code, Codex, or any MCP client) runs several Codex CLI workers at once, one Git worktree per worker, state in SQLite, a web board on top.
 
 ![Demo: one Claude Code main thread dispatches three Codex workers into separate worktrees, waits, and merges the result](https://raw.githubusercontent.com/zriyox/codex-supervisor-mcp/main/assets/demo.gif)
 
-*30 seconds, recorded live: the main thread calls `create_codex_worker` three times, the workers run in parallel in their own worktrees, the main thread collects three diffs and makes one commit.*
+*30 seconds, recorded live: `create_codex_worker` ×3, three workers in their own worktrees in parallel, the main thread collects three diffs and makes one commit.*
 
-## What it is
-
-Point several agents at one repository and they overwrite each other, and nobody can say who changed what. This MCP takes dispatch and bookkeeping out of the model's context and puts them on disk:
+## What it solves
 
 | Problem | What it does |
 |---|---|
@@ -28,7 +28,7 @@ Point several agents at one repository and they overwrite each other, and nobody
 | "Failed" and "process gone" look alike | The state machine keeps `failed` and `lost` apart |
 | No view of where a batch is | `codex-supervisor-web`, a board that shows every worker by session |
 
-Workers run `codex exec`; `model` is passed through. The main thread stays on Claude for judgement, workers can run DeepSeek or any model Codex has a provider for, and the bills stay separate.
+Workers run `codex exec` with `model` passed through: the main thread stays on Claude, workers can run DeepSeek or any model Codex has a provider for, and the bills stay separate.
 
 ## Five minutes to a running batch
 
@@ -40,7 +40,7 @@ Prerequisites: Node.js 22.13.0 or newer, `codex` on `PATH`. macOS, Linux and Win
 npm install -g codex-supervisor-mcp
 ```
 
-`postinstall` copies the skill into `~/.claude/skills/`, `~/.agents/skills/` and `~/.codex/skills/` and registers the MCP with `claude mcp add -s user` and `codex mcp add`. If `claude mcp list` does not show it (`npx`, `--ignore-scripts` and pnpm skip `postinstall`), add it by hand:
+`postinstall` installs the skill and registers the MCP. If `claude mcp list` does not show it (`npx`, pnpm and `--ignore-scripts` skip `postinstall`), add it by hand:
 
 ```bash
 claude mcp add -s user codex-supervisor -- npx -y codex-supervisor-mcp
@@ -73,13 +73,11 @@ codex-supervisor-web
 npx -p codex-supervisor-mcp codex-supervisor-web
 ```
 
-Open `http://127.0.0.1:7877`. State directory: `SUPERVISOR_HOME` if set, else the one configured in the nearest `.mcp.json` above the current directory, else `~/.codex-supervisor`. `SUPERVISOR_WEB_PORT` changes the port; a taken port is reported. The board never dispatches or cancels.
+Open `http://127.0.0.1:7877`. The state directory is `SUPERVISOR_HOME`, else the nearest `.mcp.json`, else `~/.codex-supervisor`; `SUPERVISOR_WEB_PORT` changes the port. The board only shows; it never dispatches or cancels.
 
 ## How I use it
 
-This MCP does not care who the main thread is: Claude Code, Codex, Cursor, anything that speaks MCP can dispatch, and workers use whatever model Codex has a provider for. What follows is my way, not the only way.
-
-I run two Claude Code sessions, one for documents and one for dispatch. A session that writes the design and watches the workers fills its context in two hours.
+Anything that speaks MCP can be the main thread; this is just my way. I run two Claude Code sessions, one for documents and one for dispatch: a session that writes the design and watches the workers fills its context in two hours.
 
 | Who | Where | Does what |
 |---|---|---|
@@ -88,7 +86,7 @@ I run two Claude Code sessions, one for documents and one for dispatch. A sessio
 | Main-brain session | A worktree of the code repository | Read the brief, dispatch Codex workers, check every worker's diff, write results back into the brief, report to me. Writes no business code |
 | Codex workers | Their own worktrees | One worker per step, one commit per step, build and verify on a remote machine. No push, no merge |
 
-One block of text passes between the two sessions: the planning session writes it, I paste it into the main-brain session and hand it over with `/goal`. Its shape is fixed:
+One block of text passes between the two sessions, pasted into the main-brain session and handed over with `/goal`. Its shape is fixed:
 
 ```text
 [Role]        You are the main brain: read docs and code, dispatch workers, check results, update docs, report to me. You write no business code.
@@ -121,9 +119,7 @@ resume_codex_worker     when it must change something, one follow-up, amended in
 land_codex_worker       checked, then landed on the integration branch
 ```
 
-The last block was 25 steps. The main-brain session ran it end to end with nothing in its context but the brief and each worker's report. The tokens the workers burn are not on the main brain's bill.
-
-"One worker per step, one commit per step, checked before the next" came from trying it the other way. When a step is wrong, one `resume_codex_worker` asks for `--amend` into the same commit, the main brain checks again, then lands. A worker that did three steps cannot be fixed this way: when step 5 is wrong, steps 6 and 7 are already on top.
+The last block was 25 steps; the main-brain session ran it end to end with nothing in its context but the brief and each worker's report. One worker per step came from trying it the other way: when a step is wrong, one `resume_codex_worker` asks for `--amend` into the same commit and the main brain checks again before landing; a worker that did three steps cannot be fixed that way, since steps 6 and 7 already sit on top of a wrong step 5.
 
 ## What the board shows
 
@@ -202,7 +198,7 @@ A terminal state lands in two steps: `turn.completed` sets `completed`, the proc
 | `data/update-check.json`, `auto-update.json` | Update check and background update records |
 | `worktrees/<taskId>/` | The worker's Git worktree |
 
-`changed_files` is the worktree's real diff (`git status` plus `git diff <base_commit> HEAD`), so edits made through the shell and commits the worker made itself are both visible. Git reads run with `core.quotePath=false`, so non-ASCII file names come back as written. Databases from older versions migrate on first open.
+`changed_files` is the worktree's real diff, so shell edits and the worker's own commits are both visible. Non-ASCII file names come back as written. Databases from older versions migrate on first open.
 
 ## Environment variables
 
@@ -237,11 +233,9 @@ GUI clients (Claude Desktop, Cursor, Windsurf) do not run `postinstall`: add thi
 
 ## Updating
 
-Nothing to do by hand. The server asks the registry in the background at start (then every six hours); when a newer version is published it starts a detached process that runs `npm i -g` into the same global path. The running session is untouched; the next session starts on the new version. Progress lands in `data/auto-update.json` and in `update.auto_update` on tool results. Only a copy that `npm i -g` installed is touched; a git checkout, an `npm link` or an `npx` copy is left alone, and each version is attempted once.
+Nothing to do by hand. At start the server asks the registry in the background; a newer version is installed by a detached `npm i -g` into the same global path, the running session is untouched and the next session starts on it. Only a copy that `npm i -g` installed is touched; a git checkout or an `npx` copy is left alone. The skill does the same: every start copies it into the existing skill directories, backing up an edited file as `SKILL.md.bak-<timestamp>`.
 
-The skill takes care of itself too: every server start copies the bundled skill into whichever skill directories exist, backing up a differing file as `SKILL.md.bak-<timestamp>`. A session that already loaded the skill sees the new text after loading it again.
-
-Where the global directory needs sudo the install fails, the `update` field says why, and `npm install -g codex-supervisor-mcp@latest` by hand still works. Versions up to 0.6.1 only notify; upgrade by hand once and it is automatic from then on. Switching Node versions breaks the registered absolute path: `claude mcp remove -s user codex-supervisor` and `codex mcp remove codex-supervisor` first, then install. To run the setup again: `codex-supervisor-setup` (`--skill-only` / `--mcp-only` / `--dry-run`).
+When the install fails (a global directory that needs sudo) the `update` field says why and `npm install -g codex-supervisor-mcp@latest` by hand still works. Versions up to 0.6.1 only notify; upgrade by hand once and it is automatic from then on. A Node version switch breaks the registered path: `claude mcp remove -s user codex-supervisor`, `codex mcp remove codex-supervisor`, reinstall. To run the setup again: `codex-supervisor-setup` (`--skill-only` / `--mcp-only` / `--dry-run`).
 
 Uninstall:
 
