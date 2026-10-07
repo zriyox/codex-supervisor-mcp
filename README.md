@@ -8,15 +8,15 @@
 [![CI](https://github.com/zriyox/codex-supervisor-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/zriyox/codex-supervisor-mcp/actions/workflows/ci.yml)
 [![node](https://img.shields.io/badge/node-%3E%3D22.13.0-339933.svg)](package.json)
 
-**codex-supervisor-mcp** 是一个 Codex MCP server：让一个主线程（Claude Code、Codex，或任何 MCP 客户端）同时指挥多个 Codex CLI worker 干活。一个 worker 一个 Git worktree，状态全部落盘，附一个网页看板盯进度。
+让几个 agent 同时改一个仓库，结果是互相覆盖、没人说得清谁改了什么，主线程的上下文还被 worker 的输出塞满。
+
+**codex-supervisor-mcp** 是一个 Codex MCP server，把「派单」和「记账」从模型上下文里拿出来放到磁盘上：一个主线程（Claude Code、Codex 或任何 MCP 客户端）同时指挥多个 Codex CLI worker，一个 worker 一个 Git worktree，状态落盘到 SQLite，附一个网页看板。
 
 ![演示：一个 Claude Code 主线程同时派 3 个 Codex worker，各自独立 worktree，并行跑完后合并提交](https://raw.githubusercontent.com/zriyox/codex-supervisor-mcp/main/assets/demo.gif)
 
-*30 秒演示（真跑）：主线程 `create_codex_worker` ×3，三个 worker 在各自 worktree 里并行干活，主线程收 3 份 diff 合成一次 commit。*
+*30 秒真跑：`create_codex_worker` ×3，三个 worker 各自 worktree 并行，主线程收 3 份 diff 合成一次 commit。*
 
-## 它是什么
-
-直接让几个 agent 同时改一个仓库，结果是互相覆盖，没人说得清谁改了什么。这个 MCP 把「派单」和「记账」从模型上下文里拿出来，放到磁盘上：
+## 解决什么
 
 | 问题 | 做法 |
 |---|---|
@@ -28,7 +28,7 @@
 | 分不清「跑失败」和「进程没了」 | 状态机把 `failed` 和 `lost` 分开 |
 | 看不见一批活现在到哪了 | `codex-supervisor-web` 开一个看板，按 session 看每路 worker 在干什么 |
 
-worker 跑的是 `codex exec`，`model` 参数原样透传。主线程留在 Claude 上做判断，worker 可以挂 DeepSeek 或任何 Codex 配了 provider 的模型，账单分开算。
+worker 跑的是 `codex exec`，`model` 透传：主线程留在 Claude，worker 可以挂 DeepSeek 或任何 Codex 配了 provider 的模型，账单分开算。
 
 ## 五分钟跑起来
 
@@ -40,7 +40,7 @@ worker 跑的是 `codex exec`，`model` 参数原样透传。主线程留在 Cla
 npm install -g codex-supervisor-mcp
 ```
 
-`postinstall` 会把 skill 装进 `~/.claude/skills/`、`~/.agents/skills/`、`~/.codex/skills/`，并用 `claude mcp add -s user` 和 `codex mcp add` 注册 MCP。`claude mcp list` 里没看到（`npx`、`--ignore-scripts`、pnpm 不跑 `postinstall`）就手动补：
+`postinstall` 装 skill、注册 MCP。`claude mcp list` 里没看到（`npx`、pnpm、`--ignore-scripts` 不跑 `postinstall`）就手动补：
 
 ```bash
 claude mcp add -s user codex-supervisor -- npx -y codex-supervisor-mcp
@@ -73,13 +73,11 @@ codex-supervisor-web
 npx -p codex-supervisor-mcp codex-supervisor-web
 ```
 
-打开 `http://127.0.0.1:7877`。状态目录：有 `SUPERVISOR_HOME` 用它，没有就从当前目录往上找 `.mcp.json` 里的配置，再没有用 `~/.codex-supervisor`。端口用 `SUPERVISOR_WEB_PORT` 改，被占了会直接说。看板不派单也不取消。
+打开 `http://127.0.0.1:7877`。状态目录按 `SUPERVISOR_HOME`、最近的 `.mcp.json`、`~/.codex-supervisor` 的顺序找；端口用 `SUPERVISOR_WEB_PORT` 改。看板只看，不派单不取消。
 
 ## 我自己怎么用
 
-这个 MCP 不挑主线程：Claude Code、Codex、Cursor，能连 MCP 的都能派活；worker 用什么模型看你给 Codex 配了哪个 provider。下面是我的用法，不是唯一用法。
-
-我开两个 Claude Code 会话，一个只管文档，一个只管派活。一个会话又写详设又盯 worker，上下文两小时就满。
+能连 MCP 的都能当主线程，这里只是我的用法。我开两个 Claude Code 会话，一个只管文档，一个只管派活：一个会话又写详设又盯 worker，上下文两小时就满。
 
 | 谁 | 开在哪 | 管什么 |
 |---|---|---|
@@ -88,7 +86,7 @@ npx -p codex-supervisor-mcp codex-supervisor-web
 | 主脑会话 | 代码仓的一个 worktree | 读任务书，派 Codex worker，核每路的 diff，把结果填回任务书，向我汇报。不写业务代码 |
 | Codex worker | 各自的 worktree | 一个 worker 做一步，一个提交，在远端机器上编译和验证。不 push，不合并 |
 
-两个会话之间只传一段文字：规划会话写好，我粘进主脑会话，用 `/goal` 接上。结构固定：
+两个会话之间只传一段文字，粘进主脑会话用 `/goal` 接上。结构固定：
 
 ```text
 【角色】   你是主脑：读文档和代码，派 worker，核结果，更新文档，向我汇报。不写业务代码。
@@ -121,9 +119,7 @@ resume_codex_worker     要改就追一条，让它 amend 进原来那个提交
 land_codex_worker       核过了，落进集成分支
 ```
 
-上一块活 25 步，主脑会话从头跑到尾，上下文里只有任务书和每路的汇报。worker 烧的 token 不进主脑的账。
-
-「一个 worker 一步、一步一个提交、核过才进下一步」是试出来的。某一步不对，`resume_codex_worker` 追一条让它 `--amend` 进原来那个提交，主脑再核一次，过了才落。一个 worker 做三步就没法这么修：第 5 步错了，第 6、7 步已经叠在上面。
+上一块活 25 步，主脑会话从头跑到尾，上下文里只有任务书和每路的汇报。一个 worker 只做一步是试出来的：某一步不对，`resume_codex_worker` 追一条让它 `--amend` 进原来那个提交，再核一次才落；一个 worker 做三步，第 5 步错了，第 6、7 步已经叠在上面，没法这么修。
 
 ## 看板里有什么
 
@@ -202,7 +198,7 @@ land_codex_worker       核过了，落进集成分支
 | `data/update-check.json`、`auto-update.json` | 更新检查和后台更新的记录 |
 | `worktrees/<taskId>/` | 该 worker 的 Git worktree |
 
-`changed_files` 按 worktree 的真实 diff 算（`git status` 加 `git diff <base_commit> HEAD`），worker 用 shell 改文件、自己 commit 过都能看到。git 读操作都带 `core.quotePath=false`，中文文件名不会变成八进制转义。老版本的库第一次打开时自动迁移。
+`changed_files` 按 worktree 的真实 diff 算，worker 用 shell 改的、自己 commit 过的都能看到。中文文件名原样返回。老版本的库第一次打开自动迁移。
 
 ## 环境变量
 
@@ -237,11 +233,9 @@ GUI 客户端（Claude Desktop、Cursor、Windsurf）不跑 `postinstall`，自�
 
 ## 更新
 
-不用手动更。server 启动时在后台问一次 registry（之后每 6 小时一次），有新版就起一个独立进程 `npm i -g` 到同一个全局路径。正在跑的会话不受影响，下一个新会话就是新版。过程记在 `data/auto-update.json`，工具返回的 `update.auto_update` 里也能看到。只对 `npm i -g` 装的那份生效，git 源码、`npm link`、`npx` 起的都不碰；同一个版本只试一次。
+不用手动更。server 启动时后台查一次 registry，有新版就起独立进程 `npm i -g` 到同一个全局路径；正在跑的会话不受影响，下一个新会话就是新版。只对 `npm i -g` 装的那份生效，git 源码和 `npx` 起的不碰。skill 也一样，每次启动刷到已有的 skill 目录，改过的先备份成 `SKILL.md.bak-<时间戳>`。
 
-skill 同样不用管：server 每次启动把自带的 skill 刷到已存在的那几个 skill 目录，内容不同先备份成 `SKILL.md.bak-<时间戳>`。已经加载了 skill 的会话要重新加载才看到新文本。
-
-全局目录要 sudo 才能写的机器会装失败，`update` 字段里带原因，这时手动 `npm install -g codex-supervisor-mcp@latest`。0.6.1 及以前只提醒不自己装，手动升一次就进自动了。换了 Node 版本，注册的绝对路径失效，先 `claude mcp remove -s user codex-supervisor` 和 `codex mcp remove codex-supervisor` 再装。重跑安装：`codex-supervisor-setup`（`--skill-only` / `--mcp-only` / `--dry-run`）。
+装失败（全局目录要 sudo）时 `update` 字段带原因，手动 `npm install -g codex-supervisor-mcp@latest`。0.6.1 及以前只提醒不自动装，手动升一次就进自动了。换了 Node 版本注册的路径会失效，`claude mcp remove -s user codex-supervisor`、`codex mcp remove codex-supervisor` 后重装。重跑安装：`codex-supervisor-setup`（`--skill-only` / `--mcp-only` / `--dry-run`）。
 
 卸载：
 
