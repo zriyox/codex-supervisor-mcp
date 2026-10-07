@@ -82,7 +82,9 @@ npx -p codex-supervisor-mcp codex-supervisor-web
 
 Open `http://127.0.0.1:7877`. The left column lists sessions with the title given at dispatch and how many workers are still running; a session opens into its worker ledger; a worker opens a drawer with its full report, change list, commands, event stream, task text and token usage. It refreshes every 2.5 seconds while something runs, every 8 seconds otherwise.
 
-`SUPERVISOR_WEB_PORT` changes the port; `SUPERVISOR_HOME` points it at a state directory (it has to be the one the MCP uses). The board reads. It does not dispatch or cancel.
+Which store it opens: `SUPERVISOR_HOME` from the environment if set; otherwise the nearest `.mcp.json` above the current directory, if its `codex-supervisor` entry sets `SUPERVISOR_HOME`; otherwise the default `~/.codex-supervisor`. The startup line says which one and where it came from, so running it inside the project directory is enough.
+
+`SUPERVISOR_WEB_PORT` changes the port. A taken port (usually a board that is already running) is reported in one line and the process exits. The board reads. It does not dispatch or cancel.
 
 ## What the board shows
 
@@ -284,7 +286,8 @@ rm -rf ~/.codex-supervisor
 | `Cannot find module 'node:sqlite'` | Node older than 22.13.0 | Upgrade Node |
 | Worker stuck in `lost` | The MCP process was killed and the worker orphaned | `resume_codex_worker`, or dispatch again |
 | `ownedPaths overlap with active worker(s)` | Two workers claimed the same paths | Split differently, or cancel the one holding them |
-| The board is empty | The board and the MCP use different `SUPERVISOR_HOME`s | Start the board with the same one |
+| The board is empty | The board and the MCP use different `SUPERVISOR_HOME`s | Start it inside a project with a `.mcp.json`, or pass the same `SUPERVISOR_HOME`; the second startup line names the store in use |
+| `port 7877 ... is already in use` | A board is already running | Open `http://127.0.0.1:7877`, or start a second one with `SUPERVISOR_WEB_PORT=8080` |
 
 ## Known limitations
 

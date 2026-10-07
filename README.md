@@ -82,7 +82,9 @@ npx -p codex-supervisor-mcp codex-supervisor-web
 
 打开 `http://127.0.0.1:7877`。左栏按 session 列，显示派单时写的标题和还有几路在跑；点进去是这个 session 的 worker 台账；再点一路，右边抽屉是它的完整汇报、改动清单、命令、事件流、任务书和 token 消耗。有 worker 在跑时 2.5 秒刷一次，静止时 8 秒。
 
-端口用 `SUPERVISOR_WEB_PORT` 改，状态目录用 `SUPERVISOR_HOME` 改（要和 MCP 用的同一个）。看板只读，不派单也不取消。
+它读哪个状态目录：环境里有 `SUPERVISOR_HOME` 就用它；没有就从当前目录往上找 `.mcp.json`，里面 `codex-supervisor` 配了 `SUPERVISOR_HOME` 就用那个；都没有才用默认的 `~/.codex-supervisor`。启动时会打印用的是哪个、从哪来的。在项目目录里敲一下就对上了，不用再传路径。
+
+端口用 `SUPERVISOR_WEB_PORT` 改。端口被占（多半是已经有一个看板在跑）会直接说明并退出。看板只读，不派单也不取消。
 
 ## 看板里有什么
 
@@ -284,7 +286,8 @@ rm -rf ~/.codex-supervisor
 | `Cannot find module 'node:sqlite'` | Node 低于 22.13.0 | 升 Node |
 | worker 卡在 `lost` | MCP 进程被杀，worker 成孤儿 | `resume_codex_worker` 接回，或重派 |
 | `ownedPaths overlap with active worker(s)` | 两路认领了同一片路径 | 改拆法，或先取消占着的那路 |
-| 看板打开是空的 | 看板和 MCP 的 `SUPERVISOR_HOME` 不是同一个 | 起看板时传同一个 `SUPERVISOR_HOME` |
+| 看板打开是空的 | 看板和 MCP 的 `SUPERVISOR_HOME` 不是同一个 | 在配了 `.mcp.json` 的项目目录里起，或者显式传同一个 `SUPERVISOR_HOME`；启动日志第二行写了它用的哪个 |
+| `port 7877 ... is already in use` | 已经有一个看板在跑 | 直接开 `http://127.0.0.1:7877`，或 `SUPERVISOR_WEB_PORT=8080` 再起一个 |
 
 ## 已知限制
 

@@ -98,3 +98,76 @@ test("the version endpoint answers even with the update check disabled", async (
   assert.equal(body.source, "disabled");
   assert.equal(typeof body.installed.version, "string");
 });
+
+// ---- the entry: which store, and what a taken port says
+
+import { mkdir, writeFile } from "node:fs/promises";
+import { spawn } from "node:child_process";
+import { repoRoot } from "./helpers.js";
+
+async function runEntry({ cwd, env, port }) {
+  const child = spawn(process.execPath, [join(repoRoot, "src", "web-server.js")], {
+    cwd,
+    env: { ...process.env, SUPERVISOR_HOME: "", CODEX_SUPERVISOR_NO_UPDATE_CHECK: "1", ...env, SUPERVISOR_WEB_PORT: String(port) },
+    stdio: ["ignore", "pipe", "pipe"]
+  });
+  let out = "";
+  let err = "";
+  child.stdout.on("data", (c) => (out += c));
+  child.stderr.on("data", (c) => (err += c));
+  const started = Date.now();
+  while (Date.now() - started < 6000 && !out.includes("web view on") && child.exitCode === null) {
+    await new Promise((r) => setTimeout(r, 60));
+  }
+  return { child, out: () => out, err: () => err, stop: () => child.kill("SIGTERM") };
+}
+
+test("without SUPERVISOR_HOME the entry reads the nearest .mcp.json above cwd", async () => {
+  const projectHome = await tempHome("supervisor-mcpjson-store-");
+  const project = join(await tempHome("supervisor-mcpjson-"), "proj");
+  await mkdir(join(project, "deep", "er"), { recursive: true });
+  await writeFile(join(project, ".mcp.json"), JSON.stringify({ mcpServers: { "codex-supervisor": { command: "node", env: { SUPERVISOR_HOME: projectHome } } } }));
+  const port = 17000 + Math.floor(Math.random() * 2000);
+  const run = await runEntry({ cwd: join(project, "deep", "er"), env: {}, port });
+  try {
+    assert.match(run.out(), /web view on/);
+    assert.ok(run.out().includes(projectHome), `must open the store named in .mcp.json, got: ${run.out()}`);
+    assert.match(run.out(), /from .*\.mcp\.json/);
+    const overview = await (await fetch(`http://127.0.0.1:${port}/api/overview`)).json();
+    assert.equal(overview.store, projectHome);
+  } finally {
+    run.stop();
+  }
+});
+
+test("SUPERVISOR_HOME in the environment wins over .mcp.json", async () => {
+  const envHome = await tempHome("supervisor-envhome-");
+  const project = join(await tempHome("supervisor-mcpjson-"), "proj");
+  await mkdir(project, { recursive: true });
+  await writeFile(join(project, ".mcp.json"), JSON.stringify({ mcpServers: { "codex-supervisor": { env: { SUPERVISOR_HOME: "/nowhere/else" } } } }));
+  const port = 17000 + Math.floor(Math.random() * 2000);
+  const run = await runEntry({ cwd: project, env: { SUPERVISOR_HOME: envHome }, port });
+  try {
+    assert.ok(run.out().includes(envHome), run.out());
+    assert.match(run.out(), /\(SUPERVISOR_HOME\)/);
+  } finally {
+    run.stop();
+  }
+});
+
+test("a taken port is reported in one sentence with the way out, exit code 1", async () => {
+  const port = 17000 + Math.floor(Math.random() * 2000);
+  const first = await runEntry({ cwd: home, env: { SUPERVISOR_HOME: home }, port });
+  try {
+    assert.match(first.out(), /web view on/);
+    const second = await runEntry({ cwd: home, env: { SUPERVISOR_HOME: home }, port });
+    const deadline = Date.now() + 6000;
+    while (second.child.exitCode === null && Date.now() < deadline) await new Promise((r) => setTimeout(r, 50));
+    assert.equal(second.child.exitCode, 1);
+    assert.match(second.err(), new RegExp(`port ${port} on 127\\.0\\.0\\.1 is already in use`));
+    assert.match(second.err(), /SUPERVISOR_WEB_PORT=8080/);
+    assert.doesNotMatch(second.err(), /at Server\.setupListenHandle/, "no stack trace for a taken port");
+  } finally {
+    first.stop();
+  }
+});
