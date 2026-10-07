@@ -16,8 +16,12 @@ import { join } from "node:path";
 
 const defaultGitBin = process.env.GIT_BIN?.trim() || "git";
 
+// core.quotePath is on by default and turns every non-ASCII path into an
+// octal-escaped, double-quoted string ("\344\270\255..."). The projects
+// this runs against have Chinese directory names, so it is switched off for
+// every read here and paths come back as written.
 function git(worktreePath, args) {
-  return execFileSync(defaultGitBin, ["-C", worktreePath, ...args], {
+  return execFileSync(defaultGitBin, ["-C", worktreePath, "-c", "core.quotePath=false", ...args], {
     encoding: "utf8",
     timeout: 15000,
     stdio: ["ignore", "pipe", "ignore"]

@@ -10,6 +10,7 @@ import {
   resumeCodexWorker
 } from "./codex-runner.js";
 import {
+  getSession,
   getTask,
   getTasks,
   isPidAlive,
@@ -20,12 +21,14 @@ import {
   readTasksBySession,
   reconcileDetachedActiveTasks,
   searchTasks,
+  upsertSession,
   upsertTask
 } from "./task-store.js";
 import { readNativeGoal } from "./goal-store.js";
 import { readTaskChanges } from "./worktree.js";
 import { ACTIVE_STATUSES, TERMINAL_STATUSES, TASK_STATUSES, isGoalNeedingAttention } from "./status.js";
 import { approxTokenCount, truncateEventStrings, truncateMiddleChars } from "./truncate.js";
+import { checkForUpdate, updateNotice } from "./update-check.js";
 
 // Report the real package version. This string had drifted to 0.4.0 while the
 // package shipped 0.5.x, so the handshake named a version nobody was running.
@@ -37,6 +40,35 @@ const server = new McpServer({
   name: "codex-supervisor",
   version: packageVersion
 });
+
+// Nobody should keep running an old build without hearing about it. The
+// registry is asked once at start and every six hours after; the answer
+// rides along in the overview, the dispatch receipt and the wait response,
+// which are the calls every orchestrating session makes.
+const UPDATE_RECHECK_MS = 6 * 60 * 60 * 1000;
+let updateState = null;
+async function refreshUpdateState({ force = false } = {}) {
+  try {
+    updateState = await checkForUpdate({ force });
+    if (updateState.notice) process.stderr.write(`[codex-supervisor] ${updateState.notice}\n`);
+  } catch (error) {
+    process.stderr.write(`[codex-supervisor] update check failed: ${error.message}\n`);
+  }
+  return updateState;
+}
+refreshUpdateState();
+setInterval(() => refreshUpdateState({ force: true }), UPDATE_RECHECK_MS).unref();
+
+// The short form for tool results: null when the install is current.
+function updateField() {
+  return updateNotice(updateState);
+}
+
+// Spread into a result: adds `update` only when there is something to say.
+function withUpdate(payload) {
+  const update = updateField();
+  return update ? { ...payload, update } : payload;
+}
 
 const OVERVIEW_BYTE_BUDGET = 7000;
 const OVERVIEW_CAP_LEVELS = [
@@ -241,11 +273,12 @@ function settleTokenCount(payload) {
   return Buffer.byteLength(JSON.stringify(payload), "utf8");
 }
 
-function buildOverview(tasks) {
+function buildOverview(tasks, extras = {}) {
   let payload;
   for (const [index, caps] of OVERVIEW_CAP_LEVELS.entries()) {
     payload = {
       generated_at: new Date().toISOString(),
+      ...extras,
       total: tasks.length,
       active: tasks.filter((task) => ACTIVE_STATUSES.has(task.status)).length,
       needs_attention: tasks
@@ -329,6 +362,11 @@ server.registerTool(
       task: z.string().min(1),
       cwd: z.string().min(1),
       session_id: z.string().min(1).optional(),
+      // What this batch is about, in one line, so a reader of the store sees
+      // "给 12 个接口补单测" instead of a bare session id. Set it on
+      // the first dispatch of a session; later dispatches may omit it.
+      session_title: z.string().min(1).max(120).optional(),
+      session_note: z.string().min(1).max(2000).optional(),
       sandbox: z.enum(["read-only", "workspace-write", "danger-full-access"]).default("workspace-write"),
       model: z.string().optional(),
       reasoningEffort: z.enum(["minimal", "low", "medium", "high"]).default("high"),
@@ -347,8 +385,13 @@ server.registerTool(
   },
   async (input) => {
     try {
-      const record = await createCodexWorker({ ...input, sessionId: input.session_id ?? null });
-      return textResult(receipt(record));
+      const record = await createCodexWorker({
+        ...input,
+        sessionId: input.session_id ?? null,
+        sessionTitle: input.session_title ?? null,
+        sessionNote: input.session_note ?? null
+      });
+      return textResult(withUpdate(receipt(record)));
     } catch (error) {
       return errorResult(error);
     }
@@ -365,6 +408,8 @@ server.registerTool(
       task_id: z.string().min(1),
       followup_prompt: z.string().min(1),
       session_id: z.string().min(1).optional(),
+      session_title: z.string().min(1).max(120).optional(),
+      session_note: z.string().min(1).max(2000).optional(),
       title: z.string().optional(),
       cwd: z.string().optional(),
       sandbox: z.enum(["read-only", "workspace-write", "danger-full-access"]).optional(),
@@ -380,12 +425,14 @@ server.registerTool(
       baseRef: z.string().min(1).optional()
     }
   },
-  async ({ task_id, followup_prompt, session_id, ...options }) => {
+  async ({ task_id, followup_prompt, session_id, session_title, session_note, ...options }) => {
     try {
       const record = await createFollowupWorker({
           taskId: task_id,
           followupPrompt: followup_prompt,
           sessionId: session_id ?? null,
+          sessionTitle: session_title ?? null,
+          sessionNote: session_note ?? null,
           ...options
         });
       return textResult(receipt(record));
@@ -454,7 +501,14 @@ server.registerTool(
     await reconcileDetachedActiveTasks();
     const tasks = await readTasks();
     const filtered = (status ? tasks.filter((task) => task.status === status) : tasks).slice(-limit);
-    return textResult(buildOverview(filtered));
+    // version and update ride inside the budgeted payload so approx_tokens
+    // still reports the real cost of the whole reply.
+    return textResult(
+      buildOverview(filtered, {
+        version: packageVersion,
+        update: updateField() ?? { update_available: false, installed_version: packageVersion, checked: updateState?.source ?? "pending" }
+      })
+    );
   }
 );
 
@@ -531,7 +585,7 @@ server.registerTool(
         ? `${Math.round(effectiveTimeoutMs / 60000)}-minute`
         : `${Math.round(effectiveTimeoutMs / 1000)}-second`;
 
-    return textResult({
+    return textResult(withUpdate({
       mode,
       timed_out: timedOut,
       still_running: timedOut,
@@ -548,7 +602,7 @@ server.registerTool(
       lost_count: tasks.filter((task) => task.status === "lost").length,
       active_count: tasks.filter((task) => ACTIVE_STATUSES.has(task.status)).length,
       workers: summaries
-    });
+    }));
   }
 );
 
@@ -564,12 +618,49 @@ server.registerTool(
   },
   async ({ session_id }) => {
     const tasks = await readTasksBySession(session_id);
+    const meta = await getSession(session_id);
     return textResult({
       session_id,
+      title: meta?.title ?? null,
+      note: meta?.note ?? null,
       count: tasks.length,
       active: tasks.filter((task) => ACTIVE_STATUSES.has(task.status)).length,
       works: tasks.map(workRow)
     });
+  }
+);
+
+server.registerTool(
+  "check_for_update",
+  {
+    title: "Check for update",
+    description:
+      "Ask the npm registry whether a newer codex-supervisor-mcp is published, and whether the installed files match the published tarball. Returns installed and latest version, integrity check, and the install command. The same check runs on startup; call this to force a fresh one.",
+    inputSchema: {
+      force: z.boolean().default(true)
+    }
+  },
+  async ({ force }) => {
+    const result = await refreshUpdateState({ force });
+    return textResult(result ?? { error: "update_check_failed" });
+  }
+);
+
+server.registerTool(
+  "describe_session",
+  {
+    title: "Describe session",
+    description:
+      "Record what a session is about: a one-line title and an optional note. Readers of the store (the web view, get_session_works) show these instead of the bare session id. Fields you omit are kept.",
+    inputSchema: {
+      session_id: z.string().min(1),
+      title: z.string().min(1).max(120).optional(),
+      note: z.string().min(1).max(2000).optional()
+    }
+  },
+  async ({ session_id, title, note }) => {
+    const row = await upsertSession({ id: session_id, title: title ?? null, note: note ?? null });
+    return textResult({ session_id, title: row?.title ?? null, note: row?.note ?? null, updated_at: row?.updated_at ?? null });
   }
 );
 

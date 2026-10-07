@@ -9,6 +9,7 @@ import {
   readActiveTasks,
   readTaskEvents,
   taskRunPath,
+  upsertSession,
   upsertTask
 } from "./task-store.js";
 import { applyCodexEvent } from "./event-parser.js";
@@ -386,6 +387,8 @@ export async function createCodexWorker({
   title,
   task,
   sessionId = null,
+  sessionTitle = null,
+  sessionNote = null,
   cwd,
   sandbox = "workspace-write",
   model = null,
@@ -412,6 +415,10 @@ export async function createCodexWorker({
   const normalizedOwnedPaths = normalizeOwnedPaths(ownedPaths, projectRoot);
   const conflicts = await findOwnershipConflicts(normalizedOwnedPaths);
   if (conflicts.length > 0) throw ownershipConflictError(conflicts);
+
+  if (sessionId && (sessionTitle || sessionNote)) {
+    await upsertSession({ id: sessionId, title: sessionTitle, note: sessionNote });
+  }
 
   const id = `codex-${Date.now()}-${randomUUID().slice(0, 8)}`;
   const worktree = useWorktree
@@ -627,6 +634,8 @@ export async function createFollowupWorker({
   taskId,
   followupPrompt,
   sessionId = null,
+  sessionTitle = null,
+  sessionNote = null,
   title,
   cwd,
   sandbox,
@@ -666,6 +675,8 @@ export async function createFollowupWorker({
     title: title ?? `Follow-up for ${parent.id}`,
     task: prompt,
     sessionId: sessionId ?? parent.session_id ?? null,
+    sessionTitle,
+    sessionNote,
     cwd: cwd ?? parent.project_root ?? parent.cwd,
     sandbox: sandbox ?? parent.sandbox,
     model: model ?? parent.model,

@@ -182,11 +182,11 @@ Auto-install only happens on a **global install**. `npx`, `--ignore-scripts`, an
 
 ## Tools
 
-Fourteen of them.
+Sixteen of them.
 
 | Tool | Arguments | What it does |
 |---|---|---|
-| `create_codex_worker` | `task`, `cwd`, **`ownedPaths`**, **`goal`**, `session_id`, `dependsOn`, `baseRef`, `sandbox`, `model`, `reasoningEffort`, `title`, `skipGitRepoCheck` | Start a worker. `baseRef` picks the commit the worktree is cut from (default: the repository's `HEAD`); pass another worker's `codex/<id>` branch to build on work that isn't on the main line yet |
+| `create_codex_worker` | `task`, `cwd`, **`ownedPaths`**, **`goal`**, `session_id`, `session_title`, `session_note`, `dependsOn`, `baseRef`, `sandbox`, `model`, `reasoningEffort`, `title`, `skipGitRepoCheck` | Start a worker. `session_title` / `session_note` record what the batch is for, so the board and `get_session_works` show that instead of a bare id. `baseRef` picks the commit the worktree is cut from (default: the repository's `HEAD`); pass another worker's `codex/<id>` branch to build on work that isn't on the main line yet |
 | `create_codex_followup_worker` | `task_id`, `followup_prompt`, `session_id`, plus the same arguments | Start a **new session**, seeded with the old worker's prompt, status, and recent events |
 | `resume_codex_worker` | `task_id`, `prompt` | Continue the **same** Codex session |
 | `list_codex_workers` | `status`, `includeHistory`, `includeDetails` | List workers; running ones only by default |
@@ -199,6 +199,8 @@ Fourteen of them.
 | `get_worker_result` | `task_id`, `limit`, `maxChars` | A worker's own final report, in full. The overview and `wait_codex_workers` clip the last message to 400 characters and keep only the head; read this for the conclusion |
 | `get_session_works` | `session_id` | Every worker dispatched under one session, oldest first. This is how a dead main thread finds its batch again |
 | `search_works` | `query`, `limit` | Substring match over title / goal / prompt / last_message, newest first |
+| `describe_session` | `session_id`, `title`, `note` | Record a title and a note for a session; fields you leave out keep their value. For when the first dispatch forgot |
+| `check_for_update` | `force` | Ask the npm registry whether a newer version is published and whether the installed files match the published tarball. The same check runs at startup; this forces a fresh one |
 | `cancel_codex_worker` | `task_id` | Stop a worker; falls back to the pid when the process handle isn't in this process |
 
 ### Why `ownedPaths` and `goal` are required
@@ -279,6 +281,30 @@ A database from 0.1.x migrates automatically the first time it's opened. Process
 
 `changed_files` has three sources: Codex's `file_change` events, `git status --porcelain` in the worker's own worktree (the uncommitted part), and `git diff --name-only <base_commit> HEAD` (the committed part). The last two exist because a worker that edits files through a shell command (`printf > file`) never emits a `file_change` event, and once it commits on its branch `git status` is clean again - a real batch of five workers did exactly that and every read came back empty. `base_commit` is recorded on the row at dispatch; rows older than that column fall back to the oldest reflog entry of the `codex/<taskId>` branch, which is where the branch was created.
 
+## The board
+
+The package ships a read-only web view over the same SQLite file:
+
+```bash
+codex-supervisor-web                               # after a global install
+npx -p codex-supervisor-mcp codex-supervisor-web   # without installing
+```
+
+It listens on `http://127.0.0.1:7877`; `SUPERVISOR_WEB_PORT` / `SUPERVISOR_WEB_HOST` move it, `SUPERVISOR_HOME` points it at another state directory.
+
+The left column lists sessions by the `session_title` recorded at dispatch (or, failing that, a line built from the workers' goals) and how many of their workers are still running. A session opens into its worker ledger: status, title, the command being run or the last line reported, time taken, files changed (the worktree's real diff, committed work included), commands run. A worker opens a drawer with the full report rendered from markdown, the change list, commands, the raw event stream, the task text, token usage and the native Codex goal. It refreshes every 2.5 seconds while something is running, every 8 seconds otherwise.
+
+It reads. It does not dispatch or cancel; that stays with the MCP.
+
+## Update check
+
+When the MCP process starts it asks the npm registry which version is `latest` and what that tarball's integrity is, then compares two things:
+
+- The installed version. If it is behind `latest`, `get_orchestration_overview`, the dispatch receipt and the `wait_codex_workers` response gain an `update` field with `latest_version` and the command to run (`npm i -g codex-supervisor-mcp@latest`). The skill tells the main thread to pass that on to the user.
+- The installed files. A global install records the integrity of the unpacked tarball in `node_modules/.package-lock.json`; if it differs from what the registry publishes for that version, the files on disk are not the published build, and the notice says to reinstall. A git checkout has no such value and reports its commit instead.
+
+The answer is cached for an hour and refreshed every six hours while the process runs. An unreachable registry is not an error: the result says `source: "offline"` and nothing nags. `CODEX_SUPERVISOR_NO_UPDATE_CHECK=1` turns the check off; `CODEX_SUPERVISOR_REGISTRY` points it at a private registry. The board shows the same result in its lower left corner.
+
 ## Environment variables
 
 | Variable | Default | Effect |
@@ -287,6 +313,10 @@ A database from 0.1.x migrates automatically the first time it's opened. Process
 | `CODEX_HOME` | `~/.codex` | Read-only. Used to read Codex's own `goals_1.sqlite` |
 | `CODEX_BIN` | `codex` (via `PATH`) | Path to the Codex CLI. On Windows a bare name is expanded through `PATHEXT` and the `.cmd` shim is stepped over automatically; a `.js` / `.cjs` / `.mjs` target is started with `node` |
 | `GIT_BIN` | `git` (via `PATH`) | Path to the Git executable |
+| `SUPERVISOR_WEB_PORT` / `SUPERVISOR_WEB_HOST` | `7877` / `127.0.0.1` | Where the board listens |
+| `CODEX_SUPERVISOR_NO_UPDATE_CHECK` | unset | Set to `1` to disable the update check |
+| `CODEX_SUPERVISOR_REGISTRY` | `https://registry.npmjs.org` | Registry the update check asks |
+| `CODEX_SUPERVISOR_UPDATE_TIMEOUT_MS` | `4000` | How long the update check waits for the registry |
 
 When the MCP client starts without `codex` on `PATH`, which is common for GUI-launched apps, set `CODEX_BIN` explicitly:
 
@@ -331,7 +361,8 @@ When the MCP client starts without `codex` on `PATH`, which is common for GUI-la
 8. ~~Worker-native goals: inject a `create_goal` instruction at dispatch~~
 9. ~~Windows support: `.cmd` shim bypass, `taskkill` process tree, cross-platform `PATH` / `PATHEXT`~~ ✅
 10. Resident daemon: move dispatch and process lifetime out of the MCP process
-11. A live React board
+11. ~~A live React board~~ ✅
+12. ~~Session titles and notes, update check~~ ✅
 
 Rejected, with the reasoning, so nobody brings them up again:
 
@@ -362,11 +393,15 @@ The skill covers the dispatch flow, the order to read results in, how to tell `f
 
 ```bash
 npm install
-npm test               # deterministic: truncation, state machine, v1→v2 migration, setup, Windows routing, 17 end-to-end regression cases
+npm test               # deterministic: truncation, state machine, v1→v2 migration, setup, Windows routing, 23 regression cases, 40 edge cases
+npm run test:edge      # test/edge only: update check against a fake registry, session titles, baseRef, non-ASCII paths, ghost rows, board API
 npm run test:real      # end-to-end against the real codex CLI (includes cross-process resume and worktree isolation)
 npm run smoke          # basic smoke test (real codex)
 npm run smoke:mcp      # MCP protocol smoke test
 npm run monitor        # Ink terminal board
+npm run web:install    # board dependencies (web/)
+npm run web:build      # bundle the board into web/dist; runs before publish
+npm run web:dev        # board with hot reload, /api proxied to 7877
 ```
 
 `npm test` replays a fixed Codex event stream through `src/test-fixtures/fake-codex.js`, so it's fast and deterministic. `npm run test:real` actually invokes `codex exec`. It's slower, but it's the evidence that this still works against the current Codex.

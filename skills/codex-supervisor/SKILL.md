@@ -18,9 +18,10 @@ description: 把 Codex CLI 当并行 worker 派活、盯进度、收结果。用
 ## 一次派单
 
 1. 拆活。每路写清楚：干什么、能写哪些文件、怎么算做完。
-2. `create_codex_worker` 派出去。返回的是一张精简回执（`id`、`worktree_path`、`branch`、`owned_paths`、`status`），任务原文不回传，派十一路也不会把你的提示词抄十一遍。
-3. 派完就 `wait_codex_workers` 等。默认只等 2 分钟，到点返回进度快照，worker 照跑；拿同一批 `task_ids` 接着调，直到 `timed_out: false`。默认**不带**事件（`includeEvents: false`），返回只够看状态，要事件得自己开。
-4. 收结果走 `get_worker_result`，拿完整汇报，别一上来读事件流。
+2. 第一路派单时带 `session_id` + `session_title`（一句话说这批活是干什么的，30 字以内，比如「给 12 个接口补单测」），要交代背景再加 `session_note`。看板左栏和 `get_session_works` 显示的是这个标题，不是 id。漏了就事后调 `describe_session` 补。
+3. `create_codex_worker` 派出去。返回的是一张精简回执（`id`、`worktree_path`、`branch`、`owned_paths`、`status`），任务原文不回传，派十一路也不会把你的提示词抄十一遍。
+4. 派完就 `wait_codex_workers` 等。默认只等 2 分钟，到点返回进度快照，worker 照跑；拿同一批 `task_ids` 接着调，直到 `timed_out: false`。默认**不带**事件（`includeEvents: false`），返回只够看状态，要事件得自己开。
+5. 收结果走 `get_worker_result`，拿完整汇报，别一上来读事件流。
 
 `ownedPaths` 和 `goal` 必填，不是可选项。
 
@@ -33,7 +34,9 @@ description: 把 Codex CLI 当并行 worker 派活、盯进度、收结果。用
 | `ownedPaths` | 这个 worker 允许写的路径。和正在跑的 worker 重叠会被拒，返回冲突的 `task_id` |
 | `goal.objective` | 一句话说清这路活的目标 |
 | `session_id` | 同一批派单传同一个值。断线重连靠它 |
+| `session_title` / `session_note` | 这批活是干什么的，一句话 + 可选说明。第一路带上就行，后面几路不用重复 |
 | `dependsOn` | 有先后依赖时填上游的 `task_id` |
+| `baseRef` | worktree 从哪个提交切。默认仓库 `HEAD`；要接着另一路还没合进主线的活干，填它的分支 `codex/<taskId>` |
 
 一次派一批：
 
@@ -41,6 +44,10 @@ description: 把 Codex CLI 当并行 worker 派活、盯进度、收结果。用
 create_codex_worker × N   （同一个 session_id）
 wait_codex_workers        （task_ids: [...], mode: "all"）
 ```
+
+## 看到 `update` 字段就转告用户
+
+`get_orchestration_overview`、派单回执、`wait_codex_workers` 的返回里出现 `update` 且 `update_available: true`（或 `integrity_matches: false`）时，当轮回复里告诉用户一句：现在装的是 `installed_version`，npm 上已经是 `latest_version`，跑 `install_command` 里那条命令，然后重启 Claude Code / Codex。只说一次，不要每轮重复。用户让你查时调 `check_for_update`。
 
 ## 读结果别把上下文撑爆
 
@@ -114,6 +121,10 @@ wait_codex_workers        （task_ids: [...], mode: "all"）
 - **`ownedPaths` 是派单前的冲突检测，不是运行时的沙箱**。它只挡「两路活登记写同一个文件」，拦不住 worker 在自己 worktree 里新建清单外的文件——sandbox 是 `workspace-write`，写自己 worktree 里的任何路径都合法。收活时该看 diff 还得看：`get_worker_result` / `get_worker_summary` 里的 `changed_files` 已经包含 worker 在自己分支上 commit 过的文件（按 `base_commit` 和 `HEAD` 比），不用再去 worktree 里跑 `git show --stat`。
 - **worktree 只隔离工作区，不隔离端口和数据库**。多路活要是都会连同一个 dev server 或同一个库，得自己错开。
 - **`cancel_codex_worker` 跨进程靠 pid**。要求那个 pid 的命令行里带 `codex`，防止误杀复用 pid 的进程。
+
+## 看板
+
+用户想用眼睛看这批活在干什么时，告诉他起 `codex-supervisor-web`（全局装过）或 `npx -p codex-supervisor-mcp codex-supervisor-web`，开 `http://127.0.0.1:7877`。看板按 session 分组，显示的就是派单时记的 `session_title`，所以标题要写得让人一眼看懂。
 
 ## 收尾
 

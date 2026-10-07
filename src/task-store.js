@@ -158,6 +158,19 @@ const TASK_EVENTS_INDEX_DDL =
 const TASKS_SESSION_INDEX_DDL =
   "CREATE INDEX IF NOT EXISTS idx_tasks_session ON tasks(session_id);";
 
+// A session is a string on each task row; this table is what a session is
+// *about*. A main thread sets it once per batch, so a reader sees "给 12
+// 个接口补单测" instead of a bare id.
+const SESSIONS_DDL = `
+    CREATE TABLE IF NOT EXISTS sessions (
+      id TEXT PRIMARY KEY,
+      title TEXT,
+      note TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+  `;
+
 function sleepSync(ms) {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
@@ -191,6 +204,7 @@ function initializeSchema(dbInstance) {
       dbInstance.exec(TASK_EVENTS_DDL);
       dbInstance.exec(TASK_EVENTS_INDEX_DDL);
       dbInstance.exec(TASKS_SESSION_INDEX_DDL);
+      dbInstance.exec(SESSIONS_DDL);
       dbInstance.exec("COMMIT;");
     } catch (error) {
       try {
@@ -379,6 +393,34 @@ export async function readTasksBySession(sessionId) {
     .prepare("SELECT * FROM tasks WHERE session_id = ? ORDER BY created_at ASC")
     .all(sessionId);
   return rows.map(rowToTask);
+}
+
+export async function upsertSession({ id, title = null, note = null }) {
+  if (!id) throw new Error("session id is required");
+  await ensureFilesystem();
+  const now = new Date().toISOString();
+  // Only overwrite what the caller sent: a later dispatch that names the
+  // session without a title must not blank the title set earlier.
+  openDb()
+    .prepare(`
+      INSERT INTO sessions (id, title, note, created_at, updated_at) VALUES (@id, @title, @note, @now, @now)
+      ON CONFLICT(id) DO UPDATE SET
+        title = COALESCE(excluded.title, sessions.title),
+        note = COALESCE(excluded.note, sessions.note),
+        updated_at = excluded.updated_at
+    `)
+    .run({ id, title: title ?? null, note: note ?? null, now });
+  return getSession(id);
+}
+
+export async function getSession(sessionId) {
+  await ensureFilesystem();
+  return openDb().prepare("SELECT * FROM sessions WHERE id = ?").get(sessionId) ?? null;
+}
+
+export async function readSessions() {
+  await ensureFilesystem();
+  return openDb().prepare("SELECT * FROM sessions").all();
 }
 
 export async function getTasks(taskIds) {

@@ -78,13 +78,25 @@ async function main() {
     const { join } = await import("node:path");
     const gitEnv = { ...process.env, GIT_AUTHOR_NAME: "fake", GIT_AUTHOR_EMAIL: "fake@example.com", GIT_COMMITTER_NAME: "fake", GIT_COMMITTER_EMAIL: "fake@example.com" };
     const run = (cmdArgs) => execFileSync("git", ["-C", workDir, ...cmdArgs], { stdio: "ignore", env: gitEnv });
+    const insideRepo = (() => {
+      try {
+        run(["rev-parse", "--is-inside-work-tree"]);
+        return true;
+      } catch {
+        return false;
+      }
+    })();
     emit({ type: "thread.started", thread_id: threadId });
     emit({ type: "turn.started" });
     const command = "cat <<'EOF' > committed.txt\nhello\nEOF && git add -A && git commit -m 'worker commit'";
     emit({ type: "item.started", item: { id: "item_1", type: "command_execution", command } });
-    writeFileSync(join(workDir, "committed.txt"), "hello\n");
-    run(["add", "-A"]);
-    run(["commit", "-q", "-m", "worker commit"]);
+    // Unique content, so a worker cut from another worker's branch still has
+    // something to commit on top of it.
+    writeFileSync(join(workDir, "committed.txt"), `hello ${process.pid} ${Date.now()}\n`);
+    if (insideRepo) {
+      run(["add", "-A"]);
+      run(["commit", "-q", "-m", "worker commit"]);
+    }
     emit({ type: "item.completed", item: { id: "item_1", type: "command_execution", command, exit_code: 0 } });
     writeFileSync(join(workDir, "uncommitted.txt"), "draft\n");
     emit({ type: "item.completed", item: { id: "item_2", type: "agent_message", text: "committed one file, left one draft" } });

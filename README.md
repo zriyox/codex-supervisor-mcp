@@ -182,11 +182,11 @@ rm -rf ~/.codex-supervisor      # 状态目录：sqlite、事件流、worktree �
 
 ## 工具
 
-14 个工具。
+16 个工具。
 
 | 工具 | 入参 | 作用 |
 |---|---|---|
-| `create_codex_worker` | `task`, `cwd`, **`ownedPaths`**, **`goal`**, `session_id`, `dependsOn`, `baseRef`, `sandbox`, `model`, `reasoningEffort`, `title`, `skipGitRepoCheck` | 起一个 worker。`baseRef` 指定 worktree 从哪个提交切（默认仓库 `HEAD`），要接着另一路还没合进主线的 `codex/<id>` 分支干就传它 |
+| `create_codex_worker` | `task`, `cwd`, **`ownedPaths`**, **`goal`**, `session_id`, `session_title`, `session_note`, `dependsOn`, `baseRef`, `sandbox`, `model`, `reasoningEffort`, `title`, `skipGitRepoCheck` | 起一个 worker。`session_title` / `session_note` 记下这一批活是干什么的，看板和 `get_session_works` 显示它们而不是光秃秃的 id；`baseRef` 指定 worktree 从哪个提交切（默认仓库 `HEAD`），要接着另一路还没合进主线的 `codex/<id>` 分支干就传它 |
 | `create_codex_followup_worker` | `task_id`, `followup_prompt`, `session_id`, + 同上 | 起一个**新会话**，把老 worker 的 prompt、状态、近期事件拼进去 |
 | `resume_codex_worker` | `task_id`, `prompt` | 接**同一个** Codex 会话继续跑 |
 | `list_codex_workers` | `status`, `includeHistory`, `includeDetails` | 列出 worker，默认只看在跑的 |
@@ -199,6 +199,8 @@ rm -rf ~/.codex-supervisor      # 状态目录：sqlite、事件流、worktree �
 | `get_worker_result` | `task_id`, `limit`, `maxChars` | 读 worker 自己的完整收尾汇报。总览和 `wait_codex_workers` 把最后一条消息截到 400 字只留开头，要结论读这个 |
 | `get_session_works` | `session_id` | 一个 session 派出去的全部 worker，按时间升序。主线程挂了之后靠它找回那批活 |
 | `search_works` | `query`, `limit` | 在 title / goal / prompt / last_message 里做子串匹配，从新到旧 |
+| `describe_session` | `session_id`, `title`, `note` | 给一个 session 记标题和说明，没传的字段保留原值。派单时漏了可以事后补 |
+| `check_for_update` | `force` | 问 npm registry 有没有更新的版本、本机装的文件和发布的 tarball 是否一致。启动时会自动查一次，这个工具用来强制再查 |
 | `cancel_codex_worker` | `task_id` | 终止 worker，进程句柄不在本进程时按 pid 兜底 |
 
 ### 为什么 `ownedPaths` 和 `goal` 是必填
@@ -277,7 +279,31 @@ Codex 原生 goal 有六个状态，映射到 work 状态：
 
 老版本（0.1.x）的库会在第一次打开时自动迁移：`editing` / `command` / `command_completed` / `reporting` 这些原本塞在 `status` 里的过程值会被拆到 `phase`，`status` 归到 `running`，一行不丢。迁移在一个 `BEGIN IMMEDIATE` 事务里做，多个进程同时启动也只会有一个真的迁移。
 
-`changed_files` 有三个来源：Codex 的 `file_change` 事件、worker 自己 worktree 里的 `git status --porcelain`（未提交的部分）、以及 `git diff --name-only <base_commit> HEAD`（已提交的部分）。后两个是兜底——worker 用 shell 命令（`printf > file`）改文件时不会产生 `file_change` 事件；它自己在分支上 commit 之后 `git status` 又是干净的，一批五路 worker 全这么干过，读回来全是空数组。`base_commit` 在派单时记在行上；更早的行没有这列，就退回去读 `codex/<taskId>` 分支 reflog 里最老的那条，那是分支建出来的位置。
+`changed_files` 有三个来源：Codex 的 `file_change` 事件、worker 自己 worktree 里的 `git status --porcelain`（未提交的部分）、以及 `git diff --name-only <base_commit> HEAD`（已提交的部分）。后两个是兜底：worker 用 shell 命令（`printf > file`）改文件时不会产生 `file_change` 事件；它自己在分支上 commit 之后 `git status` 又是干净的，一批五路 worker 全这么干过，读回来全是空数组。`base_commit` 在派单时记在行上；更早的行没有这列，就退回去读 `codex/<taskId>` 分支 reflog 里最老的那条，那是分支建出来的位置。
+
+## 看板
+
+包里带一个只读的网页看板，读的是同一个 sqlite：
+
+```bash
+codex-supervisor-web                      # 全局装过之后
+npx -p codex-supervisor-mcp codex-supervisor-web   # 没装也能起
+```
+
+默认开在 `http://127.0.0.1:7877`，`SUPERVISOR_WEB_PORT` / `SUPERVISOR_WEB_HOST` 改端口和地址，`SUPERVISOR_HOME` 指向别的状态目录。
+
+左栏是 session，显示派单时记的 `session_title`（没记就用各路 worker 的 goal 拼一句）和这批活还有几路在跑。点进去是这个 session 的 worker 台账：状态、标题、正在执行的命令或最后一句汇报、耗时、改了几个文件（按 worktree 真实 diff 算，含已 commit 的）、跑了几条命令。再点一路，右侧抽屉给完整汇报（markdown 渲染）、改动清单、命令、原始事件流、任务书，还有 token 消耗和 Codex 原生 goal。有 worker 在跑时每 2.5 秒刷新，静止时 8 秒。
+
+它只读，不派单，不取消。派单的事归 MCP。
+
+## 更新检查
+
+MCP 进程启动时会问一次 npm registry：`latest` 是哪个版本，它的 tarball integrity 是多少。然后和本机比两件事：
+
+- 装的版本号。比 `latest` 低，就在 `get_orchestration_overview`、派单回执、`wait_codex_workers` 的返回里多一个 `update` 字段，带 `latest_version` 和要跑的命令（`npm i -g codex-supervisor-mcp@latest`）。skill 让主线程看到这个字段就转告用户。
+- 装的文件。全局安装时 npm 把解出来的 tarball integrity 记在 `node_modules/.package-lock.json` 里，和 registry 上这个版本的 integrity 不一样，说明本机的文件不是发布的那份，同样提示重装。git checkout 没有这个值，只记 commit。
+
+结果缓存一小时，运行中每六小时再查一次。registry 连不上就算了，不报错也不提示，本次结果标 `source: "offline"`。不想联网就设 `CODEX_SUPERVISOR_NO_UPDATE_CHECK=1`；私有 registry 用 `CODEX_SUPERVISOR_REGISTRY`。看板左下角也会显示同一个结果。
 
 ## 环境变量
 
@@ -287,6 +313,10 @@ Codex 原生 goal 有六个状态，映射到 work 状态：
 | `CODEX_HOME` | `~/.codex` | 只读，用来读 Codex 原生的 `goals_1.sqlite` |
 | `CODEX_BIN` | `codex`（走 `PATH`） | Codex CLI 可执行文件路径。Windows 上给裸名字时会按 `PATHEXT` 展开，`.cmd` shim 会被自动绕开；指向 `.js` / `.cjs` / `.mjs` 时自动用 `node` 起它 |
 | `GIT_BIN` | `git`（走 `PATH`） | Git 可执行文件路径 |
+| `SUPERVISOR_WEB_PORT` / `SUPERVISOR_WEB_HOST` | `7877` / `127.0.0.1` | 看板监听的端口和地址 |
+| `CODEX_SUPERVISOR_NO_UPDATE_CHECK` | 未设 | 设成 `1` 关闭更新检查 |
+| `CODEX_SUPERVISOR_REGISTRY` | `https://registry.npmjs.org` | 更新检查用的 registry |
+| `CODEX_SUPERVISOR_UPDATE_TIMEOUT_MS` | `4000` | 更新检查等 registry 的上限 |
 
 如果 MCP 客户端启动时 `PATH` 里没有 `codex`（GUI 启动的应用常见），显式设置 `CODEX_BIN`：
 
@@ -331,7 +361,8 @@ Codex 原生 goal 有六个状态，映射到 work 状态：
 8. ~~worker 原生 goal：派单时注入 `create_goal` 指令~~
 9. ~~Windows 支持：`.cmd` shim 绕行、`taskkill` 进程树、跨平台 PATH / `PATHEXT`~~ ✅
 10. 常驻 daemon：派单和进程生命周期从 MCP 进程里拿出来
-11. React 实时看板
+11. ~~React 实时看板~~ ✅
+12. ~~session 标题和说明、更新检查~~ ✅
 
 砍掉不做的（说明理由，免得以后又想起来）：
 
@@ -362,11 +393,15 @@ skill 里写了派单流程、读结果该按什么顺序、`failed` 和 `lost` 
 
 ```bash
 npm install
-npm test               # 确定性测试：截断、状态机、v1→v2 迁移、setup、Windows 路由、17 项端到端回归
+npm test               # 确定性测试：截断、状态机、v1→v2 迁移、setup、Windows 路由、23 项端到端回归、40 项边界
+npm run test:edge      # 只跑 test/edge：更新检查（假 registry）、session 标题、baseRef、中文路径、僵尸行、看板 API
 npm run test:real      # 用真 codex CLI 跑端到端（含跨进程 resume、worktree 隔离）
 npm run smoke          # 基础冒烟（真 codex）
 npm run smoke:mcp      # MCP 协议冒烟
 npm run monitor        # Ink 终端看板
+npm run web:install    # 看板前端依赖（web/）
+npm run web:build      # 打包看板到 web/dist，发 npm 前自动跑
+npm run web:dev        # 看板热更新开发，/api 代理到 7877
 ```
 
 `npm test` 用 `src/test-fixtures/fake-codex.js` 回放固定的 Codex 事件流，跑得快且确定。`npm run test:real` 会真的调 `codex exec`，慢一些，但它才是「跟最新 Codex 兼容」的证据。

@@ -1,6 +1,6 @@
 {
   "name": "codex-supervisor-mcp",
-  "version": "0.5.6",
+  "version": "0.5.7",
   "type": "module",
   "description": "MCP server that dispatches and supervises parallel Codex CLI workers, one isolated Git worktree each, with a persisted work state machine.",
   "license": "MIT",
@@ -24,7 +24,8 @@
   ],
   "bin": {
     "codex-supervisor-mcp": "./src/mcp-server.js",
-    "codex-supervisor-setup": "./src/setup.js"
+    "codex-supervisor-setup": "./src/setup.js",
+    "codex-supervisor-web": "./src/web-server.js"
   },
   "files": [
     "src/mcp-server.js",
@@ -41,6 +42,9 @@
     "src/prompt.js",
     "src/cleanup.js",
     "src/monitor.jsx",
+    "src/web-server.js",
+    "src/update-check.js",
+    "web/dist/",
     "skills/",
     "README.md",
     "LICENSE"
@@ -51,12 +55,18 @@
     "start": "node ./src/mcp-server.js",
     "monitor": "tsx ./src/monitor.jsx",
     "cleanup": "node ./src/cleanup.js",
-    "test": "node ./src/bin-resolver-test.js && node ./src/truncate-test.js && node ./src/status-test.js && node ./src/migration-test.js && node ./src/setup-test.js && node ./src/setup-windows-test.js && node ./src/regression-test.js",
+    "test": "node ./src/bin-resolver-test.js && node ./src/truncate-test.js && node ./src/status-test.js && node ./src/migration-test.js && node ./src/setup-test.js && node ./src/setup-windows-test.js && node ./src/regression-test.js && node --test test/edge/*.test.js",
     "test:real": "node ./src/real-codex-test.js",
     "smoke": "node ./src/smoke-test.js",
     "smoke:followup": "node ./src/followup-smoke-test.js",
     "smoke:mcp": "node ./src/mcp-smoke-test.js",
-    "smoke:mcp-wait": "node ./src/mcp-wait-smoke-test.js"
+    "smoke:mcp-wait": "node ./src/mcp-wait-smoke-test.js",
+    "web": "node ./src/web-server.js",
+    "web:install": "npm --prefix web install",
+    "web:build": "npm --prefix web run build",
+    "web:dev": "npm --prefix web run dev",
+    "test:edge": "node --test test/edge/*.test.js",
+    "prepublishOnly": "npm run web:build && npm test"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.21.0"
