@@ -476,6 +476,62 @@ await test("R5-4 create asks for a native goal and resume does not", async () =>
   });
 });
 
+// ------------------------------------------------ R6 payload clipping
+
+// A heredoc command is one item carrying tens of KB. Echoing it back through
+// every read is what pushed a single wait response past the client's MCP output
+// cap, where it landed on disk a second time as a notification. The reads clip;
+// the stored stream keeps the original.
+await test("R6-1 long commands and reports come back clipped, the stream keeps them whole", async () => {
+  await withServer({ FAKE_CODEX_COMMAND_LEN: "20000", FAKE_CODEX_MESSAGE_LEN: "20000" }, async (client) => {
+    const created = await call(client, "create_codex_worker", describe({ title: "long-payload" }));
+    const final = await waitFor(client, created.id, (task) => task.status === "completed");
+
+    assert.ok((final.current_action ?? "").length <= 400, `current_action leaked ${final.current_action?.length} chars`);
+    assert.ok((final.current_command ?? "").length <= 400, `current_command leaked ${final.current_command?.length} chars`);
+    assert.ok((final.last_message ?? "").length <= 4001, `last_message leaked ${final.last_message?.length} chars`);
+    for (const entry of final.commands) {
+      assert.ok((entry.command ?? "").length <= 400, `commands[] leaked ${entry.command?.length} chars`);
+    }
+    assert.equal(final.prompt_truncated, false, "a short prompt must not be reported as truncated");
+    const clippedPrompt = await call(client, "get_codex_worker_status", { task_id: created.id });
+    assert.ok((clippedPrompt.prompt ?? "").length <= 400, "the prompt must be clipped by default");
+    const fullPrompt = await call(client, "get_codex_worker_status", {
+      task_id: created.id,
+      includePrompt: true,
+      promptMaxChars: 1000000
+    });
+    assert.match(fullPrompt.prompt, /Task long-payload/, "includePrompt must return the whole prompt");
+
+    const waited = await call(client, "wait_codex_workers", {
+      task_ids: [created.id],
+      mode: "all",
+      timeoutMs: 5000
+    });
+    assert.equal(waited.workers[0].recent_events, undefined, "events must be off by default");
+    const waitedBytes = Buffer.byteLength(JSON.stringify(waited), "utf8");
+    assert.ok(waitedBytes < 8000, `a one-worker wait returned ${waitedBytes} bytes`);
+
+    const withEvents = await call(client, "wait_codex_workers", {
+      task_ids: [created.id],
+      mode: "all",
+      timeoutMs: 5000,
+      includeEvents: true,
+      eventMaxChars: 400
+    });
+    const echoed = withEvents.workers[0].recent_events
+      .flatMap((event) => [event.item?.command, event.item?.text])
+      .filter((text) => typeof text === "string" && text.length > 1000);
+    assert.equal(echoed.length, 0, "an opt-in wait must still clip each event");
+
+    const events = await call(client, "get_codex_worker_events", { task_id: created.id, limit: 200 });
+    const whole = events.events
+      .map((event) => event.item?.command)
+      .filter((command) => typeof command === "string" && command.length > 10000);
+    assert.ok(whole.length > 0, "the raw stream must keep the full command");
+  });
+});
+
 // ------------------------------------------------------------------- cleanup
 
 await withServer({}, async (client) => {

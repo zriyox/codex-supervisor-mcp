@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { readFileSync } from "node:fs";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
@@ -25,9 +26,15 @@ import { mergeChangedFiles, readWorktreeChanges } from "./worktree.js";
 import { ACTIVE_STATUSES, TERMINAL_STATUSES, TASK_STATUSES, isGoalNeedingAttention } from "./status.js";
 import { approxTokenCount, truncateEventStrings, truncateMiddleChars } from "./truncate.js";
 
+// Report the real package version. This string had drifted to 0.4.0 while the
+// package shipped 0.5.x, so the handshake named a version nobody was running.
+const packageVersion = JSON.parse(
+  readFileSync(new URL("../package.json", import.meta.url), "utf8")
+).version;
+
 const server = new McpServer({
   name: "codex-supervisor",
-  version: "0.4.0"
+  version: packageVersion
 });
 
 const OVERVIEW_BYTE_BUDGET = 7000;
@@ -37,6 +44,20 @@ const OVERVIEW_CAP_LEVELS = [
   { title: 18, goal: 24, action: 24, path: 24 },
   { title: 12, goal: 16, action: 16, path: 16 }
 ];
+
+// `current_action` is "Running <command>", and a command can be a heredoc that
+// writes a whole file. Returning it whole put tens of thousands of characters
+// into every wait response, which then blew past the client's MCP output cap
+// and came back a second time as a notification. The full command stays in
+// current_command / commands and is readable through get_codex_worker_events.
+const ACTION_PREVIEW_CHARS = 300;
+const COMMAND_PREVIEW_CHARS = 300;
+const COMMAND_TAIL = 20;
+const PROMPT_PREVIEW_CHARS = 300;
+// The single-worker status read is the drill-in for one worker, so its copy of
+// the last message stays much larger than the overview's 400. The full report
+// is still get_worker_result's job.
+const STATUS_MESSAGE_CHARS = 4000;
 
 function textResult(value) {
   return {
@@ -83,7 +104,7 @@ function summarizeTask(task) {
     changed_file_count: (task.changed_files ?? []).length,
     command_count: (task.commands ?? []).length,
     run_count: task.run_count ?? 0,
-    current_action: task.current_action,
+    current_action: clip(task.current_action, ACTION_PREVIEW_CHARS),
     last_event_type: task.last_event_type,
     last_message: clip(task.last_message, 400),
     notices: clip(task.notices, 400),
@@ -93,6 +114,30 @@ function summarizeTask(task) {
     started_at: task.started_at,
     completed_at: task.completed_at,
     exit_code: task.exit_code
+  };
+}
+
+// The status read used to hand back the stored row verbatim. For a follow-up
+// worker that row carries the parent prompt plus the whole command history and
+// the events folded into it; one real call returned 180k characters, past the
+// client's MCP output cap, so the reply landed on disk and had to be grepped.
+// This is the same status surface the other reads use, plus explicitly bounded
+// extras. includePrompt is the escape hatch for the full task text.
+function statusView(task, { includePrompt, promptMaxChars }) {
+  const promptText = task.prompt ?? null;
+  const promptBudget = includePrompt ? promptMaxChars : PROMPT_PREVIEW_CHARS;
+  const commands = (task.commands ?? []).slice(-COMMAND_TAIL);
+  return {
+    ...summarizeTask(task),
+    last_message: clip(task.last_message, STATUS_MESSAGE_CHARS),
+    session_id: task.session_id ?? null,
+    pid: task.pid ?? null,
+    run_log: task.run_log ?? null,
+    changed_files: task.changed_files ?? [],
+    current_command: clip(task.current_command, COMMAND_PREVIEW_CHARS),
+    commands: commands.map((entry) => ({ ...entry, command: clip(entry.command, COMMAND_PREVIEW_CHARS) })),
+    prompt: clip(promptText, promptBudget),
+    prompt_truncated: Boolean(promptText) && String(promptText).length > promptBudget
   };
 }
 
@@ -218,7 +263,7 @@ function buildWorkerSummary(task, nativeGoal) {
       : "codex goal: none recorded for this thread",
     `changed files (${changed.length}): ${changed.slice(0, 10).join(", ") || "-"}`,
     `last command: ${commands.at(-1)?.command ?? "-"}`,
-    `last action: ${task.current_action ?? "-"}`,
+    `last action: ${clip(task.current_action, ACTION_PREVIEW_CHARS) ?? "-"}`,
     `runs: ${task.run_count ?? 0}${task.resumed_from ? `, resumed from ${task.resumed_from}` : ""}`,
     task.error ? `error: ${task.error}` : null
   ].filter(Boolean);
@@ -404,9 +449,17 @@ server.registerTool(
       timeoutMinutes: z.number().int().min(1).max(360).default(2),
       timeoutMs: z.number().int().min(1000).max(21600000).optional(),
       pollMs: z.number().int().min(250).max(10000).default(1000),
-      includeEvents: z.boolean().default(true),
+      // Off by default. A wait is the call clients background and then replay
+      // as a notification, so its payload has to stay small; ten events per
+      // worker was the bulk of it. Ask for events explicitly, or read
+      // get_codex_worker_events for one worker.
+      includeEvents: z.boolean().default(false),
       eventLimit: z.number().int().min(1).max(50).default(10),
-      eventMaxChars: z.number().int().min(0).max(1000000).optional(),
+      // Events used to come back whole: one command event can carry a heredoc
+      // that is tens of KB, and ten of those made a single wait response
+      // unreadable. The default bounds each string; pass a bigger number when
+      // you actually want the raw text.
+      eventMaxChars: z.number().int().min(0).max(1000000).default(800),
       eventKinds: z.array(z.string().min(1)).optional()
     }
   },
@@ -524,15 +577,18 @@ server.registerTool(
   "get_codex_worker_status",
   {
     title: "Get Codex worker status",
-    description: "Read the latest normalized status for one Codex worker.",
+    description:
+      "Read the latest normalized status for one Codex worker: lifecycle, phase, current action, changed files, goal, recent commands, and the task prompt (clipped by default). Set includePrompt to read the prompt in full, or use get_codex_worker_events for the raw stream.",
     inputSchema: {
-      task_id: z.string().min(1)
+      task_id: z.string().min(1),
+      includePrompt: z.boolean().default(false),
+      promptMaxChars: z.number().int().min(0).max(1000000).default(5000)
     }
   },
-  async ({ task_id }) => {
+  async ({ task_id, includePrompt, promptMaxChars }) => {
     const task = await getTask(task_id);
     if (!task) return textResult({ error: "task_not_found", task_id });
-    return textResult(task);
+    return textResult(statusView(task, { includePrompt, promptMaxChars }));
   }
 );
 

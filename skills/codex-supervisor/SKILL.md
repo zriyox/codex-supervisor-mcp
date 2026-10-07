@@ -19,7 +19,7 @@ description: 把 Codex CLI 当并行 worker 派活、盯进度、收结果。用
 
 1. 拆活。每路写清楚：干什么、能写哪些文件、怎么算做完。
 2. `create_codex_worker` 派出去。返回的是一张精简回执（`id`、`worktree_path`、`branch`、`owned_paths`、`status`），任务原文不回传，派十一路也不会把你的提示词抄十一遍。
-3. 派完就 `wait_codex_workers` 等。默认只等 2 分钟，到点返回进度快照，worker 照跑；拿同一批 `task_ids` 接着调，直到 `timed_out: false`。
+3. 派完就 `wait_codex_workers` 等。默认只等 2 分钟，到点返回进度快照，worker 照跑；拿同一批 `task_ids` 接着调，直到 `timed_out: false`。默认**不带**事件（`includeEvents: false`），返回只够看状态，要事件得自己开。
 4. 收结果走 `get_worker_result`，拿完整汇报，别一上来读事件流。
 
 `ownedPaths` 和 `goal` 必填，不是可选项。
@@ -52,10 +52,12 @@ wait_codex_workers        （task_ids: [...], mode: "all"）
 | 收一路活的完整结论 | `get_worker_result` | 汇报全文，大活可能上万字 |
 | 只想知道活着还是完了 | `get_worker_summary` | 一段话 |
 | 看某个 worker 干了什么 | `get_codex_worker_events` | 用 `limit` / `kinds` / `maxChars` 压 |
-| 看某个 worker 的完整记录 | `get_codex_worker_status` | 中等，比 overview 一行细 |
+| 看某个 worker 的状态 | `get_codex_worker_status` | 比 overview 一行细，命令和 prompt 都裁过 |
 | 看 goal 和 token 消耗 | `get_worker_goal` | 很小 |
 
 **收结论必须走 `get_worker_result`。** `wait_codex_workers` 返回里的 `last_message` 会被截到 400 字只留开头，`get_orchestration_overview` 干脆不给这一列。拿截断版当结论，后面的证据、数字和结论全会漏掉。`get_worker_result` 还会带回 `status`、`exit_code`、`changed_files`，顺便就能判断是真跑完还是崩了。
+
+**默认读回来的长文本都是裁过的**，别把裁剪当成"活没干"：`current_action` 截 300 字（一条 heredoc 命令能写一整个文件，原样回传一次就是几万字）、`get_codex_worker_status` 的 `prompt` 截 300 字（要全文传 `includePrompt: true`）、`last_message` 在 overview 和 wait 里截 400 字、在 status 里截 4000 字。全量在库里：命令流看 `get_codex_worker_events`，结论看 `get_worker_result`。
 
 `get_codex_worker_events` 的三个闸门：`kinds` 先过滤再取 `limit`；`maxChars` 把超长字符串中间截断；不知道有哪些 `kinds` 时先看返回里的 `available_kinds`。
 
@@ -108,6 +110,7 @@ wait_codex_workers        （task_ids: [...], mode: "all"）
 - **worktree 是从 `HEAD` 建的，你工作区里没 commit 的东西不在里面**。未提交的修改和未跟踪文件 worker 既看不到也写不到。要让它读到就把绝对路径写进 `task`，或者先把改动 commit。它自己的改动落在 `codex/<taskId>` 分支上，不碰你的工作区。
 - **它只管"跑完了"，不管写得对不对**。终态来自 Codex 的 `turn.completed` 和进程退出码，`exit_code: 0` 只说明没崩。每批活回来，验收得自己做：跑校验、抽看内容。
 - **`ownedPaths` 冲突是好事**。说明两路活会踩同一个文件，这时候该改拆法，不是绕过检测。
+- **`ownedPaths` 是派单前的冲突检测，不是运行时的沙箱**。它只挡「两路活登记写同一个文件」，拦不住 worker 在自己 worktree 里新建清单外的文件——sandbox 是 `workspace-write`，写自己 worktree 里的任何路径都合法。收活时该看 diff 还得看：`git -C <worktree_path> show --stat`，或者 `get_worker_summary` 里的 `changed_files`。
 - **worktree 只隔离工作区，不隔离端口和数据库**。多路活要是都会连同一个 dev server 或同一个库，得自己错开。
 - **`cancel_codex_worker` 跨进程靠 pid**。要求那个 pid 的命令行里带 `codex`，防止误杀复用 pid 的进程。
 

@@ -7,6 +7,10 @@ const threadId = process.env.FAKE_CODEX_THREAD_ID ?? "01a0fd0a-0000-7000-8000-00
 const stepMs = Number(process.env.FAKE_CODEX_STEP_MS ?? "0");
 const messageLen = Number(process.env.FAKE_CODEX_MESSAGE_LEN ?? "0");
 const messageText = messageLen > 0 ? "m".repeat(messageLen) : "done";
+// A command can be a heredoc that writes a whole file. FAKE_CODEX_COMMAND_LEN
+// reproduces that so the reads that echo commands can be checked for clipping.
+const commandLen = Number(process.env.FAKE_CODEX_COMMAND_LEN ?? "0");
+const commandText = commandLen > 0 ? `cat <<'EOF' > file.txt\n${"c".repeat(commandLen)}\nEOF` : "ls -la";
 
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const emit = (event) => process.stdout.write(`${JSON.stringify(event)}\n`);
@@ -62,9 +66,9 @@ async function main() {
   await wait(stepMs);
   emit({ type: "turn.started" });
   await wait(stepMs);
-  emit({ type: "item.started", item: { id: "item_1", type: "command_execution", command: "ls -la" } });
+  emit({ type: "item.started", item: { id: "item_1", type: "command_execution", command: commandText } });
   await wait(stepMs);
-  emit({ type: "item.completed", item: { id: "item_1", type: "command_execution", command: "ls -la", exit_code: 0 } });
+  emit({ type: "item.completed", item: { id: "item_1", type: "command_execution", command: commandText, exit_code: 0 } });
   await wait(stepMs);
   emit({
     type: "item.started",
