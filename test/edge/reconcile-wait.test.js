@@ -91,8 +91,10 @@ test("resuming a lost worker clears the error from the lost run", async () => {
     const deadline = Date.now() + 10000;
     for (;;) {
       const t = await call("get_codex_worker_status", { task_id: created.id });
-      if (t.status === "lost") {
-        assert.match(t.error, /killed by signal|disappeared/);
+      // No signals on Windows: a killed worker lands as failed with code 1
+      // there, lost everywhere else. Either way the row carries an error.
+      if (t.status === "lost" || t.status === "failed") {
+        assert.match(t.error, /killed by signal|disappeared|exited with code/);
         break;
       }
       if (Date.now() > deadline) throw new Error(`still ${t.status}`);
