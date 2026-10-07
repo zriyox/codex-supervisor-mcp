@@ -161,8 +161,8 @@ Nineteen.
 | `get_orchestration_overview` | `status`, `limit` | Every worker in one table, capped at 7000 bytes. Carries `version` and `update` |
 | `get_worker_result` | `task_id`, `limit`, `maxChars` | The worker's own full report plus `status` / `exit_code` / `changed_files`. The door for conclusions |
 | `get_worker_diff` | `task_id`, `maxChars`, `paths` | What the worker actually changed: patches from the worktree's starting commit to its working tree, committed or not, untracked files included. `maxChars` bounds the whole answer; files past it are listed without a patch |
-| `ask_codex_worker` | `task_id`, `question`, `timeoutMs`, `maxChars`, `end` | Ask the worker on the side: its thread is forked into a read-only side session and the question goes there, so the worker's own thread is untouched. Without `question` it reads the latest answer; `end` deletes the fork |
-| `land_codex_worker` | `task_id`, `onto` | Cherry-pick the worker's commits from `codex/<id>` onto the current branch of the directory it was dispatched from. The target must be clean, `onto` is a check and never a switch, and a conflict rolls back and lists the files |
+| `ask_codex_worker` | `task_id`, `question`, `timeoutMs`, `maxChars`, `fresh`, `end` | Ask the worker on the side. Its thread is forked into a read-only session with no network and no MCP tools; the worker itself is untouched. A resumed worker gets a new fork by itself, `fresh` forces one, `end` deletes it |
+| `land_codex_worker` | `task_id`, `onto`, `commitMessage` | Cherry-pick the worker's commits from `codex/<id>` onto the current branch of the directory it was dispatched from. The target must be clean, `onto` is a check and never a switch, and a conflict rolls back and lists the files. `commitMessage` first commits the worker's uncommitted edits as one commit |
 | `get_worker_summary` | `task_id` | One paragraph: goal, status, changes, last command and message |
 | `get_codex_worker_status` | `task_id`, `includePrompt`, `promptMaxChars` | One worker in detail; the prompt is clipped to 300 characters unless asked for |
 | `get_codex_worker_events` | `task_id`, `limit`, `maxChars`, `kinds` | The raw event stream |
@@ -357,7 +357,8 @@ rm -rf ~/.codex-supervisor
 
 ## Known limitations
 
-- A worker's lifetime is tied to the MCP process. Kill the MCP and the worker is left behind, settled as `lost` on the next read. The fix is a resident daemon; see the Roadmap.
+- A worker is a child of the MCP process. Kill the MCP and the worker goes with it, settled as `lost` on the next read. Its worktree and `thread_id` survive: `resume_codex_worker` continues the same thread. Keeping it alive across that takes a resident daemon; see the Roadmap.
+- In the default `workspace-write` sandbox a worker cannot commit: Codex keeps `.git` read-only. Either let it edit only and pass `commitMessage` to `land_codex_worker`, or dispatch with `danger-full-access`.
 - The worktree is cut from a commit, so uncommitted work in your checkout is not in it. Give the task absolute paths, or commit first.
 - Only the working directory is isolated. Temp directories, databases and ports are shared; workers that would hit the same dev server need to be kept apart in the task.
 - `ownedPaths` is checked at dispatch only; it does not stop a worker from creating a file it never listed. Review the diff.

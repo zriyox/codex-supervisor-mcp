@@ -909,16 +909,17 @@ server.registerTool(
   {
     title: "Ask a worker on the side",
     description:
-      "Ask a finished or running worker a question without touching its thread: the worker's Codex thread is forked once into a read-only side session (like Codex's own /btw), the question is asked there, and later questions resume that fork. The fork carries everything the worker saw and did, so 'why did you change X' or 'where is Y handled' costs one short answer instead of a read of the event stream. It can read the worktree and change nothing; to make the worker change something, use resume_codex_worker. Without a question it returns the latest side turn (for an answer that outran timeoutMs). end: true deletes the fork.",
+      "Ask a finished or running worker a question without touching its thread: the worker's Codex thread is forked once into a read-only side session (like Codex's own /btw), the question is asked there, and later questions resume that fork. The fork carries everything the worker saw and did, so 'why did you change X' or 'where is Y handled' costs one short answer instead of a read of the event stream. The fork has no network and no MCP tools and is told so; it answers from its context and the worktree. Once the worker has been resumed, the next question automatically takes a new fork from the updated thread (refreshed: \"worker_resumed\"); fresh: true forces a new fork. Changes still go through resume_codex_worker. Without a question it returns the latest side turn (for an answer that outran timeoutMs). end: true deletes the fork.",
     inputSchema: {
       task_id: z.string().min(1),
       question: z.string().min(1).optional(),
       timeoutMs: z.number().int().min(1000).max(600000).default(110000),
       maxChars: z.number().int().min(0).max(1000000).default(8000),
+      fresh: z.boolean().default(false),
       end: z.boolean().default(false)
     }
   },
-  async ({ task_id, question, timeoutMs, maxChars, end }) => {
+  async ({ task_id, question, timeoutMs, maxChars, fresh, end }) => {
     const task = await getTask(task_id);
     if (!task) return textResult({ error: "task_not_found", task_id });
     const clipAnswer = (state) => {
@@ -933,7 +934,7 @@ server.registerTool(
       return textResult({ task_id, ...clipAnswer(await latestSideTurn(task_id)) });
     }
     try {
-      const state = clipAnswer(await askWorker({ task, question, timeoutMs }));
+      const state = clipAnswer(await askWorker({ task, question, timeoutMs, fresh }));
       const next = state.timed_out
         ? `The side turn is still running; call ask_codex_worker again with only task_id to read the answer when it lands.`
         : null;
@@ -952,16 +953,17 @@ server.registerTool(
   {
     title: "Land a worker's commits",
     description:
-      "Cherry-pick the commits a worker made on its codex/<taskId> branch onto the current branch of the directory it was dispatched from (its cwd). The target must be clean and is never switched to another branch; `onto` is a guard that names the branch you expect to be on. A conflict aborts the cherry-pick, lists the files, and leaves the target as it was. Uncommitted edits in the worker's worktree are reported, not landed. Check the work first with get_worker_result and get_worker_diff; land once it passes.",
+      "Cherry-pick the commits a worker made on its codex/<taskId> branch onto the current branch of the directory it was dispatched from. The target must be clean and is never switched to another branch; `onto` is a guard that names the branch you expect to be on. A conflict aborts the cherry-pick, lists the files, and leaves the target as it was. A worker in the workspace-write sandbox cannot commit (Codex keeps .git read-only there): pass commitMessage and its uncommitted edits are committed as one commit on its branch first, then landed. Without commitMessage uncommitted edits are reported, not landed. Check the work first with get_worker_result and get_worker_diff; land once it passes.",
     inputSchema: {
       task_id: z.string().min(1),
-      onto: z.string().min(1).optional()
+      onto: z.string().min(1).optional(),
+      commitMessage: z.string().min(1).optional()
     }
   },
-  async ({ task_id, onto }) => {
+  async ({ task_id, onto, commitMessage }) => {
     const task = await getTask(task_id);
     if (!task) return textResult({ error: "task_not_found", task_id });
-    return textResult({ task_id, title: task.title, status: task.status, branch: `codex/${task.id}`, ...landWorker(task, { onto }) });
+    return textResult({ task_id, title: task.title, status: task.status, branch: `codex/${task.id}`, ...landWorker(task, { onto, commitMessage: commitMessage ?? null }) });
   }
 );
 

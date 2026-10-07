@@ -87,12 +87,29 @@ test("a conflict is reported with the files and the target is rolled back", asyn
   });
 });
 
-test("a worker that committed nothing lands nothing and lists what it left", async () => {
+test("a worker that committed nothing lands nothing and says how to land its edits", async () => {
   await withMcp({ SUPERVISOR_HOME: home }, async ({ call }) => {
     const result = await call("land_codex_worker", { task_id: idle.id });
     assert.equal(result.error, "nothing_to_land");
     assert.deepEqual(result.uncommitted, ["left.txt"]);
+    assert.match(result.reason, /commitMessage/);
     const missing = await call("land_codex_worker", { task_id: "codex-none" });
     assert.equal(missing.error, "task_not_found");
   });
+});
+
+test("commitMessage commits a workspace-write worker's edits as one commit on its branch and lands it", async () => {
+  const before = git(repo, ["rev-parse", "HEAD"]);
+  await withMcp({ SUPERVISOR_HOME: home }, async ({ call }) => {
+    const result = await call("land_codex_worker", { task_id: idle.id, commitMessage: "step 4: add left.txt" });
+    assert.equal(result.error, undefined, JSON.stringify(result).slice(0, 300));
+    assert.equal(result.landed.length, 1);
+    assert.equal(result.landed[0].subject, "step 4: add left.txt");
+    assert.equal(result.landed[0].original, result.committed_for_worker);
+    assert.deepEqual(result.uncommitted, []);
+  });
+  assert.equal(git(repo, ["rev-list", "--count", `${before}..HEAD`]), "1");
+  assert.equal(git(repo, ["show", "HEAD:left.txt"]), "left behind");
+  assert.equal(git(idle.worktree_path, ["status", "--porcelain"]), "", "the worker's worktree is clean afterwards");
+  assert.equal(git(idle.worktree_path, ["log", "-1", "--format=%s"]), "step 4: add left.txt", "the commit sits on the worker's branch");
 });

@@ -24,6 +24,9 @@
 //   session ended ................... fork deleted, history cleared
 import { execFileSync, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { codexHome } from "./paths.js";
 import { defaultBinDirs, findBinaryPath, resolveCommand, shimMessage } from "./bin-resolver.js";
 import {
   closeSideSession,
@@ -38,6 +41,77 @@ import {
 
 const CODEX_NPM_ENTRY = { pkg: "@openai/codex", bin: "bin/codex.js" };
 const TURN_TIMEOUT_MS = 10 * 60 * 1000;
+
+// What a side question is, said to the fork every time. Without it the fork
+// treats the question as a new task: one real fork spent its whole turn
+// trying to ssh to a build host from inside the read-only sandbox, probing
+// the network, and finally reaching for an MCP tool.
+const SIDE_PREAMBLE = `This is a side question about the work you did in this thread, asked from a read-only fork. Rules for this turn:
+- Answer from what you already know from this thread. You may read files in the working directory to check.
+- The sandbox is read-only and has no network: do not try ssh, curl, builds, tests, package installs or writes; they will fail and waste the turn. MCP tools are disabled here.
+- If answering properly needs something you cannot check from here (a remote machine, a running service, a command), say exactly what and stop; do not retry.
+- Nothing you do here changes the work. If the work needs changing, say what should change; the main thread will ask the worker itself.
+- Be direct and short. Lead with the answer.`;
+
+export function sideQuestionText(question) {
+  return `${SIDE_PREAMBLE}\n\nQuestion:\n${question}`;
+}
+
+// The fork inherits the worker's MCP servers. A side question must not be
+// able to dispatch, resume or cancel anything through them, and a fork that
+// waits on a tool it cannot use burns its turn; every server named in the
+// Codex config is switched off for the turn. Sub-tables
+// ([mcp_servers.x.env]) are not servers and are skipped.
+//
+// The key path is written bare: `-c mcp_servers.name.enabled=false`. A
+// quoted name (`mcp_servers."name".enabled`) is taken by codex as a new
+// server literally called "name", quotes included, with no transport, and
+// the whole config then fails to load.
+export function sideTurnConfigArgs(configText) {
+  const names = new Set();
+  for (const line of String(configText ?? "").split("\n")) {
+    const match = line.match(/^\s*\[mcp_servers\.(?:"([^"]+)"|([^\].]+))\]\s*(?:#.*)?$/);
+    if (match) names.add(match[1] ?? match[2]);
+  }
+  const args = [];
+  for (const name of names) {
+    if (!/^[A-Za-z0-9_-]+$/.test(name)) continue; // a name codex cannot take bare on the command line
+    args.push("-c", `mcp_servers.${name}.enabled=false`);
+  }
+  return args;
+}
+
+function codexConfigText() {
+  try {
+    return readFileSync(join(codexHome, "config.toml"), "utf8");
+  } catch {
+    return "";
+  }
+}
+
+// The session to ask on. A fork taken before the worker was resumed no
+// longer reflects the worker's thread; it is dropped and a new one taken
+// from the current thread. `fresh` forces that. Returns the session and why
+// it was (re)opened: "requested", "worker_resumed", "first" or null.
+export async function prepareSideSession(task, { fresh = false } = {}) {
+  let session = await getSideSession(task.id);
+  let refreshed = null;
+  const stale =
+    session?.fork_thread_id &&
+    session.worker_run_count !== null &&
+    session.worker_run_count !== undefined &&
+    (task.run_count ?? 0) > session.worker_run_count;
+  if (session && (fresh || stale)) {
+    await endSideSession(task.id);
+    session = null;
+    refreshed = fresh ? "requested" : "worker_resumed";
+  }
+  if (!session) {
+    session = await openSideSession(task.id, task.run_count ?? 0);
+    refreshed = refreshed ?? "first";
+  }
+  return { session, refreshed };
+}
 const OUTPUT_CLIP = 4000;
 
 // taskId -> { turnId, child, chunks, watchers: Set<res>, startedAt, question, state }
@@ -280,19 +354,19 @@ export function attachToTurn(taskId, res) {
 
 // Start a turn. `res` (optional) becomes the first watcher. Resolves when the
 // turn has ended, however it ended.
-export async function runSideTurn({ task, text, res = null }) {
+export async function runSideTurn({ task, text, res = null, fresh = false }) {
   await sweepOnce();
   if (!task.thread_id) throw Object.assign(new Error("this worker recorded no thread_id, so there is no Codex thread to fork"), { code: "no_thread" });
   if (running.has(task.id)) throw Object.assign(new Error("a side turn is already running for this worker"), { code: "busy" });
   const target = codexTarget();
   if (target.error) throw Object.assign(new Error(target.error), { code: "codex_missing" });
 
-  let session = await getSideSession(task.id);
-  if (!session) session = await openSideSession(task.id);
+  const { session, refreshed } = await prepareSideSession(task, { fresh });
 
   const args = session.fork_thread_id
     ? ["exec", "resume", "--json", "--skip-git-repo-check", "-c", 'sandbox_mode="read-only"']
     : ["exec", "fork", "--json", "--skip-git-repo-check", "-c", 'sandbox_mode="read-only"'];
+  args.push(...sideTurnConfigArgs(codexConfigText()));
   if (task.model) args.push("-m", task.model);
   args.push(session.fork_thread_id ?? task.thread_id, "-");
 
@@ -369,7 +443,7 @@ export async function runSideTurn({ task, text, res = null }) {
     stderr = (stderr + chunk).slice(-4000);
   });
   child.stdin.on("error", () => {});
-  child.stdin.end(text);
+  child.stdin.end(sideQuestionText(text));
 
   return new Promise((resolve) => {
     const finish = async (code, signal) => {
@@ -400,7 +474,7 @@ export async function runSideTurn({ task, text, res = null }) {
       live.watchers.clear();
       running.delete(task.id);
       await updateSideTurn(turnId, { status, chunks: live.chunks, usage: live.state.usage, error, ended_at: new Date().toISOString() }).catch(() => {});
-      resolve({ status, turnId, forkThreadId: session.fork_thread_id });
+      resolve({ status, turnId, forkThreadId: session.fork_thread_id, refreshed });
     };
     child.on("error", (error) => {
       stderr += `\nfailed to start codex: ${error.message}`;
@@ -451,7 +525,10 @@ export async function latestSideTurn(taskId) {
 // Ask the worker a question on the side, without touching its own thread,
 // and wait up to `timeoutMs` for the answer. A turn that outlives the budget
 // keeps running in this process; the caller reads it back with latestSideTurn.
-export async function askWorker({ task, question, timeoutMs = 110000 }) {
+export async function askWorker({ task, question, timeoutMs = 110000, fresh = false }) {
+  // Decided here, before the race, so a turn that outruns the budget still
+  // reports whether the fork was taken anew.
+  const { refreshed } = await prepareSideSession(task, { fresh });
   const turn = runSideTurn({ task, text: question });
   // runSideTurn throws synchronously-ish (rejected promise) for no_thread,
   // busy and codex_missing before anything starts; surface those as-is.
@@ -463,11 +540,11 @@ export async function askWorker({ task, question, timeoutMs = 110000 }) {
     const outcome = await Promise.race([turn.then((r) => ({ timedOut: false, ...r })), budget]);
     if (!outcome.timedOut) {
       const state = await latestSideTurn(task.id);
-      return { ...state, timed_out: false };
+      return { ...state, timed_out: false, refreshed };
     }
     turn.catch(() => {});
     const state = await latestSideTurn(task.id);
-    return { ...state, timed_out: true };
+    return { ...state, timed_out: true, refreshed };
   } finally {
     clearTimeout(timer);
   }
@@ -492,7 +569,8 @@ export async function endSideSession(taskId) {
     const target = codexTarget();
     if (!target.error) {
       deleted = await new Promise((resolve) => {
-        const child = spawn(target.cmd, [...target.prefixArgs, "delete", row.fork_thread_id], { stdio: "ignore", windowsHide: true, env: { ...process.env, NO_COLOR: "1" } });
+        // --force: without a terminal codex asks for confirmation and exits.
+        const child = spawn(target.cmd, [...target.prefixArgs, "delete", "--force", row.fork_thread_id], { stdio: "ignore", windowsHide: true, env: { ...process.env, NO_COLOR: "1" } });
         const t = setTimeout(() => { killTree(child); resolve(false); }, 15000);
         child.on("exit", (code) => { clearTimeout(t); resolve(code === 0); });
         child.on("error", () => { clearTimeout(t); resolve(false); });

@@ -39,9 +39,15 @@ function currentBranch(cwd) {
 // Lands task's commits onto the current branch of its dispatch directory
 // (task.project_root: the row's cwd is the worktree the worker ran in).
 // `onto`, when given, must name that branch: it is a guard, not a switch.
+//
+// `commitMessage` commits what the worker left uncommitted in its worktree
+// first, as one commit on codex/<id>. A worker in Codex's workspace-write
+// sandbox cannot commit at all (the sandbox keeps .git read-only), so this
+// is how "one step, one commit" is kept without giving workers full access.
+//
 // Returns { landed: [{ sha, original, subject }], onto, head } on success;
 // otherwise { error, reason, ... } with nothing changed in the target.
-export function landWorker(task, { onto = null } = {}) {
+export function landWorker(task, { onto = null, commitMessage = null } = {}) {
   const target = task.project_root;
   if (!task.worktree_path || !existsSync(task.worktree_path)) {
     return { error: "no_worktree", reason: "this worker has no worktree (it ran in place), so there is nothing on a codex/ branch to land" };
@@ -72,9 +78,29 @@ export function landWorker(task, { onto = null } = {}) {
   } catch (error) {
     return { error: "no_base_commit", reason: `the base ${base} no longer resolves in the worktree: ${error.message.split("\n")[0]}` };
   }
-  const uncommitted = porcelainPaths(git(task.worktree_path, ["--no-optional-locks", "status", "--porcelain"]));
+  let uncommitted = porcelainPaths(git(task.worktree_path, ["--no-optional-locks", "status", "--porcelain"]));
+  let committedForWorker = null;
+  if (uncommitted.length > 0 && commitMessage) {
+    try {
+      git(task.worktree_path, ["add", "-A"]);
+      git(task.worktree_path, ["commit", "-q", "-m", commitMessage]);
+    } catch (error) {
+      const tail = `${error.stdout ?? ""}${error.stderr ?? ""}`.trim().split("\n").slice(-3).join("\n");
+      return { error: "commit_failed", reason: `could not commit the worker's uncommitted edits in ${task.worktree_path}: ${tail || error.message.split("\n")[0]}`, uncommitted };
+    }
+    committedForWorker = git(task.worktree_path, ["rev-parse", "HEAD"]).trim();
+    commits.push(committedForWorker);
+    uncommitted = [];
+  }
   if (commits.length === 0) {
-    return { error: "nothing_to_land", reason: "the worker made no commits on its branch; uncommitted edits are not landed", uncommitted, base_commit: base };
+    return {
+      error: "nothing_to_land",
+      reason: uncommitted.length > 0
+        ? "the worker made no commits on its branch (a workspace-write worker cannot: the sandbox keeps .git read-only); pass commitMessage to commit its edits as one commit and land that"
+        : "the worker made no commits and left no edits on its branch",
+      uncommitted,
+      base_commit: base
+    };
   }
 
   const before = git(target, ["rev-parse", "HEAD"]).trim();
@@ -112,6 +138,7 @@ export function landWorker(task, { onto = null } = {}) {
     base_commit: base,
     head: landed.at(-1) ?? before,
     landed: landed.map((sha, index) => ({ sha, original: commits[index] ?? null, subject: subjectOf.get(sha) ?? null })),
+    committed_for_worker: committedForWorker,
     uncommitted
   };
 }

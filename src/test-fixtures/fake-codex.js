@@ -43,7 +43,7 @@ async function main() {
   if (args[0] === "delete") {
     if (process.env.FAKE_CODEX_DELETE_LOG) {
       const { appendFileSync } = await import("node:fs");
-      appendFileSync(process.env.FAKE_CODEX_DELETE_LOG, `${args[1]}\n`);
+      appendFileSync(process.env.FAKE_CODEX_DELETE_LOG, `${args.filter((a) => !a.startsWith("-")).at(-1)}\n`);
     }
     process.exit(0);
   }
@@ -58,12 +58,20 @@ async function main() {
   if (args[0] === "exec" && (args[1] === "fork" || (args[1] === "resume" && scenario === "side-chat"))) {
     const mode = args[1];
     const target = args.filter((a) => !a.startsWith("-")).at(-1) === "-" ? args.filter((a) => !a.startsWith("-")).at(-2) : args.filter((a) => !a.startsWith("-")).at(-1);
-    const question = Buffer.concat(await new Promise((resolve) => {
+    const raw = Buffer.concat(await new Promise((resolve) => {
       const chunks = [];
       process.stdin.on("data", (c) => chunks.push(c));
       process.stdin.on("end", () => resolve(chunks));
       setTimeout(() => resolve(chunks), 1500);
     })).toString("utf8").trim();
+    if (process.env.FAKE_CODEX_STDIN_LOG) {
+      const { appendFileSync } = await import("node:fs");
+      appendFileSync(process.env.FAKE_CODEX_STDIN_LOG, `${JSON.stringify({ args, stdin: raw })}\n`);
+    }
+    // The side-chat runner wraps the question in a preamble; the echo below
+    // is of the question alone so tests can compare it exactly.
+    const marker = raw.lastIndexOf("Question:\n");
+    const question = marker === -1 ? raw : raw.slice(marker + "Question:\n".length).trim();
     if (scenario === "side-chat-fail") {
       emit({ type: "thread.started", thread_id: mode === "fork" ? "fork-" + threadId : target });
       emit({ type: "turn.started" });

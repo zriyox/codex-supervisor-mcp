@@ -88,9 +88,13 @@ worker 回来以后按这个顺序，别跳：
 
 1. `get_worker_result`：它说自己做了什么。
 2. `get_worker_diff`：它实际做了什么。从 worktree 起点到工作区的全部改动，提交没提交都算，按文件给 patch；`maxChars` 管总量，`paths` 缩范围。它说过了不算，diff 对得上才算。
-3. 对不上、看不懂为什么这么改：`ask_codex_worker` 带 `question` 问它。走的是 fork 出来的只读旁路，worker 自己的线程不动；fork 带着它的全部上下文，一句话能答。超过 `timeoutMs` 回 `running`，之后只带 `task_id` 再调一次拿答案。问完 `end: true` 删 fork。
+3. 对不上、看不懂为什么这么改：`ask_codex_worker` 带 `question` 问它。走的是 fork 出来的只读旁路，worker 自己的线程不动；fork 带着它的全部上下文，一句话能答。fork 没网络、没 MCP 工具，它自己知道，所以别问它"远端跑通了没"这类要联网才能答的事，问"你改了什么、为什么、在哪"。超过 `timeoutMs` 回 `running`，之后只带 `task_id` 再调一次拿答案。worker 被 `resume` 过以后，下一问自动换一个新 fork（返回 `refreshed: "worker_resumed"`）；想强制换就 `fresh: true`。问完 `end: true` 删 fork。
 4. 要它改：`resume_codex_worker`，提示词里写清问题在哪，让它改完 `git commit --amend --no-edit` 并进原来那个提交，保持一步一个提交。旁路只读，改东西永远走 resume。
-5. 过了：`land_codex_worker` 把 `codex/<id>` 上的提交 cherry-pick 到派单目录的当前分支。目标脏了、分支不对、冲突，都会拒绝并原样退回，不留半截；未提交的改动只报不落。
+5. 过了：`land_codex_worker` 把 `codex/<id>` 上的提交 cherry-pick 到派单目录的当前分支。目标脏了、分支不对、冲突，都会拒绝并原样退回，不留半截。
+
+**worker 在默认的 `workspace-write` 沙箱里提交不了**：Codex 把 `.git` 设成只读，`git add` 就会报 `index.lock: Operation not permitted`。两条路，派单时定一条：
+- 让它只改文件不提交，收活时 `land_codex_worker` 带 `commitMessage`，由 supervisor 在它的分支上替它提交一笔再落。一步一个提交照样成立。
+- 要它自己提交（比如要 `--amend`），派单 `sandbox: "danger-full-access"`。
 
 串行做活（第 N+1 步建立在第 N 步上）两种走法：落完第 N 步再派第 N+1 步；或者第 N+1 步派单时 `baseRef: "codex/<第 N 步的 task_id>"`，直接从它的分支开，最后只落最后一路。
 
@@ -103,6 +107,7 @@ worker 回来以后按这个顺序，别跳：
 | 想接着**同一个** Codex 会话干 | `resume_codex_worker` | 上下文不丢，`thread_id` 不变 |
 | 想开**新会话**，带着老活的摘要干 | `create_codex_followup_worker` | 新线程，靠文本重述 |
 | 主线程自己挂了，要找回那批活 | `get_session_works` | 按 `session_id` 列全部 |
+| worker 变 `lost`（MCP 进程没了把它带走了） | `resume_codex_worker` | 同一线程接着干，worktree 里的改动都在 |
 
 主线程重启后第一件事：`get_session_works({ session_id })`。一次拿到那批活的清单和状态，不用凭记忆猜。
 
@@ -123,7 +128,7 @@ worker 回来以后按这个顺序，别跳：
 **`failed` 和 `lost` 不是一回事**：
 
 - `failed`：跑完了但没成。去看日志和 `error`。
-- `lost`：进程被外部信号杀了，或者 MCP 进程自己没了。什么都没说。**直接重跑**，不用查日志。
+- `lost`：进程被外部信号杀了，或者 MCP 进程自己没了（worker 是它的子进程）。worktree 里的改动都还在，`thread_id` 也在库里。**用 `resume_codex_worker` 接回同一个线程**，提示词里说"接着上次的做，先看工作区现状"；它被杀时正在做的那一步可能要重做。只有没记到 `thread_id` 的老行才走 `create_codex_followup_worker` 重派。
 
 `paused` 和 `blocked` 的 goal 不是结束，是等人管。`get_orchestration_overview` 会把它们列进 `needs_attention`。
 

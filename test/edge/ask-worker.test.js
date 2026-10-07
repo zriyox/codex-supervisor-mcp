@@ -105,3 +105,59 @@ test("wait_codex_workers compact: one short row per worker", async () => {
     assert.ok(JSON.stringify(waited).length < 1500, `compact wait is ${JSON.stringify(waited).length} chars`);
   });
 });
+
+test("the fork is told what a side question is, and has its MCP servers switched off", async () => {
+  const stdinLog = join(home, "stdin.log");
+  const codexHome = join(home, "codex-home");
+  await (await import("node:fs/promises")).mkdir(codexHome, { recursive: true });
+  await (await import("node:fs/promises")).writeFile(join(codexHome, "config.toml"), '[mcp_servers.codex-supervisor]\ncommand = "x"\n[mcp_servers.codex-supervisor.env]\nA = "1"\n[mcp_servers."obsidian"]\nurl = "http://x"\n');
+  await withMcp({ ...sideEnv, FAKE_CODEX_STDIN_LOG: stdinLog, CODEX_HOME: codexHome }, async ({ call }) => {
+    const asked = await call("ask_codex_worker", { task_id: worker.id, question: "where is the retry handled?", fresh: true });
+    assert.equal(asked.turn.answer, `[fork of ${worker.thread_id}] answer to: where is the retry handled?`);
+    const last = JSON.parse((await readFile(stdinLog, "utf8")).trim().split("\n").at(-1));
+    assert.match(last.stdin, /^This is a side question/);
+    assert.match(last.stdin, /no network/);
+    assert.ok(last.stdin.endsWith("Question:\nwhere is the retry handled?"));
+    assert.ok(last.args.includes("mcp_servers.codex-supervisor.enabled=false"), last.args.join(" "));
+    assert.ok(last.args.includes("mcp_servers.obsidian.enabled=false"));
+    assert.ok(!last.args.some((a) => a.includes("codex-supervisor.env")), "a sub-table is not a server");
+    assert.ok(last.args.includes('sandbox_mode="read-only"'));
+  });
+});
+
+test("fresh: true drops the fork and takes a new one; a resumed worker gets a new fork by itself", async () => {
+  await withMcp(sideEnv, async ({ call }) => {
+    await call("ask_codex_worker", { task_id: worker.id, end: true });
+    const first = await call("ask_codex_worker", { task_id: worker.id, question: "one" });
+    assert.equal(first.refreshed, "first", JSON.stringify(first).slice(0, 200));
+    const second = await call("ask_codex_worker", { task_id: worker.id, question: "two" });
+    assert.equal(second.refreshed, null);
+    assert.match(second.turn.answer, /^\[resume of fork-/);
+
+    const before = (await readFile(deleteLog, "utf8")).split("\n").filter(Boolean).length;
+    const fresh = await call("ask_codex_worker", { task_id: worker.id, question: "three", fresh: true });
+    assert.equal(fresh.refreshed, "requested");
+    assert.match(fresh.turn.answer, /^\[fork of /, "a fresh ask forks again");
+    const after = (await readFile(deleteLog, "utf8")).split("\n").filter(Boolean);
+    assert.equal(after.length, before + 1, "the old fork was deleted");
+    assert.equal(after.at(-1), `fork-${worker.thread_id}`);
+
+    const resumed = await call("resume_codex_worker", { task_id: worker.id, prompt: "do a bit more" });
+    assert.ok(!resumed.error, JSON.stringify(resumed).slice(0, 200));
+    await waitFor(call, worker.id, (t) => t.status === "completed" && (t.run_count ?? 0) >= 2);
+    const again = await call("ask_codex_worker", { task_id: worker.id, question: "four" });
+    assert.equal(again.refreshed, "worker_resumed");
+    assert.match(again.turn.answer, /^\[fork of /, "the fork is retaken from the resumed thread");
+    const once_more = await call("ask_codex_worker", { task_id: worker.id, question: "five" });
+    assert.equal(once_more.refreshed, null);
+    assert.match(once_more.turn.answer, /^\[resume of fork-/);
+  });
+});
+
+test("sideTurnConfigArgs: every top-level server, quoted or not, nothing else", async () => {
+  const { sideTurnConfigArgs } = await import("../../src/side-chat.js");
+  const args = sideTurnConfigArgs('[mcp_servers.a]\n[mcp_servers.a.env]\n[mcp_servers."b-c"] # note\n[model_providers.x]\n  [mcp_servers.d]\n');
+  assert.deepEqual(args, ["-c", "mcp_servers.a.enabled=false", "-c", "mcp_servers.b-c.enabled=false", "-c", "mcp_servers.d.enabled=false"]);
+  assert.deepEqual(sideTurnConfigArgs('[mcp_servers."has space"]\n'), [], "a name codex cannot take bare is left alone rather than breaking the config");
+  assert.deepEqual(sideTurnConfigArgs(""), []);
+});

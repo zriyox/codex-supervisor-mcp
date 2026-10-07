@@ -161,8 +161,8 @@ land_codex_worker       核过了，落进集成分支
 | `get_orchestration_overview` | `status`, `limit` | 全部 worker 的状态表，封顶 7000 字节。带 `version` 和 `update` |
 | `get_worker_result` | `task_id`, `limit`, `maxChars` | worker 自己的完整汇报，外加 `status` / `exit_code` / `changed_files`。收结论用这个 |
 | `get_worker_diff` | `task_id`, `maxChars`, `paths` | worker 实际改了什么：从 worktree 起点到工作区的 patch，提交没提交都算，未跟踪的文件也在。`maxChars` 管总量，超了的文件只列名不给 patch |
-| `ask_codex_worker` | `task_id`, `question`, `timeoutMs`, `maxChars`, `end` | 旁路问 worker 一句：把它的线程 fork 成只读的侧会话问，worker 自己的线程不动。不带 `question` 读最近一轮的答案，`end` 删 fork |
-| `land_codex_worker` | `task_id`, `onto` | 把 worker 在 `codex/<id>` 上的提交 cherry-pick 到派单目录的当前分支。目标必须干净，`onto` 只核对不切换，冲突就回滚并列出文件 |
+| `ask_codex_worker` | `task_id`, `question`, `timeoutMs`, `maxChars`, `fresh`, `end` | 旁路问 worker 一句。线程 fork 成只读侧会话，没网络、没 MCP 工具，worker 本身不动。worker 被 resume 过会自动换新 fork，`fresh` 强制换，`end` 删 |
+| `land_codex_worker` | `task_id`, `onto`, `commitMessage` | 把 worker 在 `codex/<id>` 上的提交 cherry-pick 到派单目录的当前分支。目标必须干净，`onto` 只核对不切换，冲突就回滚并列出文件。`commitMessage` 先替它把未提交的改动提交成一笔 |
 | `get_worker_summary` | `task_id` | 一段话：goal、状态、改动、最后一条命令和消息 |
 | `get_codex_worker_status` | `task_id`, `includePrompt`, `promptMaxChars` | 单个 worker 的状态细节，prompt 默认截到 300 字 |
 | `get_codex_worker_events` | `task_id`, `limit`, `maxChars`, `kinds` | 原始事件流 |
@@ -357,7 +357,8 @@ rm -rf ~/.codex-supervisor
 
 ## 已知限制
 
-- worker 的命绑在 MCP 进程上。MCP 被 kill，worker 留在那，下次读状态结算成 `lost`。解法是常驻 daemon，在 Roadmap 里。
+- worker 是 MCP 进程的子进程。MCP 被 kill，worker 跟着没了，下次读状态结算成 `lost`。worktree 里的改动和 `thread_id` 都在，`resume_codex_worker` 接回同一个线程继续；让它不跟着死，要常驻 daemon，在 Roadmap 里。
+- 默认的 `workspace-write` 沙箱里 worker 提交不了：Codex 把 `.git` 设成只读。要么让它只改文件，收活时 `land_codex_worker` 带 `commitMessage` 替它提交；要么派单用 `danger-full-access`。
 - worktree 从一个提交切，你工作区里没 commit 的东西不在里面。要让 worker 读到，给绝对路径或先 commit。
 - 只隔离工作目录。临时目录、数据库、端口是共用的，多路 worker 要连同一个 dev server 得自己错开。
 - `ownedPaths` 只在派单时查，拦不住 worker 在自己 worktree 里新建清单外的文件。收活看 diff。

@@ -180,7 +180,8 @@ const SIDE_DDL = `
       task_id TEXT PRIMARY KEY,
       fork_thread_id TEXT,
       created_at TEXT NOT NULL,
-      ended_at TEXT
+      ended_at TEXT,
+      worker_run_count INTEGER
     );
     CREATE TABLE IF NOT EXISTS side_turns (
       id TEXT PRIMARY KEY,
@@ -231,6 +232,15 @@ function initializeSchema(dbInstance) {
       dbInstance.exec(TASKS_SESSION_INDEX_DDL);
       dbInstance.exec(SESSIONS_DDL);
       dbInstance.exec(SIDE_DDL);
+      // Rows written before 0.7.1 have no worker_run_count: the fork is then
+
+      // never judged stale, which is what those rows did before.
+
+      if (!dbInstance.prepare("PRAGMA table_info(side_sessions)").all().some((column) => column.name === "worker_run_count")) {
+
+        dbInstance.exec("ALTER TABLE side_sessions ADD COLUMN worker_run_count INTEGER;");
+
+      }
       dbInstance.exec("COMMIT;");
     } catch (error) {
       try {
@@ -470,13 +480,15 @@ export async function getSideSession(taskId) {
   return openDb().prepare("SELECT * FROM side_sessions WHERE task_id = ? AND ended_at IS NULL").get(taskId) ?? null;
 }
 
-export async function openSideSession(taskId) {
+// `workerRunCount` is the worker's run_count when the fork is taken; a
+// worker resumed after that has a thread the fork no longer reflects.
+export async function openSideSession(taskId, workerRunCount = null) {
   await ensureFilesystem();
   const now = new Date().toISOString();
   openDb()
-    .prepare(`INSERT INTO side_sessions (task_id, fork_thread_id, created_at, ended_at) VALUES (?, NULL, ?, NULL)
-              ON CONFLICT(task_id) DO UPDATE SET fork_thread_id = NULL, created_at = excluded.created_at, ended_at = NULL`)
-    .run(taskId, now);
+    .prepare(`INSERT INTO side_sessions (task_id, fork_thread_id, created_at, ended_at, worker_run_count) VALUES (?, NULL, ?, NULL, ?)
+              ON CONFLICT(task_id) DO UPDATE SET fork_thread_id = NULL, created_at = excluded.created_at, ended_at = NULL, worker_run_count = excluded.worker_run_count`)
+    .run(taskId, now, workerRunCount);
   return getSideSession(taskId);
 }
 
