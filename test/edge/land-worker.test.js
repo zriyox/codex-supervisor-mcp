@@ -98,6 +98,32 @@ test("a worker that committed nothing lands nothing and says how to land its edi
   });
 });
 
+test("a machine where git has no identity still lands, with a stand-in committer", async () => {
+  // git is told to use only configured identities (what a CI runner amounts
+  // to), and the global config is pointed at a file that does not exist.
+  const noIdentity = {
+    SUPERVISOR_HOME: home,
+    GIT_CONFIG_GLOBAL: join(home, "no-such-gitconfig"),
+    GIT_CONFIG_COUNT: "1",
+    GIT_CONFIG_KEY_0: "user.useConfigOnly",
+    GIT_CONFIG_VALUE_0: "true",
+    GIT_AUTHOR_NAME: "",
+    GIT_AUTHOR_EMAIL: "",
+    GIT_COMMITTER_NAME: "",
+    GIT_COMMITTER_EMAIL: ""
+  };
+  await withMcp(noIdentity, async ({ call }) => {
+    const created = await call("create_codex_worker", dispatchArgs("anonymous", repo));
+    const anon = await waitFor(call, created.id, (t) => t.status === "completed");
+    await writeFile(join(anon.worktree_path, "anon.txt"), "no identity here\n");
+    const result = await call("land_codex_worker", { task_id: anon.id, commitMessage: "step 5: add anon.txt" });
+    assert.equal(result.error, undefined, JSON.stringify(result).slice(0, 400));
+    assert.equal(result.landed.length, 1);
+  });
+  const committer = git(repo, ["log", "-1", "--format=%cn <%ce>"]);
+  assert.equal(committer, "codex-supervisor <codex-supervisor@localhost>");
+});
+
 test("commitMessage commits a workspace-write worker's edits as one commit on its branch and lands it", async () => {
   const before = git(repo, ["rev-parse", "HEAD"]);
   await withMcp({ SUPERVISOR_HOME: home }, async ({ call }) => {

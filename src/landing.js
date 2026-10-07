@@ -12,12 +12,44 @@ import { parsePorcelainLine, resolveWorktreeBase, worktreeRef } from "./worktree
 
 const defaultGitBin = process.env.GIT_BIN?.trim() || "git";
 
+// A commit needs a committer. On a machine where git has no user.name or
+// user.email (CI runners, a fresh box, a GUI-launched MCP with no HOME
+// config), cherry-pick and commit both die with "empty ident name", so a
+// stand-in identity is supplied through the environment for that one
+// directory. An identity git already has is used untouched.
+const FALLBACK_IDENTITY = { name: "codex-supervisor", email: "codex-supervisor@localhost" };
+const identityCache = new Map();
+function identityEnv(cwd) {
+  if (identityCache.has(cwd)) return identityCache.get(cwd);
+  let name = "";
+  let email = "";
+  try {
+    name = execFileSync(defaultGitBin, ["-C", cwd, "config", "user.name"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 10000 }).trim();
+  } catch {
+    // unset
+  }
+  try {
+    email = execFileSync(defaultGitBin, ["-C", cwd, "config", "user.email"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 10000 }).trim();
+  } catch {
+    // unset
+  }
+  const env = {};
+  if (!name || !email) {
+    env.GIT_AUTHOR_NAME = name || FALLBACK_IDENTITY.name;
+    env.GIT_AUTHOR_EMAIL = email || FALLBACK_IDENTITY.email;
+    env.GIT_COMMITTER_NAME = name || FALLBACK_IDENTITY.name;
+    env.GIT_COMMITTER_EMAIL = email || FALLBACK_IDENTITY.email;
+  }
+  identityCache.set(cwd, env);
+  return env;
+}
+
 function git(cwd, args, { timeout = 60000 } = {}) {
   return execFileSync(defaultGitBin, ["-C", cwd, "-c", "core.quotePath=false", ...args], {
     encoding: "utf8",
     timeout,
     stdio: ["ignore", "pipe", "pipe"],
-    env: { ...process.env, GIT_TERMINAL_PROMPT: "0", GIT_EDITOR: "true" }
+    env: { ...process.env, GIT_TERMINAL_PROMPT: "0", GIT_EDITOR: "true", ...identityEnv(cwd) }
   });
 }
 

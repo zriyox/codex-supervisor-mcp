@@ -42,7 +42,7 @@ test("blocker: when an install must not start", () => {
 
 test("where a copy came from: git checkout, npx cache, npm install, or unknown", () => {
   const none = { exists: () => false };
-  assert.equal(installSource("/Users/z/Workspace/codex-supervisor-mcp", { exists: (p) => p.endsWith("/.git") }), "git");
+  assert.equal(installSource("/Users/z/Workspace/codex-supervisor-mcp", { exists: (p) => p.endsWith(".git") }), "git");
   assert.equal(installSource("/Users/z/.npm/_npx/4431c98850c9db56/node_modules/codex-supervisor-mcp", none), "npx");
   assert.equal(installSource("/Users/admin/.npm-global/lib/node_modules/codex-supervisor-mcp", none), "npm", "a global install from a tarball has no lockfile entry but is still npm's");
   assert.equal(installSource("/Users/z/.nvm/versions/node/v22.22.2/lib/node_modules/codex-supervisor-mcp", none), "npm");
