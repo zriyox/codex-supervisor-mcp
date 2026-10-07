@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { dataDir, dbPath, runsDir } from "./paths.js";
 import { extractAgentMessage } from "./event-parser.js";
-import { ACTIVE_STATUSES, PHASES } from "./status.js";
+import { ACTIVE_STATUSES, PHASES, TERMINAL_STATUSES } from "./status.js";
 
 let db;
 
@@ -393,6 +393,20 @@ export async function readTasksBySession(sessionId) {
     .prepare("SELECT * FROM tasks WHERE session_id = ? ORDER BY created_at ASC")
     .all(sessionId);
   return rows.map(rowToTask);
+}
+
+// Record the files a terminal worker changed, and nothing else. The summary
+// read used to upsert the whole row, which on a running worker put stale
+// copies of every live field (phase, current_action, exit_code) back over
+// what the runner had just written. A terminal row has no writer left, and
+// even then only this one column is touched.
+export async function recordTerminalChangedFiles(taskId, changedFiles) {
+  await ensureFilesystem();
+  const terminal = Array.from(TERMINAL_STATUSES).map((s) => `'${s}'`).join(", ");
+  const result = openDb()
+    .prepare(`UPDATE tasks SET changed_files = @files WHERE id = @id AND status IN (${terminal})`)
+    .run({ id: taskId, files: encodeJson(changedFiles) });
+  return result.changes > 0;
 }
 
 export async function upsertSession({ id, title = null, note = null }) {

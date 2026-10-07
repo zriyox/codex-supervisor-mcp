@@ -16,12 +16,20 @@ import { join } from "node:path";
 
 const defaultGitBin = process.env.GIT_BIN?.trim() || "git";
 
+// Two global flags on every read here.
+//
 // core.quotePath is on by default and turns every non-ASCII path into an
 // octal-escaped, double-quoted string ("\344\270\255..."). The projects
-// this runs against have Chinese directory names, so it is switched off for
-// every read here and paths come back as written.
+// this runs against have Chinese directory names, so it is switched off and
+// paths come back as written.
+//
+// --no-optional-locks keeps `git status` from taking index.lock to refresh
+// the index. These reads run while the worker is still working in the same
+// worktree, from status polls and the board, and on Windows a status poll
+// holding index.lock made the worker's own `git add` fail and the worker
+// exit non-zero. An observer must never lock what it observes.
 function git(worktreePath, args) {
-  return execFileSync(defaultGitBin, ["-C", worktreePath, "-c", "core.quotePath=false", ...args], {
+  return execFileSync(defaultGitBin, ["--no-optional-locks", "-C", worktreePath, "-c", "core.quotePath=false", ...args], {
     encoding: "utf8",
     timeout: 15000,
     stdio: ["ignore", "pipe", "ignore"]

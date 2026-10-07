@@ -84,7 +84,8 @@ export async function waitFor(call, taskId, predicate, timeoutMs = 20000) {
     if (predicate(last)) return last;
     await new Promise((resolve) => setTimeout(resolve, 60));
   }
-  throw new Error(`timed out waiting for ${taskId}: ${JSON.stringify(last).slice(0, 300)}`);
+  const why = last ? { status: last.status, phase: last.phase, exit_code: last.exit_code, error: last.error, last_message: last.last_message?.slice(0, 200) } : null;
+  throw new Error(`timed out waiting for ${taskId}: ${JSON.stringify(why)}`);
 }
 
 export function dispatchArgs(title, cwd, extra = {}) {

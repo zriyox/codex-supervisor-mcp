@@ -20,6 +20,7 @@ import {
   readTasks,
   readTasksBySession,
   reconcileDetachedActiveTasks,
+  recordTerminalChangedFiles,
   searchTasks,
   upsertSession,
   upsertTask
@@ -771,8 +772,10 @@ server.registerTool(
     const task = await getTask(task_id);
     if (!task) return textResult({ error: "task_not_found", task_id });
     const summary = buildWorkerSummary(task, readNativeGoal(task.thread_id));
-    if (summary.changed_files.length !== (task.changed_files ?? []).length) {
-      await upsertTask({ ...task, changed_files: summary.changed_files, updated_at: new Date().toISOString() });
+    // Cache the worktree diff on the row once the worker is done, so the
+    // overview's count stops lagging. A running row is the runner's to write.
+    if (TERMINAL_STATUSES.has(task.status) && summary.changed_files.length !== (task.changed_files ?? []).length) {
+      await recordTerminalChangedFiles(task.id, summary.changed_files);
     }
     return textResult(summary);
   }
