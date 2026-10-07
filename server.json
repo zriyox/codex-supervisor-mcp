@@ -1,0 +1,37 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.zriyox/codex-supervisor-mcp",
+  "description": "Dispatch and supervise parallel Codex CLI workers from any MCP client: one git worktree per worker, state in SQLite, side questions, landing, web board.",
+  "repository": {
+    "url": "https://github.com/zriyox/codex-supervisor-mcp",
+    "source": "github"
+  },
+  "websiteUrl": "https://codex-supervisor.zriyo.com",
+  "version": "0.7.2",
+  "packages": [
+    {
+      "registryType": "npm",
+      "identifier": "codex-supervisor-mcp",
+      "version": "0.7.2",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "name": "CODEX_BIN",
+          "description": "Path to the codex CLI when it is not on PATH",
+          "isRequired": false,
+          "format": "filepath",
+          "isSecret": false
+        },
+        {
+          "name": "SUPERVISOR_HOME",
+          "description": "State directory, default ~/.codex-supervisor",
+          "isRequired": false,
+          "format": "filepath",
+          "isSecret": false
+        }
+      ]
+    }
+  ]
+}

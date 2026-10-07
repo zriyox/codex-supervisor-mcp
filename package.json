@@ -1,6 +1,7 @@
 {
   "name": "codex-supervisor-mcp",
   "version": "0.7.2",
+  "mcpName": "io.github.zriyox/codex-supervisor-mcp",
   "type": "module",
   "description": "MCP server that dispatches and supervises parallel Codex CLI workers, one isolated Git worktree each, with a persisted work state machine.",
   "homepage": "https://codex-supervisor.zriyo.com",

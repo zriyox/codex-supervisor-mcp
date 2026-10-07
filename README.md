@@ -49,7 +49,7 @@ claude mcp add -s user codex-supervisor -- npx -y codex-supervisor-mcp
 codex mcp add codex-supervisor -- npx -y codex-supervisor-mcp
 ```
 
-重启 Claude Code / Codex。以后不用再手动更，见「更新」。
+重启 Claude Code / Codex。以后不用再手动更，见「更新」。只要 skill 不要 MCP：`npx skills add zriyox/codex-supervisor-mcp`。
 
 ### 2. 派第一批活
 

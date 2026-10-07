@@ -49,7 +49,7 @@ claude mcp add -s user codex-supervisor -- npx -y codex-supervisor-mcp
 codex mcp add codex-supervisor -- npx -y codex-supervisor-mcp
 ```
 
-Restart Claude Code / Codex. Updates take care of themselves from here; see "Updating".
+Restart Claude Code / Codex. Updates take care of themselves from here; see "Updating". For the skill alone: `npx skills add zriyox/codex-supervisor-mcp`.
 
 ### 2. Dispatch a batch
 
