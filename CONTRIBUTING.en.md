@@ -10,7 +10,7 @@ npm test            # fake-codex replay, under a minute, no Codex account needed
 npm run test:real   # the real codex CLI; needs a logged-in codex on this machine
 ```
 
-Node 22.13.0 or newer. Board changes run under `npm run web:dev`.
+Node 22.13.0 or newer. Board changes run under `npm run web:dev`. The layout and what each file does is in [AGENTS.md](AGENTS.md).
 
 ## Changing code
 

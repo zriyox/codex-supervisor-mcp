@@ -302,7 +302,11 @@ npm run web:dev        # 看板开发，/api 代理到 7877
 npm run web:build      # 打包到 web/dist，发 npm 前自动跑
 ```
 
-CI 跑 Ubuntu / macOS / Windows，另加一个 Node 22.13.0 的 job 卡 `engines` 下界。改代码和发版的规矩在 [CONTRIBUTING.md](CONTRIBUTING.md)，给仓里 AI 的硬规矩在 [AGENTS.md](AGENTS.md)。
+CI 跑 Ubuntu / macOS / Windows，另加一个 Node 22.13.0 的 job 卡 `engines` 下界。
+
+## 参与贡献
+
+看 [CONTRIBUTING.md](CONTRIBUTING.md)。安全问题走 [私密通道](https://github.com/zriyox/codex-supervisor-mcp/security/advisories/new)，见 [SECURITY.md](SECURITY.md)。
 
 ## License
 

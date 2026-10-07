@@ -1,0 +1,40 @@
+name: Bug report
+description: Something broke
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: "Security problem? Use the [private advisory form](https://github.com/zriyox/codex-supervisor-mcp/security/advisories/new) instead."
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: The `installed_version` from `check_for_update`, or `npm ls -g codex-supervisor-mcp`
+    validations:
+      required: true
+  - type: input
+    id: platform
+    attributes:
+      label: Platform
+      placeholder: macOS 15 / Node 22.14 / codex 0.160.1 / Claude Code
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: The tool calls or the words you said to the main thread, in order
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected, what happened instead
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: For a worker problem, the last 20 lines of `~/.codex-supervisor/data/runs/<taskId>.jsonl` and the worker's `status` / `error`
+      render: text

@@ -10,7 +10,7 @@ npm test            # fake-codex 回放，一分钟内，不需要 Codex 账号
 npm run test:real   # 真 codex CLI，要本机登录过 codex
 ```
 
-Node 22.13.0 以上。看板改动另跑 `npm run web:dev`。
+Node 22.13.0 以上。看板改动另跑 `npm run web:dev`。目录结构和每个文件管什么在 [AGENTS.md](AGENTS.md)。
 
 ## 改代码的规矩
 

@@ -1,0 +1,15 @@
+name: Feature request
+description: Something the main thread or a worker cannot do today
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What you were trying to do, and where it stopped
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What you think the tool should do instead
+      description: A new tool, a new argument, a changed default. Say which.

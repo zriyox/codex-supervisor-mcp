@@ -302,7 +302,11 @@ npm run web:dev        # board development, /api proxied to 7877
 npm run web:build      # bundle to web/dist, runs before npm publish
 ```
 
-CI runs Ubuntu / macOS / Windows, plus a Node 22.13.0 job that pins the `engines` floor. How to change code and release is in [CONTRIBUTING.en.md](CONTRIBUTING.en.md); the hard rules for agents working in the repo are in [AGENTS.md](AGENTS.md).
+CI runs Ubuntu / macOS / Windows, plus a Node 22.13.0 job that pins the `engines` floor.
+
+## Contributing
+
+See [CONTRIBUTING.en.md](CONTRIBUTING.en.md). Security issues go through the [private advisory form](https://github.com/zriyox/codex-supervisor-mcp/security/advisories/new); see [SECURITY.md](SECURITY.md).
 
 ## License
 
