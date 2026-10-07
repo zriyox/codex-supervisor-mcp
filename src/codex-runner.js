@@ -15,7 +15,7 @@ import { applyCodexEvent } from "./event-parser.js";
 import { TERMINAL_STATUSES } from "./status.js";
 import { worktreesDir } from "./paths.js";
 import { withGoalPreamble } from "./prompt.js";
-import { mergeChangedFiles, readWorktreeChanges } from "./worktree.js";
+import { readTaskChanges } from "./worktree.js";
 import { defaultBinDirs, findBinaryPath, resolveCommand, shimMessage } from "./bin-resolver.js";
 
 const processes = new Map();
@@ -51,21 +51,53 @@ function runCommand(command, args, options = {}) {
   });
 }
 
-async function ensureWorktree(cwd, taskId) {
+function resolveCommit(cwd, ref) {
+  return execFileSync(defaultGitBin, ["-C", cwd, "rev-parse", "--verify", "--quiet", `${ref}^{commit}`], {
+    encoding: "utf8",
+    timeout: 15000,
+    stdio: ["ignore", "pipe", "ignore"]
+  }).trim();
+}
+
+function invalidBaseRefError(cwd, baseRef) {
+  const error = new Error(`baseRef "${baseRef}" does not resolve to a commit in ${cwd}`);
+  error.code = "invalid_base_ref";
+  return error;
+}
+
+// The worktree is cut from baseRef when given, else from the repository's
+// HEAD. The resolved commit is recorded on the task: it is what
+// readWorktreeChanges diffs against, so committed work stays visible. An
+// explicit baseRef that does not resolve is an error, not a silent fallback
+// to HEAD - the caller asked for a specific baseline for a reason.
+async function ensureWorktree(cwd, taskId, baseRef = null) {
   const taskWorktreeDir = join(worktreesDir, taskId);
   await mkdir(worktreesDir, { recursive: true });
   const gitDir = join(cwd, ".git");
   if (!(await exists(cwd)) || !(await exists(gitDir))) {
-    return null;
+    if (baseRef) throw invalidBaseRefError(cwd, baseRef);
+    return { path: null, baseCommit: null };
+  }
+  let baseCommit;
+  try {
+    baseCommit = resolveCommit(cwd, baseRef ?? "HEAD");
+  } catch {
+    if (baseRef) throw invalidBaseRefError(cwd, baseRef);
+    return { path: null, baseCommit: null };
+  }
+  if (!baseCommit) {
+    if (baseRef) throw invalidBaseRefError(cwd, baseRef);
+    return { path: null, baseCommit: null };
   }
   try {
     await rm(taskWorktreeDir, { recursive: true, force: true });
     const branch = `codex/${taskId}`;
-    await runCommand(defaultGitBin, ["-C", cwd, "worktree", "add", "--detach", taskWorktreeDir, "HEAD"]);
+    await runCommand(defaultGitBin, ["-C", cwd, "worktree", "add", "--detach", taskWorktreeDir, baseCommit]);
     await runCommand(defaultGitBin, ["-C", taskWorktreeDir, "switch", "-c", branch]);
-    return taskWorktreeDir;
-  } catch {
-    return null;
+    return { path: taskWorktreeDir, baseCommit };
+  } catch (error) {
+    if (baseRef) throw error;
+    return { path: null, baseCommit: null };
   }
 }
 
@@ -298,7 +330,7 @@ async function startTrackedRun({ record, args, prompt, logPath, spawnOptions = {
       ...live,
       status,
       phase: null,
-      changed_files: mergeChangedFiles(live.changed_files, readWorktreeChanges(live.worktree_path)),
+      changed_files: readTaskChanges(live),
       exit_code: code,
       signal,
       current_command: null,
@@ -363,7 +395,8 @@ export async function createCodexWorker({
   goal,
   dependsOn = [],
   followupOf = null,
-  useWorktree = true
+  useWorktree = true,
+  baseRef = null
 }) {
   if (!task || typeof task !== "string") throw new Error("task is required");
   if (!cwd || typeof cwd !== "string") throw new Error("cwd is required");
@@ -381,7 +414,10 @@ export async function createCodexWorker({
   if (conflicts.length > 0) throw ownershipConflictError(conflicts);
 
   const id = `codex-${Date.now()}-${randomUUID().slice(0, 8)}`;
-  const worktreePath = useWorktree ? await ensureWorktree(projectRoot, id) : null;
+  const worktree = useWorktree
+    ? await ensureWorktree(projectRoot, id, baseRef)
+    : { path: null, baseCommit: null };
+  const worktreePath = worktree.path;
   const effectiveCwd = worktreePath ?? projectRoot;
 
   const record = {
@@ -410,6 +446,7 @@ export async function createCodexWorker({
     goal_updated_at: null,
     run_count: 0,
     worktree_path: worktreePath,
+    base_commit: worktree.baseCommit,
     prompt: task,
     changed_files: [],
     commands: [],
@@ -596,7 +633,8 @@ export async function createFollowupWorker({
   model,
   reasoningEffort,
   ownedPaths,
-  goal
+  goal,
+  baseRef
 }) {
   const parent = await getTask(taskId);
   if (!parent) throw new Error(`task not found: ${taskId}`);
@@ -637,6 +675,7 @@ export async function createFollowupWorker({
     goal: goal ?? { objective: parent.goal_objective ?? `Follow-up for ${parent.id}`, tokenBudget: parent.goal_token_budget ?? undefined },
     dependsOn: [parent.id],
     followupOf: parent.id,
-    useWorktree: true
+    useWorktree: true,
+    baseRef: baseRef ?? null
   });
 }

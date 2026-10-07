@@ -12,6 +12,7 @@ import {
 import {
   getTask,
   getTasks,
+  isPidAlive,
   listTaskEventKinds,
   readAgentMessages,
   readTaskEvents,
@@ -22,7 +23,7 @@ import {
   upsertTask
 } from "./task-store.js";
 import { readNativeGoal } from "./goal-store.js";
-import { mergeChangedFiles, readWorktreeChanges } from "./worktree.js";
+import { readTaskChanges } from "./worktree.js";
 import { ACTIVE_STATUSES, TERMINAL_STATUSES, TASK_STATUSES, isGoalNeedingAttention } from "./status.js";
 import { approxTokenCount, truncateEventStrings, truncateMiddleChars } from "./truncate.js";
 
@@ -80,6 +81,19 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+// A terminal status is written in two steps. Codex's turn.completed event
+// flips status to completed while the process is still alive and exit_code is
+// still null; the process exit then writes exit_code. A wait that returned on
+// the first step handed the caller a snapshot with exit_code: null, and the
+// next read said 0 - two answers for one worker. A row counts as settled once
+// the exit is recorded, or once nobody is left to record it.
+function isSettled(task) {
+  if (!TERMINAL_STATUSES.has(task.status)) return false;
+  if (task.status !== "completed" && task.status !== "failed") return true;
+  if (task.exit_code !== null && task.exit_code !== undefined) return true;
+  return !isPidAlive(task.pid);
+}
+
 function summarizeTask(task) {
   return {
     id: task.id,
@@ -133,7 +147,8 @@ function statusView(task, { includePrompt, promptMaxChars }) {
     session_id: task.session_id ?? null,
     pid: task.pid ?? null,
     run_log: task.run_log ?? null,
-    changed_files: task.changed_files ?? [],
+    base_commit: task.base_commit ?? null,
+    changed_files: readTaskChanges(task),
     current_command: clip(task.current_command, COMMAND_PREVIEW_CHARS),
     commands: commands.map((entry) => ({ ...entry, command: clip(entry.command, COMMAND_PREVIEW_CHARS) })),
     prompt: clip(promptText, promptBudget),
@@ -158,6 +173,7 @@ function receipt(task) {
     project_root: task.project_root,
     worktree_path: task.worktree_path,
     branch: task.worktree_path ? `codex/${task.id}` : null,
+    base_commit: task.base_commit ?? null,
     sandbox: task.sandbox,
     model: task.model,
     reasoning_effort: task.reasoning_effort,
@@ -253,7 +269,7 @@ function buildOverview(tasks) {
 function buildWorkerSummary(task, nativeGoal) {
   // Read the worktree too: a worker that edits via shell commands emits no
   // file_change events, so the checkout is the authoritative diff.
-  const changed = mergeChangedFiles(task.changed_files, readWorktreeChanges(task.worktree_path));
+  const changed = readTaskChanges(task);
   const commands = task.commands ?? [];
   const lines = [
     `${task.title ?? task.id} — status=${task.status}${task.phase ? `, phase=${task.phase}` : ""}`,
@@ -322,7 +338,11 @@ server.registerTool(
         objective: z.string().min(1),
         tokenBudget: z.number().int().positive().optional()
       }),
-      dependsOn: z.array(z.string().min(1)).optional()
+      dependsOn: z.array(z.string().min(1)).optional(),
+      // Which commit the worktree is cut from. Defaults to the repository's
+      // HEAD; pass a branch, tag or sha to build on work that is not on the
+      // main line yet (for example another worker's codex/<id> branch).
+      baseRef: z.string().min(1).optional()
     }
   },
   async (input) => {
@@ -356,7 +376,8 @@ server.registerTool(
           objective: z.string().min(1),
           tokenBudget: z.number().int().positive().optional()
         })
-        .optional()
+        .optional(),
+      baseRef: z.string().min(1).optional()
     }
   },
   async ({ task_id, followup_prompt, session_id, ...options }) => {
@@ -481,8 +502,8 @@ server.registerTool(
     while (Date.now() - startedAt < effectiveTimeoutMs) {
       await reconcileDetachedActiveTasks();
       tasks = (await getTasks(task_ids)).filter(Boolean);
-      const terminalCount = tasks.filter((task) => TERMINAL_STATUSES.has(task.status)).length;
-      const isDone = mode === "any" ? terminalCount > 0 : terminalCount === task_ids.length;
+      const settledCount = tasks.filter(isSettled).length;
+      const isDone = mode === "any" ? settledCount > 0 : settledCount === task_ids.length;
       if (isDone) break;
       await sleep(pollMs);
     }
@@ -490,9 +511,9 @@ server.registerTool(
     await reconcileDetachedActiveTasks();
     tasks = (await getTasks(task_ids)).filter(Boolean);
     const missingIds = task_ids.filter((taskId) => !tasks.some((task) => task.id === taskId));
-    const terminalTasks = tasks.filter((task) => TERMINAL_STATUSES.has(task.status));
+    const settledTasks = tasks.filter(isSettled);
     const timedOut =
-      mode === "any" ? terminalTasks.length === 0 : terminalTasks.length !== task_ids.length;
+      mode === "any" ? settledTasks.length === 0 : settledTasks.length !== task_ids.length;
 
     const summaries = await Promise.all(
       tasks.map(async (task) => ({
@@ -690,7 +711,7 @@ server.registerTool(
       source = "task_row";
     }
     const truncated = maxChars === undefined ? reports : reports.map((text) => truncateMiddleChars(text, maxChars));
-    const changed = mergeChangedFiles(task.changed_files, readWorktreeChanges(task.worktree_path));
+    const changed = readTaskChanges(task);
     return textResult({
       task_id,
       title: task.title,

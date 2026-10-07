@@ -23,7 +23,8 @@ const POST_V1_COLUMNS = [
   ["run_count", "INTEGER NOT NULL DEFAULT 0"],
   ["cancel_requested_at", "TEXT"],
   ["notices", "TEXT"],
-  ["session_id", "TEXT"]
+  ["session_id", "TEXT"],
+  ["base_commit", "TEXT"]
 ];
 
 const TASKS_DDL = `
@@ -72,6 +73,7 @@ const TASKS_DDL = `
       cancel_requested_at TEXT,
       notices TEXT,
       worktree_path TEXT,
+      base_commit TEXT,
       run_log TEXT NOT NULL
     );
 `;
@@ -84,7 +86,7 @@ const TASK_COLUMNS = [
   "current_command", "error", "followup_of", "resumed_from", "session_id", "thread_id", "owned_paths",
   "depends_on", "goal_objective", "goal_token_budget", "goal_status", "goal_tokens_used",
   "goal_time_used_seconds", "goal_updated_at", "run_count", "cancel_requested_at",
-  "notices", "worktree_path", "run_log"
+  "notices", "worktree_path", "base_commit", "run_log"
 ];
 
 function tableColumns(dbInstance, tableName) {
@@ -251,7 +253,7 @@ function rowToTask(row) {
   };
 }
 
-function isPidAlive(pid) {
+export function isPidAlive(pid) {
   if (!pid) return false;
   try {
     process.kill(pid, 0);
@@ -274,19 +276,39 @@ export async function readActiveTasks() {
 
 // A worker whose process is gone and that never wrote a terminal event is not
 // "failed": nothing told us it failed. It is lost, and the fix is to re-run it.
+// A row can also be active without ever having had a process: the dispatch
+// wrote the row and then died before the spawn was recorded (one real store
+// carried such a row for days, pid 0 and no created_at, forever "running").
+// Only a row old enough that the dispatch cannot still be in flight is judged
+// this way; a row with an unreadable created_at is treated as old.
+const NEVER_STARTED_GRACE_MS = 5 * 60 * 1000;
+
+function neverStarted(task, now = Date.now()) {
+  if (task.pid) return false;
+  if (task.started_at) return false;
+  const created = Date.parse(task.created_at ?? "");
+  if (Number.isNaN(created)) return true;
+  return now - created > NEVER_STARTED_GRACE_MS;
+}
+
 export async function reconcileDetachedActiveTasks() {
   const tasks = await readActiveTasks();
-  const staleTasks = tasks.filter((task) => task.pid && !isPidAlive(task.pid));
+  const staleTasks = tasks.filter((task) => (task.pid && !isPidAlive(task.pid)) || neverStarted(task));
   for (const task of staleTasks) {
     const now = new Date().toISOString();
+    const vanished = Boolean(task.pid);
     await writeTask({
       ...task,
       status: "lost",
       phase: null,
-      current_action: "Worker process disappeared without a terminal event",
+      current_action: vanished
+        ? "Worker process disappeared without a terminal event"
+        : "Worker was never started: no process was recorded for this row",
       current_command: null,
-      error: task.error ?? "Codex worker process disappeared before a terminal event was recorded.",
-      completed_at: task.completed_at ?? now,
+      error: task.error ?? (vanished
+        ? "Codex worker process disappeared before a terminal event was recorded."
+        : "Codex worker row was written but no process was ever recorded for it."),
+      completed_at: task.completed_at || now,
       updated_at: now
     });
   }

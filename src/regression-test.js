@@ -3,10 +3,12 @@
 // machine, the ownership guard and the concurrency behaviour are all exercised
 // the way a client would exercise them.
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir } from "node:fs/promises";
+import { execFileSync } from "node:child_process";
+import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { DatabaseSync } from "node:sqlite";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { approxTokenCount } from "./truncate.js";
@@ -529,6 +531,147 @@ await test("R6-1 long commands and reports come back clipped, the stream keeps t
       .map((event) => event.item?.command)
       .filter((command) => typeof command === "string" && command.length > 10000);
     assert.ok(whole.length > 0, "the raw stream must keep the full command");
+  });
+});
+
+// ------------------------------------------------ R7 worktree truth
+
+const gitEnv = {
+  ...process.env,
+  GIT_AUTHOR_NAME: "regression",
+  GIT_AUTHOR_EMAIL: "regression@example.com",
+  GIT_COMMITTER_NAME: "regression",
+  GIT_COMMITTER_EMAIL: "regression@example.com"
+};
+const git = (cwd, args) => execFileSync("git", ["-C", cwd, ...args], { encoding: "utf8", env: gitEnv, stdio: ["ignore", "pipe", "ignore"] }).trim();
+
+// A real repository with two commits on the main line, so a worker can be cut
+// from the older one and the diff against it is observable.
+async function makeRepo(name) {
+  const repo = join(home, name);
+  await mkdir(repo, { recursive: true });
+  git(repo, ["init", "-q", "-b", "main"]);
+  await writeFile(join(repo, "first.txt"), "one\n");
+  git(repo, ["add", "-A"]);
+  git(repo, ["commit", "-q", "-m", "first"]);
+  const first = git(repo, ["rev-parse", "HEAD"]);
+  await writeFile(join(repo, "second.txt"), "two\n");
+  git(repo, ["add", "-A"]);
+  git(repo, ["commit", "-q", "-m", "second"]);
+  const second = git(repo, ["rev-parse", "HEAD"]);
+  return { repo, first, second };
+}
+
+// Five real workers edited through the shell and committed on their branch:
+// no file_change item, clean `git status`, and every read said no files had
+// changed. The committed part has to come from the diff against the base.
+await test("R7-1 work a worker committed on its branch is reported as changed", async () => {
+  const { repo, second } = await makeRepo("repo-commit");
+  await withServer({ FAKE_CODEX_SCENARIO: "commit-in-worktree" }, async (client) => {
+    const created = await call(client, "create_codex_worker", { ...describe({ title: "committed-work" }), cwd: repo });
+    assert.ok(created.worktree_path, "a git cwd must get a worktree");
+    assert.equal(created.base_commit, second, "the receipt names the commit the worktree was cut from");
+    const final = await waitFor(client, created.id, (task) => task.status === "completed");
+
+    const names = (files) => files.map((file) => file.split("/").pop()).sort();
+    assert.deepEqual(names(final.changed_files), ["committed.txt", "uncommitted.txt"], "status must list committed and uncommitted work");
+    const result = await call(client, "get_worker_result", { task_id: created.id });
+    assert.deepEqual(names(result.changed_files), ["committed.txt", "uncommitted.txt"], "get_worker_result must agree");
+    const summary = await call(client, "get_worker_summary", { task_id: created.id });
+    assert.deepEqual(names(summary.changed_files), ["committed.txt", "uncommitted.txt"], "get_worker_summary must agree");
+    assert.equal(git(created.worktree_path, ["status", "--porcelain", "committed.txt"]), "", "the committed file is really clean in git status");
+  });
+});
+
+// Rows written before base_commit existed still have the branch reflog, whose
+// oldest entry is where the branch was created.
+await test("R7-2 a row without base_commit falls back to the branch reflog", async () => {
+  const { repo } = await makeRepo("repo-reflog");
+  await withServer({ FAKE_CODEX_SCENARIO: "commit-in-worktree" }, async (client) => {
+    const created = await call(client, "create_codex_worker", { ...describe({ title: "old-row" }), cwd: repo });
+    await waitFor(client, created.id, (task) => task.status === "completed");
+    const db = new DatabaseSync(join(home, "data", "supervisor.sqlite"));
+    db.prepare("UPDATE tasks SET base_commit = NULL, changed_files = '[]' WHERE id = ?").run(created.id);
+    db.close();
+    const result = await call(client, "get_worker_result", { task_id: created.id });
+    const names = result.changed_files.map((file) => file.split("/").pop()).sort();
+    assert.deepEqual(names, ["committed.txt", "uncommitted.txt"]);
+  });
+});
+
+await test("R7-3 baseRef cuts the worktree from that commit and rejects one that does not exist", async () => {
+  const { repo, first, second } = await makeRepo("repo-base");
+  await withServer({}, async (client) => {
+    const created = await call(client, "create_codex_worker", {
+      ...describe({ title: "based" }),
+      cwd: repo,
+      baseRef: first
+    });
+    assert.equal(created.base_commit, first);
+    assert.equal(git(created.worktree_path, ["rev-parse", "HEAD"]), first, "the worktree HEAD is the requested base");
+    assert.equal(git(created.worktree_path, ["branch", "--show-current"]), `codex/${created.id}`);
+    assert.notEqual(git(repo, ["rev-parse", "HEAD"]), first, "the main checkout is untouched");
+    assert.equal(git(repo, ["rev-parse", "HEAD"]), second);
+    await waitFor(client, created.id, (task) => task.status === "completed");
+
+    const refused = await call(client, "create_codex_worker", {
+      ...describe({ title: "bad-base" }),
+      cwd: repo,
+      baseRef: "no-such-ref-xyz"
+    });
+    assert.equal(refused.error, "invalid_base_ref");
+    const rows = await call(client, "list_codex_workers", { includeHistory: true });
+    assert.ok(!rows.some((row) => row.title === "bad-base"), "a refused dispatch must not leave a row behind");
+  });
+});
+
+// ------------------------------------------------ R8 settled terminal state
+
+// turn.completed flips status to completed while the process is still alive;
+// exit_code lands when it exits. A wait that returned between the two handed
+// out exit_code: null for a worker whose next read said 0.
+await test("R8-1 wait returns the settled terminal state, never a half-written one", async () => {
+  await withServer({ FAKE_CODEX_LINGER_MS: "1500" }, async (client) => {
+    const created = await call(client, "create_codex_worker", describe({ title: "linger" }));
+    const waited = await call(client, "wait_codex_workers", {
+      task_ids: [created.id],
+      mode: "all",
+      timeoutMs: 10000,
+      pollMs: 250
+    });
+    assert.equal(waited.timed_out, false);
+    assert.equal(waited.workers[0].status, "completed");
+    assert.equal(waited.workers[0].exit_code, 0, "the wait must not return before the exit is recorded");
+    const status = await call(client, "get_codex_worker_status", { task_id: created.id });
+    assert.equal(status.exit_code, 0, "a later read agrees with the wait");
+  });
+});
+
+// A row that was written but never got a process can only come from a dispatch
+// that died mid-flight. It stays "running" forever unless reconcile picks it
+// up, and the old reconcile skipped every row without a pid.
+await test("R8-2 an active row that never got a process is reconciled as lost, a fresh one is left alone", async () => {
+  await withServer({}, async (client) => {
+    const db = new DatabaseSync(join(home, "data", "supervisor.sqlite"));
+    const insert = db.prepare(`
+      INSERT INTO tasks (id, title, worker, status, cwd, project_root, sandbox, prompt, created_at, updated_at, run_log, pid)
+      VALUES (?, ?, 'codex', 'running', ?, ?, 'workspace-write', 'orphan', ?, ?, '/tmp/none.jsonl', ?)
+    `);
+    insert.run("orphan-blank-created", "W6 ghost", workspace, workspace, "", "", 0);
+    const old = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+    insert.run("orphan-old", "old ghost", workspace, workspace, old, old, null);
+    const fresh = new Date().toISOString();
+    insert.run("orphan-fresh", "fresh dispatch", workspace, workspace, fresh, fresh, null);
+    db.close();
+
+    const rows = await call(client, "list_codex_workers", { includeHistory: true });
+    const byId = new Map(rows.map((row) => [row.id, row]));
+    assert.equal(byId.get("orphan-blank-created").status, "lost", "pid 0 and no created_at is a ghost");
+    assert.equal(byId.get("orphan-old").status, "lost", "an hour old with no pid is a ghost");
+    assert.match(byId.get("orphan-old").error, /no process was ever recorded/);
+    assert.equal(byId.get("orphan-fresh").status, "running", "a dispatch written seconds ago may still be spawning");
+    const overview = await call(client, "get_orchestration_overview", {});
+    assert.ok(!overview.workers.some((row) => row.id === "orphan-old" && row.status === "running"));
   });
 });
 

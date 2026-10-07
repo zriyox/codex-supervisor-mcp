@@ -120,16 +120,29 @@ await test("events survive the table rebuild", async () => {
   assert.equal(events[0].thread_id, "abc");
 });
 
-await test("a detached legacy row is reconciled as lost, not failed", async () => {
-  const reconciles = await reconcileDetachedActiveTasks();
-  assert.equal(reconciles.length, 0, "no legacy row has a pid, so none should be marked lost");
-  assert.equal(byId.get("old-running").status, "running");
-});
-
 await test("migration is idempotent", async () => {
   const second = await readTasks();
   assert.equal(second.length, LEGACY_ROWS.length);
   assert.equal(second.find((task) => task.id === "old-editing").phase, "editing");
+});
+
+// No legacy row has a pid, and every one of them was created months ago, so
+// nothing can ever finish them. They are lost - not failed, because no run
+// ever reported a failure - and they say so.
+await test("an active legacy row that never had a process is reconciled as lost", async () => {
+  const reconciles = await reconcileDetachedActiveTasks();
+  const activeLegacy = LEGACY_ROWS.filter(([, status]) => !["completed", "failed", "cancelled"].includes(status));
+  assert.equal(reconciles.length, activeLegacy.length, "every active legacy row has no pid and is old");
+  const after = new Map((await readTasks()).map((task) => [task.id, task]));
+  for (const [id] of activeLegacy) {
+    assert.equal(after.get(id).status, "lost", `${id} should be lost`);
+    assert.equal(after.get(id).phase, null, `${id} should carry no phase once lost`);
+    assert.match(after.get(id).error, /never recorded|no process was ever recorded/, `${id} must say why`);
+  }
+  for (const [id, status] of [["old-completed", "completed"], ["old-failed", "failed"], ["old-cancelled", "cancelled"]]) {
+    assert.equal(after.get(id).status, status, `${id} must keep its terminal status`);
+  }
+  assert.equal((await reconcileDetachedActiveTasks()).length, 0, "a second pass finds nothing left to reconcile");
 });
 
 console.log(`\nmigration: ${failures === 0 ? "passed" : `${failures} failed`}  (db: ${dbFile})`);

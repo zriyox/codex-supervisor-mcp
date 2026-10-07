@@ -14,6 +14,13 @@ const commandText = commandLen > 0 ? `cat <<'EOF' > file.txt\n${"c".repeat(comma
 
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const emit = (event) => process.stdout.write(`${JSON.stringify(event)}\n`);
+// The worktree the supervisor handed this worker, same flag the real CLI gets.
+const cdIndex = args.indexOf("--cd");
+const workDir = cdIndex === -1 ? process.cwd() : args[cdIndex + 1];
+// How long the process lingers after turn.completed before exiting. The real
+// CLI flushes and tears down after its last event; the gap is where a wait
+// used to return a half-written terminal state.
+const lingerMs = Number(process.env.FAKE_CODEX_LINGER_MS ?? "0");
 
 // Not reading stdin is deliberate: it makes the supervisor hit EPIPE on large
 // prompts, which is one of the crash points under test. The echo-prompt
@@ -62,6 +69,29 @@ async function main() {
     return;
   }
 
+  // A worker that edits through the shell and commits on its branch: no
+  // file_change item is ever emitted and `git status` ends up clean, which is
+  // exactly what a real five-worker batch did.
+  if (scenario === "commit-in-worktree") {
+    const { execFileSync } = await import("node:child_process");
+    const { writeFileSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    const gitEnv = { ...process.env, GIT_AUTHOR_NAME: "fake", GIT_AUTHOR_EMAIL: "fake@example.com", GIT_COMMITTER_NAME: "fake", GIT_COMMITTER_EMAIL: "fake@example.com" };
+    const run = (cmdArgs) => execFileSync("git", ["-C", workDir, ...cmdArgs], { stdio: "ignore", env: gitEnv });
+    emit({ type: "thread.started", thread_id: threadId });
+    emit({ type: "turn.started" });
+    const command = "cat <<'EOF' > committed.txt\nhello\nEOF && git add -A && git commit -m 'worker commit'";
+    emit({ type: "item.started", item: { id: "item_1", type: "command_execution", command } });
+    writeFileSync(join(workDir, "committed.txt"), "hello\n");
+    run(["add", "-A"]);
+    run(["commit", "-q", "-m", "worker commit"]);
+    emit({ type: "item.completed", item: { id: "item_1", type: "command_execution", command, exit_code: 0 } });
+    writeFileSync(join(workDir, "uncommitted.txt"), "draft\n");
+    emit({ type: "item.completed", item: { id: "item_2", type: "agent_message", text: "committed one file, left one draft" } });
+    emit({ type: "turn.completed", usage: {} });
+    return;
+  }
+
   emit({ type: "thread.started", thread_id: threadId });
   await wait(stepMs);
   emit({ type: "turn.started" });
@@ -83,6 +113,7 @@ async function main() {
   emit({ type: "item.completed", item: { id: "item_3", type: "agent_message", text: messageText } });
   await wait(stepMs);
   emit({ type: "turn.completed", usage: {} });
+  if (lingerMs > 0) await wait(lingerMs);
 }
 
 main();

@@ -1,6 +1,6 @@
 {
   "name": "codex-supervisor-mcp",
-  "version": "0.5.5",
+  "version": "0.5.6",
   "type": "module",
   "description": "MCP server that dispatches and supervises parallel Codex CLI workers, one isolated Git worktree each, with a persisted work state machine.",
   "license": "MIT",

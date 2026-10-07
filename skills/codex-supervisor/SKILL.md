@@ -107,10 +107,11 @@ wait_codex_workers        （task_ids: [...], mode: "all"）
 ## 常见坑
 
 - **worker 的命绑在 MCP 进程上**。MCP 被 kill，正在跑的 worker 会被留下，下次读状态时结算成 `lost`。
-- **worktree 是从 `HEAD` 建的，你工作区里没 commit 的东西不在里面**。未提交的修改和未跟踪文件 worker 既看不到也写不到。要让它读到就把绝对路径写进 `task`，或者先把改动 commit。它自己的改动落在 `codex/<taskId>` 分支上，不碰你的工作区。
+- **worktree 是从一个提交建的，你工作区里没 commit 的东西不在里面**。默认从 `HEAD` 切；要让第 5 步接着还没合进主线的第 4 步干，派单时传 `baseRef: "codex/<第4步的taskId>"`，不用自己垫临时分支。未提交的修改和未跟踪文件 worker 既看不到也写不到。要让它读到就把绝对路径写进 `task`，或者先把改动 commit。它自己的改动落在 `codex/<taskId>` 分支上，不碰你的工作区。
 - **它只管"跑完了"，不管写得对不对**。终态来自 Codex 的 `turn.completed` 和进程退出码，`exit_code: 0` 只说明没崩。每批活回来，验收得自己做：跑校验、抽看内容。
+- **`completed` 配 `exit_code: null` 是中间态，不是崩了**。`turn.completed` 先写状态，进程退出才写退出码。`wait_codex_workers` 会等到退出码落了再返回；直接读 status 撞上这个组合就过一会再读。
 - **`ownedPaths` 冲突是好事**。说明两路活会踩同一个文件，这时候该改拆法，不是绕过检测。
-- **`ownedPaths` 是派单前的冲突检测，不是运行时的沙箱**。它只挡「两路活登记写同一个文件」，拦不住 worker 在自己 worktree 里新建清单外的文件——sandbox 是 `workspace-write`，写自己 worktree 里的任何路径都合法。收活时该看 diff 还得看：`git -C <worktree_path> show --stat`，或者 `get_worker_summary` 里的 `changed_files`。
+- **`ownedPaths` 是派单前的冲突检测，不是运行时的沙箱**。它只挡「两路活登记写同一个文件」，拦不住 worker 在自己 worktree 里新建清单外的文件——sandbox 是 `workspace-write`，写自己 worktree 里的任何路径都合法。收活时该看 diff 还得看：`get_worker_result` / `get_worker_summary` 里的 `changed_files` 已经包含 worker 在自己分支上 commit 过的文件（按 `base_commit` 和 `HEAD` 比），不用再去 worktree 里跑 `git show --stat`。
 - **worktree 只隔离工作区，不隔离端口和数据库**。多路活要是都会连同一个 dev server 或同一个库，得自己错开。
 - **`cancel_codex_worker` 跨进程靠 pid**。要求那个 pid 的命令行里带 `codex`，防止误杀复用 pid 的进程。
 

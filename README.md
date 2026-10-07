@@ -186,7 +186,7 @@ rm -rf ~/.codex-supervisor      # 状态目录：sqlite、事件流、worktree �
 
 | 工具 | 入参 | 作用 |
 |---|---|---|
-| `create_codex_worker` | `task`, `cwd`, **`ownedPaths`**, **`goal`**, `session_id`, `dependsOn`, `sandbox`, `model`, `reasoningEffort`, `title`, `skipGitRepoCheck` | 起一个 worker |
+| `create_codex_worker` | `task`, `cwd`, **`ownedPaths`**, **`goal`**, `session_id`, `dependsOn`, `baseRef`, `sandbox`, `model`, `reasoningEffort`, `title`, `skipGitRepoCheck` | 起一个 worker。`baseRef` 指定 worktree 从哪个提交切（默认仓库 `HEAD`），要接着另一路还没合进主线的 `codex/<id>` 分支干就传它 |
 | `create_codex_followup_worker` | `task_id`, `followup_prompt`, `session_id`, + 同上 | 起一个**新会话**，把老 worker 的 prompt、状态、近期事件拼进去 |
 | `resume_codex_worker` | `task_id`, `prompt` | 接**同一个** Codex 会话继续跑 |
 | `list_codex_workers` | `status`, `includeHistory`, `includeDetails` | 列出 worker，默认只看在跑的 |
@@ -277,7 +277,7 @@ Codex 原生 goal 有六个状态，映射到 work 状态：
 
 老版本（0.1.x）的库会在第一次打开时自动迁移：`editing` / `command` / `command_completed` / `reporting` 这些原本塞在 `status` 里的过程值会被拆到 `phase`，`status` 归到 `running`，一行不丢。迁移在一个 `BEGIN IMMEDIATE` 事务里做，多个进程同时启动也只会有一个真的迁移。
 
-`changed_files` 有两个来源：Codex 的 `file_change` 事件，以及 worker 结束后读自己 worktree 的 `git status --porcelain`。后者是兜底——worker 用 shell 命令（`printf > file`）改文件时不会产生 `file_change` 事件，只有 worktree 知道真相。
+`changed_files` 有三个来源：Codex 的 `file_change` 事件、worker 自己 worktree 里的 `git status --porcelain`（未提交的部分）、以及 `git diff --name-only <base_commit> HEAD`（已提交的部分）。后两个是兜底——worker 用 shell 命令（`printf > file`）改文件时不会产生 `file_change` 事件；它自己在分支上 commit 之后 `git status` 又是干净的，一批五路 worker 全这么干过，读回来全是空数组。`base_commit` 在派单时记在行上；更早的行没有这列，就退回去读 `codex/<taskId>` 分支 reflog 里最老的那条，那是分支建出来的位置。
 
 ## 环境变量
 
@@ -305,10 +305,11 @@ Codex 原生 goal 有六个状态，映射到 work 状态：
 ## 已知限制
 
 - **worker 的生命周期绑在 MCP 进程上**：`codex` 是 MCP 进程的子进程，MCP 被 kill 时 worker 会被留下。这些 worker 会在下一次 `list_codex_workers` / `get_orchestration_overview` 时被结算成 `lost`。真正的解法是常驻 daemon，见 Roadmap。
-- **worktree 从 `HEAD` 建，未提交的改动不在里面**：`ensureWorktree` 走的是 `git worktree add --detach <dir> HEAD`（`src/codex-runner.js:64`）。主线程工作区里没 commit 的修改和未跟踪文件，worker 在自己的 worktree 里看不到。要让它读写这些文件，就在 task 里给绝对路径，或者先把改动 commit。worker 的改动落在 `codex/<taskId>` 分支上，不碰主线程的工作区。
+- **worktree 从一个提交建，未提交的改动不在里面**：默认从仓库 `HEAD` 切，传 `baseRef` 可以换成任何分支、tag 或 sha（解析不到就拒绝派单，错误码 `invalid_base_ref`，不会悄悄退回 `HEAD`）。主线程工作区里没 commit 的修改和未跟踪文件，worker 在自己的 worktree 里看不到。要让它读写这些文件，就在 task 里给绝对路径，或者先把改动 commit。worker 的改动落在 `codex/<taskId>` 分支上，不碰主线程的工作区。
 - **只隔离工作目录**：临时目录（`TMPDIR`）、数据库、端口这些进程级资源是共用的，多个 worker 同时写同一个临时文件照样互相踩。要隔开得自己在 task 里指定各自的临时目录、库名和端口。
 - **`ownedPaths` 是派单前的冲突检测，不是运行时沙箱**：它只挡「两路活登记写同一个文件」，拦不住 worker 在自己 worktree 里新建清单外的文件——sandbox 是 `workspace-write`，写自己 worktree 里的任何路径都合法。校验产出还是得看 diff。
 - **只管「跑完了」，不管写得对不对**：终态来自 Codex 的 `turn.completed` 和进程退出码，`exit_code: 0` 只说明它没崩。产出对不对得主线程自己核，跑校验、抽看内容。
+- **终态分两步落盘，但 wait 只在落稳后返回**：`turn.completed` 先把 `status` 置成 `completed`，进程退出后才写 `exit_code`。`wait_codex_workers` 要等到 `exit_code` 写入（或者进程已经不在）才算这一路到了终态，所以它返回的快照和下一次 `get_codex_worker_status` 读到的是同一份。直接读 status 仍然可能撞上中间态，看到 `completed` 配 `exit_code: null` 就是这种情况，过一会再读。
 - **长任务别指望一次 `wait_codex_workers` 等到底**：客户端给 MCP 工具调用设的超时是硬墙（`.mcp.json` 里的 `timeout`，或 `MCP_TOOL_TIMEOUT`），撞上就把这次调用掐掉。默认 2 分钟带进度返回，靠反复调而不是一次等到黑。
 - **默认读回来的长文本是裁过的**：`current_action` 截到 300 字、`get_codex_worker_status` 的 prompt 截到 300 字（`includePrompt: true` 放开）、`last_message` 在总览和 wait 里截到 400 字（status 里是 4000）。全量都在库里：命令流看 `get_codex_worker_events`，结论看 `get_worker_result`。这样一条 `wait_codex_workers` 往返从几十 KB 降到几 KB——客户端把超时调用挪到后台、再把结果当通知回灌一次时，这份代价小得多。
 - **不往 Codex 原生 goal 写数据**：`goals_1.sqlite` 归 Codex 所有，本 MCP 只读。worker 起来后由它自己调 Codex 的 `create_goal` 建原生 goal，本 MCP 只负责在派单时把这段指令拼进 prompt。
