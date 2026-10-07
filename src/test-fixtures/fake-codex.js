@@ -103,6 +103,17 @@ async function main() {
     process.exit(7);
   }
 
+  // The model gateway is down: Codex retries, gives up, writes turn.failed
+  // with the error as an object, and exits non-zero. Seen for real against a
+  // provider answering 502.
+  if (scenario === "turn-failed") {
+    emit({ type: "thread.started", thread_id: threadId });
+    emit({ type: "turn.started" });
+    emit({ type: "error", message: "Reconnecting... 1/5 (unexpected status 502 Bad Gateway)" });
+    emit({ type: "turn.failed", error: { message: "unexpected status 502 Bad Gateway: Unknown error, url: http://127.0.0.1:15721/v1/responses" } });
+    process.exit(1);
+  }
+
   if (scenario === "hang") {
     emit({ type: "thread.started", thread_id: threadId });
     await wait(stepMs);

@@ -29,7 +29,7 @@ description: 把 Codex CLI 当并行 worker 派活、盯进度、收结果。用
 
 ## 长任务怎么等
 
-一路活要跑二十分钟、一小时，正确的等法只有一种：**反复调 `wait_codex_workers`**，每次默认 2 分钟，回来看一眼 `still_running`，没完就再调。中间想省一点上下文就改调 `get_orchestration_overview`。
+一路活要跑二十分钟、一小时，正确的等法只有一种：**反复调 `wait_codex_workers`**，每次默认 2 分钟，回来看一眼 `still_running`，没完就再调。只想知道完没完，带 `compact: true`，每路一行。中间想省一点上下文就改调 `get_orchestration_overview`。
 
 **不要自己写 shell 循环去 `grep` / `tail` `data/runs/<taskId>.jsonl`**，哪怕看起来更省事。原因：
 
@@ -81,6 +81,18 @@ wait_codex_workers        （task_ids: [...], mode: "all"）
 `get_codex_worker_events` 的三个闸门：`kinds` 先过滤再取 `limit`；`maxChars` 把超长字符串中间截断；不知道有哪些 `kinds` 时先看返回里的 `available_kinds`。
 
 **别做**：一次 `limit: 200` 拉全量事件。那是几万 token。
+
+## 收活：先看证据，再问，再改，再落
+
+worker 回来以后按这个顺序，别跳：
+
+1. `get_worker_result`：它说自己做了什么。
+2. `get_worker_diff`：它实际做了什么。从 worktree 起点到工作区的全部改动，提交没提交都算，按文件给 patch；`maxChars` 管总量，`paths` 缩范围。它说过了不算，diff 对得上才算。
+3. 对不上、看不懂为什么这么改：`ask_codex_worker` 带 `question` 问它。走的是 fork 出来的只读旁路，worker 自己的线程不动；fork 带着它的全部上下文，一句话能答。超过 `timeoutMs` 回 `running`，之后只带 `task_id` 再调一次拿答案。问完 `end: true` 删 fork。
+4. 要它改：`resume_codex_worker`，提示词里写清问题在哪，让它改完 `git commit --amend --no-edit` 并进原来那个提交，保持一步一个提交。旁路只读，改东西永远走 resume。
+5. 过了：`land_codex_worker` 把 `codex/<id>` 上的提交 cherry-pick 到派单目录的当前分支。目标脏了、分支不对、冲突，都会拒绝并原样退回，不留半截；未提交的改动只报不落。
+
+串行做活（第 N+1 步建立在第 N 步上）两种走法：落完第 N 步再派第 N+1 步；或者第 N+1 步派单时 `baseRef: "codex/<第 N 步的 task_id>"`，直接从它的分支开，最后只落最后一路。
 
 ## 中断了怎么接
 

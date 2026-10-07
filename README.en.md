@@ -8,7 +8,7 @@ English | [中文](README.md)
 [![CI](https://github.com/zriyox/codex-supervisor-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/zriyox/codex-supervisor-mcp/actions/workflows/ci.yml)
 [![node](https://img.shields.io/badge/node-%3E%3D22.13.0-339933.svg)](package.json)
 
-Let one main thread (Claude Code, Codex, or any MCP client) run several Codex workers at once. One Git worktree per worker, every state change on disk, and a web board to watch the batch.
+**codex-supervisor-mcp** is a Codex MCP server: let one main thread (Claude Code, Codex, or any MCP client) run several Codex CLI workers at once. One Git worktree per worker, every state change on disk, and a web board to watch the batch.
 
 ![Demo: one Claude Code main thread dispatches three Codex workers into separate worktrees, waits, and merges the result](https://raw.githubusercontent.com/zriyox/codex-supervisor-mcp/main/assets/demo.gif)
 
@@ -86,6 +86,56 @@ Which store it opens: `SUPERVISOR_HOME` from the environment if set; otherwise t
 
 `SUPERVISOR_WEB_PORT` changes the port. A taken port (usually a board that is already running) is reported in one line and the process exits. The board does not dispatch or cancel; the ask tab starts a read-only Codex side session, described below.
 
+## How I use it
+
+The boundary first: this MCP does not care who the main thread is. Claude Code, Codex itself, Cursor, anything that speaks MCP can dispatch. Workers run `codex exec`, so any model you have configured as a Codex provider works, DeepSeek on one worker and GPT on the next. You can describe the batch in plain words and let the skill make the calls, or call the tools yourself. What follows is my way, not the only way.
+
+I run two Claude Code sessions. One writes documents, the other dispatches. A session that writes the design and watches the workers fills its context in two hours, and mixes the judgement that goes into code with the judgement that goes into dispatch.
+
+| Who | Where | Does what |
+|---|---|---|
+| Me | | Decide what to build, make the calls, read the reports |
+| Planning session | The requirements and docs repository | Talk through the requirement, write the design, write one brief per block of work with a paragraph for the main brain at the end |
+| Main-brain session | A worktree of the code repository | Read the brief, dispatch Codex workers, check every worker's diff, write results back into the brief, report to me. Writes no business code |
+| Codex workers | Their own worktrees | One worker per step, one commit per step, build and verify on a remote machine. No push, no merge |
+
+Only one block of text passes between the two sessions. The planning session writes it, I paste it into the main-brain session and hand it over with `/goal`. Its shape is always the same:
+
+```text
+[Role]        You are the main brain: read docs and code, dispatch workers, check results, update docs, report to me. You write no business code.
+              Dispatch and track with the codex-supervisor skill; load it before starting.
+[Background]  Why this block exists, what the previous one left behind
+[Read first]  Which sections of which documents. Which one wins when they disagree
+[Repos]       Where the worktrees are, which commit each branch is on, which branches are read-only
+[Do]          Follow the table in section N of the brief. One commit per step; verify a step before starting the next. Nothing outside the table
+[Dispatch]    search_works first, do not dispatch twice
+              One session_id for the whole batch
+              Serial when steps touch the same files, parallel only when ownedPaths do not overlap
+              One worker per step. Write the task in full: background, where in the docs, files to change, verify command, output format
+              Read the diff when a worker returns. Its word is not enough; what you see is
+[Build/test]  Everything on the remote machine, nothing locally
+[Red lines]   What not to change, push or read
+[Stop and ask me when]
+[Report]      Tables first, these items, then stop and wait for me
+```
+
+What the main brain calls in one round:
+
+```
+search_works            has this batch been dispatched before
+create_codex_worker     one worker per step, same session_id, ownedPaths disjoint
+wait_codex_workers      two minutes a round, compact: true, call again until done
+get_worker_result       what it says it did
+get_worker_diff         what it actually did
+ask_codex_worker        when the two differ, ask why; read-only, its thread untouched
+resume_codex_worker     when it must change something, one follow-up, amended into the same commit
+land_codex_worker       checked, then landed on the integration branch
+```
+
+The last block was 25 steps. The main-brain session ran it end to end with nothing in its context but the brief and each worker's report. The tokens the workers burn are not on the main brain's bill.
+
+"One worker per step, one commit per step, checked before the next" came from trying it the other way. A worker returns, the main brain reads the diff and finds step 5 wrong: it sends one `resume_codex_worker` saying what is wrong and asking for `git commit --amend` into the same commit. Same Codex thread, full context, checked again before landing. A worker that did three steps cannot be fixed this way: when step 5 is wrong, the commits for steps 6 and 7 are already on top.
+
 ## What the board shows
 
 | Where | What |
@@ -100,16 +150,19 @@ Lists load lazily: 20 sessions per page in the rail, 40 workers per page in the 
 
 ## Tools
 
-Sixteen.
+Nineteen.
 
 | Tool | Arguments | What it does |
 |---|---|---|
 | `create_codex_worker` | `task`, `cwd`, **`ownedPaths`**, **`goal`**, `session_id`, `session_title`, `session_note`, `dependsOn`, `baseRef`, `sandbox`, `model`, `reasoningEffort`, `title`, `skipGitRepoCheck` | Start a worker. `session_title` / `session_note` say what the batch is for; `baseRef` picks the commit the worktree is cut from (default: the repository's `HEAD`), pass another worker's `codex/<id>` branch to build on work not yet on the main line |
 | `create_codex_followup_worker` | `task_id`, `followup_prompt`, `session_id`, plus the above | A new session seeded with the old worker's prompt, status and recent events |
 | `resume_codex_worker` | `task_id`, `prompt` | Continue the same Codex conversation; `thread_id` stays |
-| `wait_codex_workers` | `task_ids`, `mode` (any/all), `timeoutMinutes`, `timeoutMs`, `includeEvents`, `eventLimit`, `eventMaxChars`, `eventKinds` | Wait for terminal states. Two minutes by default, then a snapshot; `still_running: true` means call again with the same ids. Events off by default |
+| `wait_codex_workers` | `task_ids`, `mode` (any/all), `timeoutMinutes`, `timeoutMs`, `compact`, `includeEvents`, `eventLimit`, `eventMaxChars`, `eventKinds` | Wait for terminal states. Two minutes by default, then a snapshot; `still_running: true` means call again with the same ids. Events off by default; `compact` returns one line per worker |
 | `get_orchestration_overview` | `status`, `limit` | Every worker in one table, capped at 7000 bytes. Carries `version` and `update` |
 | `get_worker_result` | `task_id`, `limit`, `maxChars` | The worker's own full report plus `status` / `exit_code` / `changed_files`. The door for conclusions |
+| `get_worker_diff` | `task_id`, `maxChars`, `paths` | What the worker actually changed: patches from the worktree's starting commit to its working tree, committed or not, untracked files included. `maxChars` bounds the whole answer; files past it are listed without a patch |
+| `ask_codex_worker` | `task_id`, `question`, `timeoutMs`, `maxChars`, `end` | Ask the worker on the side: its thread is forked into a read-only side session and the question goes there, so the worker's own thread is untouched. Without `question` it reads the latest answer; `end` deletes the fork |
+| `land_codex_worker` | `task_id`, `onto` | Cherry-pick the worker's commits from `codex/<id>` onto the current branch of the directory it was dispatched from. The target must be clean, `onto` is a check and never a switch, and a conflict rolls back and lists the files |
 | `get_worker_summary` | `task_id` | One paragraph: goal, status, changes, last command and message |
 | `get_codex_worker_status` | `task_id`, `includePrompt`, `promptMaxChars` | One worker in detail; the prompt is clipped to 300 characters unless asked for |
 | `get_codex_worker_events` | `task_id`, `limit`, `maxChars`, `kinds` | The raw event stream |
@@ -135,6 +188,8 @@ Sixteen.
 | One worker's conclusion | `get_worker_result` | The full report, tens of thousands of characters for a big job |
 | Alive or finished | `get_worker_summary` | A paragraph |
 | What it did | `get_codex_worker_events` | Filter with `kinds`, bound with `limit`, clip with `maxChars` |
+| What it actually changed | `get_worker_diff` | Capped by `maxChars`; the file list is always complete |
+| Why it did that | `ask_codex_worker` | One answer; the fork carries the worker's whole context |
 
 The dispatch receipt is small and does not echo the task text. `wait_codex_workers` clips `last_message` to 400 characters and `current_action` to 300; the full text is behind `get_worker_result` and `get_codex_worker_events`. That clipping is what takes a five-worker wait from tens of KB to a few KB, which matters when a client backgrounds a timed-out call and replays the result as a notification.
 
@@ -324,7 +379,8 @@ rm -rf ~/.codex-supervisor
 9. ~~Windows~~ ✅
 10. ~~Web board~~ ✅
 11. ~~Session titles, update check, `baseRef`, committed changes visible~~ ✅
-12. Resident daemon: move dispatch and process lifetime out of the MCP process
+12. ~~Collecting work: `get_worker_diff` / `ask_codex_worker` / `land_codex_worker`; background auto-update~~ ✅
+13. Resident daemon: move dispatch and process lifetime out of the MCP process
 
 Not planned: vector search (substring matching is faster at this scale and costs nothing to maintain), `usage_count` ordering (2 of 80 real works were ever referenced again), a layered memory index (not enough data to need one).
 

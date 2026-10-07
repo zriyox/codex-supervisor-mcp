@@ -37,6 +37,7 @@
     "src/goal-store.js",
     "src/event-parser.js",
     "src/worktree.js",
+    "src/landing.js",
     "src/truncate.js",
     "src/status.js",
     "src/paths.js",

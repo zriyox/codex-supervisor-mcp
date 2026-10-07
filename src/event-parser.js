@@ -171,12 +171,15 @@ export function applyCodexEvent(task, event) {
     next.current_action = "Failed";
     next.current_command = null;
     next.completed_at = now;
-    next.error = event.error ?? event.message ?? event.msg?.error ?? "Codex turn failed";
+    // Codex writes the error as an object ({ message }). Stored as-is it
+    // cannot be bound to the TEXT column, the whole row update is dropped,
+    // and a worker that failed cleanly is later reported as lost.
+    next.error = errorText(event.error) ?? errorText(event.message) ?? errorText(event.msg?.error) ?? "Codex turn failed";
     return next;
   }
 
   if (eventType === "error") {
-    return appendNotice(next, event.message ?? event.error ?? "Codex reported an error event");
+    return appendNotice(next, errorText(event.message) ?? errorText(event.error) ?? "Codex reported an error event");
   }
 
   if (GOAL_EVENT_TYPES.has(eventType)) {
@@ -184,4 +187,20 @@ export function applyCodexEvent(task, event) {
   }
 
   return next;
+}
+
+// An error field as a string, whatever shape Codex gave it.
+function errorText(value) {
+  if (value === null || value === undefined) return null;
+  if (typeof value === "string") return value || null;
+  if (typeof value === "object") {
+    const inner = value.message ?? value.error ?? value.msg ?? null;
+    if (typeof inner === "string" && inner) return inner;
+    try {
+      return JSON.stringify(value);
+    } catch {
+      return String(value);
+    }
+  }
+  return String(value);
 }

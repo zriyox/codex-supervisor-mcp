@@ -410,6 +410,69 @@ export async function runSideTurn({ task, text, res = null }) {
   });
 }
 
+// The answer of a turn, as the text parts joined; null while nothing has
+// been said yet.
+function answerOf(turn) {
+  const parts = partsFromChunks(turn.chunks ?? []);
+  const text = parts.filter((p) => p.type === "text").map((p) => p.text).join("\n").trim();
+  return text || null;
+}
+
+function turnView(turn) {
+  return {
+    turn_id: turn.id,
+    question: turn.question,
+    status: turn.status,
+    answer: answerOf(turn),
+    usage: turn.usage ?? null,
+    error: turn.error ?? null,
+    started_at: turn.started_at ?? null,
+    ended_at: turn.ended_at ?? null
+  };
+}
+
+// The newest side turn of a worker, for a caller that asked earlier and
+// comes back for the answer. Null when nothing was ever asked.
+export async function latestSideTurn(taskId) {
+  await sweepOnce();
+  const turns = await readSideTurns(taskId);
+  const live = running.get(taskId) ?? null;
+  const latest = turns.at(-1) ?? null;
+  const session = await getSideSession(taskId);
+  if (!latest) return { active: Boolean(session), fork_thread_id: session?.fork_thread_id ?? null, busy: Boolean(live), turn: null };
+  const view = turnView(latest);
+  if (live && live.turnId === latest.id) {
+    view.status = "running";
+    view.answer = answerOf({ chunks: live.chunks });
+  }
+  return { active: Boolean(session), fork_thread_id: session?.fork_thread_id ?? null, busy: Boolean(live), turn: view };
+}
+
+// Ask the worker a question on the side, without touching its own thread,
+// and wait up to `timeoutMs` for the answer. A turn that outlives the budget
+// keeps running in this process; the caller reads it back with latestSideTurn.
+export async function askWorker({ task, question, timeoutMs = 110000 }) {
+  const turn = runSideTurn({ task, text: question });
+  // runSideTurn throws synchronously-ish (rejected promise) for no_thread,
+  // busy and codex_missing before anything starts; surface those as-is.
+  let timer;
+  const budget = new Promise((resolve) => {
+    timer = setTimeout(() => resolve({ timedOut: true }), timeoutMs);
+  });
+  try {
+    const outcome = await Promise.race([turn.then((r) => ({ timedOut: false, ...r })), budget]);
+    if (!outcome.timedOut) {
+      const state = await latestSideTurn(task.id);
+      return { ...state, timed_out: false };
+    }
+    turn.catch(() => {});
+    const state = await latestSideTurn(task.id);
+    return { ...state, timed_out: true };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export function stopSideTurn(taskId) {
   const live = running.get(taskId);
   if (!live) return { stopped: false };

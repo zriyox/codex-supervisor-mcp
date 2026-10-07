@@ -8,7 +8,7 @@
 [![CI](https://github.com/zriyox/codex-supervisor-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/zriyox/codex-supervisor-mcp/actions/workflows/ci.yml)
 [![node](https://img.shields.io/badge/node-%3E%3D22.13.0-339933.svg)](package.json)
 
-让一个主线程（Claude Code、Codex，或任何 MCP 客户端）同时指挥多个 Codex worker 干活。一个 worker 一个 Git worktree，状态全部落盘，附一个网页看板盯进度。
+**codex-supervisor-mcp** 是一个 Codex MCP server：让一个主线程（Claude Code、Codex，或任何 MCP 客户端）同时指挥多个 Codex CLI worker 干活。一个 worker 一个 Git worktree，状态全部落盘，附一个网页看板盯进度。
 
 ![演示：一个 Claude Code 主线程同时派 3 个 Codex worker，各自独立 worktree，并行跑完后合并提交](https://raw.githubusercontent.com/zriyox/codex-supervisor-mcp/main/assets/demo.gif)
 
@@ -86,6 +86,56 @@ npx -p codex-supervisor-mcp codex-supervisor-web
 
 端口用 `SUPERVISOR_WEB_PORT` 改。端口被占（多半是已经有一个看板在跑）会直接说明并退出。看板不派单也不取消；「旁问」会起一个只读的 Codex 旁路会话，见下面。
 
+## 我自己怎么用
+
+先说边界：这个 MCP 不挑主线程。Claude Code、Codex 自己、Cursor，能连 MCP 的都能派活。worker 跑的是 `codex exec`，你给 Codex 配了哪个 provider 它就能用哪个模型，一路 DeepSeek 一路 GPT 都行。派活可以说人话让 skill 去调，也可以自己一个个调工具。下面是我的用法，不是唯一用法。
+
+我开两个 Claude Code 会话。一个只管文档，一个只管派活。一个会话又写详设又盯 worker，上下文两小时就满，写代码的判断和派活的判断也混在一起。
+
+| 谁 | 开在哪 | 管什么 |
+|---|---|---|
+| 我 | | 定需求，拍板，看汇报 |
+| 规划会话 | 需求和文档仓 | 聊需求，写详设，每一块活写一份任务书，末尾附一段发给主脑的话 |
+| 主脑会话 | 代码仓的一个 worktree | 读任务书，派 Codex worker，核每路的 diff，把结果填回任务书，向我汇报。不写业务代码 |
+| Codex worker | 各自的 worktree | 一个 worker 做一步，一个提交，在远端机器上编译和验证。不 push，不合并 |
+
+两个会话之间只传一段文字。规划会话写好，我复制，粘进主脑会话，用 `/goal` 接上。这段文字的结构是固定的：
+
+```text
+【角色】   你是主脑：读文档和代码，派 worker，核结果，更新文档，向我汇报。不写业务代码。
+           派活和盯进度用 codex-supervisor 这个 skill，开工前先加载它。
+【背景】   这一块为什么做，上一块留下了什么
+【先读】   哪几份文档的哪几节。几份说法不一样时以哪份为准
+【仓和分支】工作目录在哪，各分支现在在哪个提交，哪些分支只读
+【做什么】 照任务书第几节那张表做。一步一个提交，这步验证过了才做下一步。表里没有的不做
+【派活】   先 search_works 看有没有派过，别重复
+           整批用同一个 session_id
+           改同一批文件就串行，文件完全不重叠才并行，每路 ownedPaths 写清
+           一个 worker 只做一步。task 写全：背景、文档出处、要改的文件、验证命令、输出格式
+           worker 交回来先看 diff。它说过了不算，你看到才算
+【构建和测试】全走远端机器，本机不跑
+【红线】   不改什么，不推什么，不读什么
+【必须停下来问我】
+【汇报】   中文，表格优先，报哪几项，然后停下来等我
+```
+
+主脑这边一轮下来调的工具就这几个：
+
+```
+search_works            查这批活派过没有
+create_codex_worker     一步一个 worker，同一个 session_id，ownedPaths 不重叠
+wait_codex_workers      2 分钟一轮，compact: true，没完接着调
+get_worker_result       它说自己做了什么
+get_worker_diff         它实际做了什么
+ask_codex_worker        对不上就问它为什么，只读，不动它的线程
+resume_codex_worker     要改就追一条，让它 amend 进原来那个提交
+land_codex_worker       核过了，落进集成分支
+```
+
+上一块活 25 步，主脑会话从头跑到尾，上下文里只有任务书和每路的汇报。worker 那边烧的 token 不进主脑的账。
+
+「一个 worker 一步、一步一个提交、核过才进下一步」这条是试出来的。worker 交回来，主脑看 diff 发现某一步不对，就 `resume_codex_worker` 追一条：问题在哪，改完 `git commit --amend` 并进原来那个提交。worker 还是同一个 Codex 会话，上下文都在，改完主脑再核一次，过了才落。一个 worker 做三步就没法这么修：第 5 步错了，第 6、7 步的提交已经叠在上面。
+
 ## 看板里有什么
 
 | 位置 | 内容 |
@@ -100,16 +150,19 @@ npx -p codex-supervisor-mcp codex-supervisor-web
 
 ## 工具
 
-16 个。
+19 个。
 
 | 工具 | 入参 | 作用 |
 |---|---|---|
 | `create_codex_worker` | `task`, `cwd`, **`ownedPaths`**, **`goal`**, `session_id`, `session_title`, `session_note`, `dependsOn`, `baseRef`, `sandbox`, `model`, `reasoningEffort`, `title`, `skipGitRepoCheck` | 起一个 worker。`session_title` / `session_note` 记这批活是干什么的；`baseRef` 指定 worktree 从哪个提交切，默认仓库 `HEAD`，要接着另一路没合进主线的 `codex/<id>` 分支干就填它 |
 | `create_codex_followup_worker` | `task_id`, `followup_prompt`, `session_id`, 其余同上 | 开一个新会话，把老 worker 的 prompt、状态、近期事件拼进去 |
 | `resume_codex_worker` | `task_id`, `prompt` | 接同一个 Codex 会话继续跑，`thread_id` 不变 |
-| `wait_codex_workers` | `task_ids`, `mode`(any/all), `timeoutMinutes`, `timeoutMs`, `includeEvents`, `eventLimit`, `eventMaxChars`, `eventKinds` | 等终态。默认 2 分钟，到点带快照返回，worker 照跑；`still_running: true` 时拿同一批 id 接着调。默认不带事件 |
+| `wait_codex_workers` | `task_ids`, `mode`(any/all), `timeoutMinutes`, `timeoutMs`, `compact`, `includeEvents`, `eventLimit`, `eventMaxChars`, `eventKinds` | 等终态。默认 2 分钟，到点带快照返回，worker 照跑；`still_running: true` 时拿同一批 id 接着调。默认不带事件；`compact` 每路只回一行 |
 | `get_orchestration_overview` | `status`, `limit` | 全部 worker 的状态表，封顶 7000 字节。带 `version` 和 `update` |
 | `get_worker_result` | `task_id`, `limit`, `maxChars` | worker 自己的完整汇报，外加 `status` / `exit_code` / `changed_files`。收结论用这个 |
+| `get_worker_diff` | `task_id`, `maxChars`, `paths` | worker 实际改了什么：从 worktree 起点到工作区的 patch，提交没提交都算，未跟踪的文件也在。`maxChars` 管总量，超了的文件只列名不给 patch |
+| `ask_codex_worker` | `task_id`, `question`, `timeoutMs`, `maxChars`, `end` | 旁路问 worker 一句：把它的线程 fork 成只读的侧会话问，worker 自己的线程不动。不带 `question` 读最近一轮的答案，`end` 删 fork |
+| `land_codex_worker` | `task_id`, `onto` | 把 worker 在 `codex/<id>` 上的提交 cherry-pick 到派单目录的当前分支。目标必须干净，`onto` 只核对不切换，冲突就回滚并列出文件 |
 | `get_worker_summary` | `task_id` | 一段话：goal、状态、改动、最后一条命令和消息 |
 | `get_codex_worker_status` | `task_id`, `includePrompt`, `promptMaxChars` | 单个 worker 的状态细节，prompt 默认截到 300 字 |
 | `get_codex_worker_events` | `task_id`, `limit`, `maxChars`, `kinds` | 原始事件流 |
@@ -135,6 +188,8 @@ npx -p codex-supervisor-mcp codex-supervisor-web
 | 收一路的结论 | `get_worker_result` | 汇报全文，大活上万字 |
 | 只看活着还是完了 | `get_worker_summary` | 一段话 |
 | 看过程 | `get_codex_worker_events` | 用 `kinds` 先滤、`limit` 限条数、`maxChars` 截长串 |
+| 看它实际改了什么 | `get_worker_diff` | `maxChars` 封顶，文件清单永远全 |
+| 问它为什么 | `ask_codex_worker` | 一段回答，fork 带着它的全部上下文 |
 
 派单回执是精简的，不回传任务原文。`wait_codex_workers` 的 `last_message` 截到 400 字，`current_action` 截到 300 字，要全文走 `get_worker_result` 和 `get_codex_worker_events`。这些裁剪是为了一次 wait 五路从几十 KB 降到几 KB；客户端把超时的调用挪到后台再把结果当通知回灌时，这个差别很大。
 
@@ -324,7 +379,8 @@ rm -rf ~/.codex-supervisor
 9. ~~Windows~~ ✅
 10. ~~网页看板~~ ✅
 11. ~~session 标题、更新检查、`baseRef`、已 commit 的改动可见~~ ✅
-12. 常驻 daemon：派单和进程生命周期从 MCP 进程里拿出来
+12. ~~收活三件套：`get_worker_diff` / `ask_codex_worker` / `land_codex_worker`；后台自动更新~~ ✅
+13. 常驻 daemon：派单和进程生命周期从 MCP 进程里拿出来
 
 不做的：向量检索（子串匹配在这个规模更快、零维护）、`usage_count` 排序（实测 80 个 work 里只有 2 个被回头引用过）、三层记忆索引（数据量撑不起）。
 

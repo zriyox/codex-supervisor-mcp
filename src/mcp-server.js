@@ -26,12 +26,14 @@ import {
   upsertTask
 } from "./task-store.js";
 import { readNativeGoal } from "./goal-store.js";
-import { readTaskChanges } from "./worktree.js";
+import { readTaskChanges, readWorktreeDiff, worktreeRef } from "./worktree.js";
 import { ACTIVE_STATUSES, TERMINAL_STATUSES, TASK_STATUSES, isGoalNeedingAttention } from "./status.js";
 import { approxTokenCount, truncateEventStrings, truncateMiddleChars } from "./truncate.js";
 import { checkForUpdate, updateNotice } from "./update-check.js";
 import { syncSkills } from "./skill-sync.js";
 import { maybeAutoUpdate } from "./auto-update.js";
+import { askWorker, endSideSession, latestSideTurn } from "./side-chat.js";
+import { landWorker } from "./landing.js";
 
 // Report the real package version. This string had drifted to 0.4.0 while the
 // package shipped 0.5.x, so the handshake named a version nobody was running.
@@ -566,7 +568,11 @@ server.registerTool(
       // unreadable. The default bounds each string; pass a bigger number when
       // you actually want the raw text.
       eventMaxChars: z.number().int().min(0).max(1000000).default(800),
-      eventKinds: z.array(z.string().min(1)).optional()
+      eventKinds: z.array(z.string().min(1)).optional(),
+      // The smallest useful answer: one line per worker, for a caller that
+      // only wants to know who is done. Everything else comes from
+      // get_worker_result / get_worker_diff afterwards.
+      compact: z.boolean().default(false)
     }
   },
   async ({
@@ -578,7 +584,8 @@ server.registerTool(
     includeEvents,
     eventLimit,
     eventMaxChars,
-    eventKinds
+    eventKinds,
+    compact
   }) => {
     const startedAt = Date.now();
     const effectiveTimeoutMs = timeoutMs ?? timeoutMinutes * 60 * 1000;
@@ -632,7 +639,17 @@ server.registerTool(
       cancelled_count: tasks.filter((task) => task.status === "cancelled").length,
       lost_count: tasks.filter((task) => task.status === "lost").length,
       active_count: tasks.filter((task) => ACTIVE_STATUSES.has(task.status)).length,
-      workers: summaries
+      workers: compact
+        ? tasks.map((task) => ({
+            id: task.id,
+            title: clip(task.title, 60),
+            status: task.status,
+            phase: task.phase ?? null,
+            exit_code: task.exit_code ?? null,
+            changed_file_count: readTaskChanges(task).length,
+            updated_at: task.updated_at ?? null
+          }))
+        : summaries
     }));
   }
 );
@@ -854,6 +871,97 @@ server.registerTool(
       error: task.error ?? null,
       completed_at: task.completed_at ?? null
     });
+  }
+);
+
+server.registerTool(
+  "get_worker_diff",
+  {
+    title: "Get worker diff",
+    description:
+      "The worker's actual changes as patches: everything between the commit its worktree started from and its working tree, committed or not, plus untracked files. This is the ground truth to check a worker's report against. maxChars bounds the whole answer: files past the budget come back listed but without a patch, so the file list is always complete. paths narrows the diff to those files or directories.",
+    inputSchema: {
+      task_id: z.string().min(1),
+      maxChars: z.number().int().min(0).max(1000000).default(60000),
+      paths: z.array(z.string().min(1)).optional()
+    }
+  },
+  async ({ task_id, maxChars, paths }) => {
+    const task = await getTask(task_id);
+    if (!task) return textResult({ error: "task_not_found", task_id });
+    if (!task.worktree_path) {
+      return textResult({ error: "no_worktree", task_id, reason: "this worker ran in place (its cwd is not a git repository or the worktree could not be created), so there is no isolated diff to read; look at changed_files from get_worker_result instead" });
+    }
+    const diff = readWorktreeDiff(task.worktree_path, worktreeRef(task), { maxChars, paths: paths ?? [] });
+    return textResult({
+      task_id,
+      title: task.title,
+      status: task.status,
+      worktree_path: task.worktree_path,
+      branch: `codex/${task.id}`,
+      ...diff
+    });
+  }
+);
+
+server.registerTool(
+  "ask_codex_worker",
+  {
+    title: "Ask a worker on the side",
+    description:
+      "Ask a finished or running worker a question without touching its thread: the worker's Codex thread is forked once into a read-only side session (like Codex's own /btw), the question is asked there, and later questions resume that fork. The fork carries everything the worker saw and did, so 'why did you change X' or 'where is Y handled' costs one short answer instead of a read of the event stream. It can read the worktree and change nothing; to make the worker change something, use resume_codex_worker. Without a question it returns the latest side turn (for an answer that outran timeoutMs). end: true deletes the fork.",
+    inputSchema: {
+      task_id: z.string().min(1),
+      question: z.string().min(1).optional(),
+      timeoutMs: z.number().int().min(1000).max(600000).default(110000),
+      maxChars: z.number().int().min(0).max(1000000).default(8000),
+      end: z.boolean().default(false)
+    }
+  },
+  async ({ task_id, question, timeoutMs, maxChars, end }) => {
+    const task = await getTask(task_id);
+    if (!task) return textResult({ error: "task_not_found", task_id });
+    const clipAnswer = (state) => {
+      if (state?.turn?.answer && maxChars !== undefined) state.turn.answer = truncateMiddleChars(state.turn.answer, maxChars);
+      return state;
+    };
+    if (end) {
+      const ended = await endSideSession(task_id);
+      return textResult({ task_id, ...ended });
+    }
+    if (!question) {
+      return textResult({ task_id, ...clipAnswer(await latestSideTurn(task_id)) });
+    }
+    try {
+      const state = clipAnswer(await askWorker({ task, question, timeoutMs }));
+      const next = state.timed_out
+        ? `The side turn is still running; call ask_codex_worker again with only task_id to read the answer when it lands.`
+        : null;
+      return textResult({ task_id, ...state, next_step: next });
+    } catch (error) {
+      if (error.code === "busy") {
+        return textResult({ task_id, error: "busy", reason: error.message, ...clipAnswer(await latestSideTurn(task_id)) });
+      }
+      return textResult({ task_id, error: error.code ?? "side_turn_failed", reason: error.message });
+    }
+  }
+);
+
+server.registerTool(
+  "land_codex_worker",
+  {
+    title: "Land a worker's commits",
+    description:
+      "Cherry-pick the commits a worker made on its codex/<taskId> branch onto the current branch of the directory it was dispatched from (its cwd). The target must be clean and is never switched to another branch; `onto` is a guard that names the branch you expect to be on. A conflict aborts the cherry-pick, lists the files, and leaves the target as it was. Uncommitted edits in the worker's worktree are reported, not landed. Check the work first with get_worker_result and get_worker_diff; land once it passes.",
+    inputSchema: {
+      task_id: z.string().min(1),
+      onto: z.string().min(1).optional()
+    }
+  },
+  async ({ task_id, onto }) => {
+    const task = await getTask(task_id);
+    if (!task) return textResult({ error: "task_not_found", task_id });
+    return textResult({ task_id, title: task.title, status: task.status, branch: `codex/${task.id}`, ...landWorker(task, { onto }) });
   }
 );
 
