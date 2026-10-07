@@ -10,7 +10,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { execFileSync } from "node:child_process";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { dataDir } from "./paths.js";
 
@@ -59,27 +59,47 @@ export function compareVersions(a, b) {
 // What is actually on disk: the version from package.json, plus whichever
 // provenance is available - npm's recorded integrity for a global install,
 // the HEAD commit for a git checkout.
+// A copy that npx fetched lives under npm's cache (.../_npx/<hash>/...).
+// npx resolves `latest` on every start, so such a copy must never be
+// auto-installed over a global one.
+export function isNpxPath(path) {
+  return String(path).split(/[\\/]/).includes("_npx");
+}
+
+// Who put this copy here. Pure, so it can be tested on made-up paths.
+//   git  - a checkout (also what `npm link` resolves to, since node follows
+//          the symlink before import.meta.url is set)
+//   npx  - npm's exec cache; npx refreshes it by itself
+//   npm  - a directory npm installed, global or project-local (the
+//          auto-updater tells those apart with `npm root -g` before writing)
+export function installSource(root, { exists = existsSync } = {}) {
+  if (exists(join(root, ".git"))) return "git";
+  if (isNpxPath(root)) return "npx";
+  if (basename(dirname(root)) === "node_modules") return "npm";
+  return "unknown";
+}
+
 export function installedPackage() {
-  const info = { name: PACKAGE_NAME, version: packageJson.version, path: packageRoot, integrity: null, commit: null, source: "unknown" };
+  const info = { name: PACKAGE_NAME, version: packageJson.version, path: packageRoot, integrity: null, commit: null, source: installSource(packageRoot) };
+  // A project-local install records the package's integrity in the hidden
+  // lockfile one level up. A global install has no such record (each global
+  // package is its own root), so integrity stays null and only the version
+  // is compared.
   const lockPath = join(packageRoot, "..", ".package-lock.json");
-  if (existsSync(lockPath)) {
+  if (info.source === "npm" && existsSync(lockPath)) {
     try {
       const lock = JSON.parse(readFileSync(lockPath, "utf8"));
       const entry = lock.packages?.[`node_modules/${PACKAGE_NAME}`];
-      if (entry?.integrity) {
-        info.integrity = entry.integrity;
-        info.source = "npm";
-      }
+      if (entry?.integrity) info.integrity = entry.integrity;
     } catch {
-      // unreadable lock: fall through, provenance stays unknown
+      // unreadable lock: integrity stays unknown
     }
   }
-  if (!info.integrity && existsSync(join(packageRoot, ".git"))) {
+  if (info.source === "git") {
     try {
       info.commit = execFileSync("git", ["-C", packageRoot, "rev-parse", "HEAD"], { encoding: "utf8", timeout: 5000, stdio: ["ignore", "pipe", "ignore"] }).trim();
-      info.source = "git";
     } catch {
-      // not a usable checkout
+      // a checkout without a usable git: still a checkout
     }
   }
   return info;
@@ -193,9 +213,12 @@ export async function checkForUpdate({ force = false } = {}) {
 
 // The small object that rides along in tool results. Null when there is
 // nothing to say, so the common case costs no bytes.
-export function updateNotice(result) {
+// `autoUpdate` is the auto-update record (see auto-update.js); when it says
+// the install is already under way or done, the notice stops asking the user
+// to run npm and says what to do instead: start a new session.
+export function updateNotice(result, autoUpdate = null) {
   if (!result || !result.notice) return null;
-  return {
+  const field = {
     update_available: result.update_available,
     installed_version: result.installed.version,
     latest_version: result.latest?.version ?? null,
@@ -203,4 +226,21 @@ export function updateNotice(result) {
     install_command: result.install_command,
     notice: result.notice
   };
+  if (result.update_available && autoUpdate && autoUpdate.version === field.latest_version) {
+    const name = `${PACKAGE_NAME} ${field.latest_version}`;
+    if (autoUpdate.state === "done") {
+      field.install_command = null;
+      field.notice = `${name} has been installed in the background; this session still runs ${field.installed_version}. Start a new session (restart the MCP client) to use it.`;
+    } else if (autoUpdate.state === "started" || autoUpdate.state === "running") {
+      field.install_command = null;
+      field.notice = `${name} is being installed in the background; this session still runs ${field.installed_version}. The next session starts on it once the install finishes.`;
+    } else if (autoUpdate.state === "failed") {
+      field.notice = `${field.notice} (automatic install failed: ${autoUpdate.reason ?? "unknown"})`;
+    }
+    field.auto_update = { state: autoUpdate.state, version: autoUpdate.version, ...(autoUpdate.reason ? { reason: autoUpdate.reason } : {}) };
+  } else if (result.update_available && result.installed.source === "npx") {
+    field.install_command = null;
+    field.notice = `${PACKAGE_NAME} ${field.latest_version} is published; this npx-started session runs ${field.installed_version}. The next session fetches the new one by itself.`;
+  }
+  return field;
 }

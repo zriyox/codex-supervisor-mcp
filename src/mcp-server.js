@@ -30,6 +30,8 @@ import { readTaskChanges } from "./worktree.js";
 import { ACTIVE_STATUSES, TERMINAL_STATUSES, TASK_STATUSES, isGoalNeedingAttention } from "./status.js";
 import { approxTokenCount, truncateEventStrings, truncateMiddleChars } from "./truncate.js";
 import { checkForUpdate, updateNotice } from "./update-check.js";
+import { syncSkills } from "./skill-sync.js";
+import { maybeAutoUpdate } from "./auto-update.js";
 
 // Report the real package version. This string had drifted to 0.4.0 while the
 // package shipped 0.5.x, so the handshake named a version nobody was running.
@@ -48,10 +50,15 @@ const server = new McpServer({
 // which are the calls every orchestrating session makes.
 const UPDATE_RECHECK_MS = 6 * 60 * 60 * 1000;
 let updateState = null;
+// The last word from auto-update.js: null until a check found a newer
+// version, then started | running | done | failed | skipped.
+let autoUpdateState = null;
 async function refreshUpdateState({ force = false } = {}) {
   try {
     updateState = await checkForUpdate({ force });
-    if (updateState.notice) process.stderr.write(`[codex-supervisor] ${updateState.notice}\n`);
+    autoUpdateState = await maybeAutoUpdate(updateState);
+    const notice = updateNotice(updateState, autoUpdateState)?.notice;
+    if (notice) process.stderr.write(`[codex-supervisor] ${notice}\n`);
   } catch (error) {
     process.stderr.write(`[codex-supervisor] update check failed: ${error.message}\n`);
   }
@@ -60,9 +67,32 @@ async function refreshUpdateState({ force = false } = {}) {
 refreshUpdateState();
 setInterval(() => refreshUpdateState({ force: true }), UPDATE_RECHECK_MS).unref();
 
+// The skill describes this tool surface, so it moves with the server: a
+// server fetched by `npx -y codex-supervisor-mcp@latest` never ran postinstall,
+// and a global install only synced the skill on the day it was installed.
+// Runs in the background; a client that cannot write its skill directory
+// only costs a line on stderr.
+if (!process.env.CODEX_SUPERVISOR_SKIP_SKILL_SYNC) {
+  syncSkills()
+    .then((result) => {
+      const changed = [...result.installed, ...result.updated];
+      if (changed.length > 0) {
+        process.stderr.write(
+          `[codex-supervisor] skill synced for ${changed.join(", ")}; a session that already loaded the skill keeps the old text until it loads it again\n`
+        );
+      }
+      for (const failure of result.failed) {
+        process.stderr.write(`[codex-supervisor] skill sync failed: ${failure}\n`);
+      }
+    })
+    .catch((error) => {
+      process.stderr.write(`[codex-supervisor] skill sync failed: ${error.message}\n`);
+    });
+}
+
 // The short form for tool results: null when the install is current.
 function updateField() {
-  return updateNotice(updateState);
+  return updateNotice(updateState, autoUpdateState);
 }
 
 // Spread into a result: adds `update` only when there is something to say.
@@ -643,7 +673,8 @@ server.registerTool(
   },
   async ({ force }) => {
     const result = await refreshUpdateState({ force });
-    return textResult(result ?? { error: "update_check_failed" });
+    if (!result) return textResult({ error: "update_check_failed" });
+    return textResult({ ...result, auto_update: autoUpdateState });
   }
 );
 

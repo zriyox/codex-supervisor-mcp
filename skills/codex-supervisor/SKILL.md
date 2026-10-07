@@ -59,7 +59,7 @@ wait_codex_workers        （task_ids: [...], mode: "all"）
 
 ## 看到 `update` 字段就转告用户
 
-`get_orchestration_overview`、派单回执、`wait_codex_workers` 的返回里出现 `update` 且 `update_available: true`（或 `integrity_matches: false`）时，当轮回复里告诉用户一句：现在装的是 `installed_version`，npm 上已经是 `latest_version`，跑 `install_command` 里那条命令，然后重启 Claude Code / Codex。只说一次，不要每轮重复。用户让你查时调 `check_for_update`。
+`get_orchestration_overview`、派单回执、`wait_codex_workers` 的返回里出现 `update` 且 `update_available: true`（或 `integrity_matches: false`）时，当轮回复里告诉用户一句，内容照 `notice` 说。`auto_update.state` 是 `started`、`running` 或 `done` 时，新版已经在后台装或装好了，用户只需要重开会话；`install_command` 有值才让用户自己跑它再重启 Claude Code / Codex。只说一次，不要每轮重复。用户让你查时调 `check_for_update`。
 
 ## 读结果别把上下文撑爆
 

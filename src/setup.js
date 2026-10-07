@@ -11,7 +11,6 @@
 // Set CODEX_SUPERVISOR_SKIP_SETUP=1 to opt out of the automatic run.
 import { execFile } from "node:child_process";
 import { existsSync, readdirSync } from "node:fs";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -25,11 +24,11 @@ import {
 
 const run = promisify(execFile);
 
+import { installSkill, skillRoots } from "./skill-sync.js";
+
 const packageRoot = dirname(dirname(fileURLToPath(import.meta.url)));
-const skillSource = join(packageRoot, "skills", "codex-supervisor", "SKILL.md");
 const serverEntry = join(packageRoot, "src", "mcp-server.js");
 
-const SKILL_NAME = "codex-supervisor";
 const MCP_NAME = "codex-supervisor";
 const CLIENT_TIMEOUT_MS = 60_000;
 
@@ -38,20 +37,17 @@ const CLIENT_TIMEOUT_MS = 60_000;
 // `npmEntry` lets bin-resolver.js step over a Windows .cmd shim by pointing at
 // the package's own entry point. `binEnv` is the override named in the repair
 // message when that fails (only Codex has one).
+const SKILL_ROOTS = skillRoots();
 const CLIENTS = [
   {
-    id: "claude",
-    label: "Claude Code",
-    skillRoot: join(homedir(), ".claude", "skills"),
+    ...SKILL_ROOTS.claude,
     binary: "claude",
     binEnv: null,
     npmEntry: { pkg: "@anthropic-ai/claude-code", bin: "bin/claude.exe" }
   },
-  { id: "agents", label: "~/.agents", skillRoot: join(homedir(), ".agents", "skills"), binary: null },
+  { ...SKILL_ROOTS.agents, binary: null },
   {
-    id: "codex",
-    label: "Codex",
-    skillRoot: join(homedir(), ".codex", "skills"),
+    ...SKILL_ROOTS.codex,
     binary: "codex",
     binEnv: "CODEX_BIN",
     npmEntry: { pkg: "@openai/codex", bin: "bin/codex.js" }
@@ -173,43 +169,6 @@ function selectClients(options) {
     if (client.binary && locateClient(client.binary)) return true;
     return existsSync(client.skillRoot);
   });
-}
-
-async function installSkill(client, options, log) {
-  const destination = join(client.skillRoot, SKILL_NAME, "SKILL.md");
-  const source = await readFile(skillSource, "utf8");
-
-  if (existsSync(destination)) {
-    const current = await readFile(destination, "utf8");
-    if (current === source) {
-      log(`skill   ${client.label}: up to date`);
-      return "unchanged";
-    }
-    if (!options.force) {
-      const backup = `${destination}.bak-${Date.now()}`;
-      if (options.dryRun) {
-        log(`skill   ${client.label}: would back up to ${backup} and overwrite`);
-        return "would-update";
-      }
-      await writeFile(backup, current);
-    }
-    if (options.dryRun) {
-      log(`skill   ${client.label}: would overwrite`);
-      return "would-update";
-    }
-    await writeFile(destination, source);
-    log(`skill   ${client.label}: updated`);
-    return "updated";
-  }
-
-  if (options.dryRun) {
-    log(`skill   ${client.label}: would install to ${destination}`);
-    return "would-install";
-  }
-  await mkdir(dirname(destination), { recursive: true });
-  await writeFile(destination, source);
-  log(`skill   ${client.label}: installed`);
-  return "installed";
 }
 
 async function mcpAlreadyRegistered(target, options) {

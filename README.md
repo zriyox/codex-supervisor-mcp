@@ -209,6 +209,9 @@ MCP 启动时问一次 npm registry：`latest` 是哪个版本，tarball integri
 | `CODEX_SUPERVISOR_REGISTRY` | `https://registry.npmjs.org` | 更新检查用的 registry |
 | `CODEX_SUPERVISOR_UPDATE_TIMEOUT_MS` | `4000` | 等 registry 的上限 |
 | `CODEX_SUPERVISOR_SKIP_SETUP` | 未设 | `1` 跳过 `postinstall` 的自动安装 |
+| `CODEX_SUPERVISOR_NO_AUTO_UPDATE` | 未设 | `1` 关闭后台自动更新（只提醒） |
+| `CODEX_SUPERVISOR_SKIP_SKILL_SYNC` | 未设 | `1` 关闭 server 启动时的 skill 同步 |
+| `CODEX_SUPERVISOR_NPM` | 未设 | 自动更新用的 npm（`npm-cli.js` 路径或可执行文件），默认用当前 node 自带的那个 |
 
 GUI 客户端起的进程 `PATH` 里常常没有 `codex`，在配置里显式给 `CODEX_BIN`：
 
@@ -250,16 +253,23 @@ skill 已存在且内容不同时先备份成 `SKILL.md.bak-<时间戳>` 再覆�
 
 ### 更新
 
+不用手动更。server 每次启动在后台问一次 registry（之后每 6 小时一次），发现新版就起一个独立进程跑 `npm i -g codex-supervisor-mcp@<新版本>`，装到同一个全局路径。**正在跑的会话不受影响，下一个新会话就是新版。** 过程记在 `~/.codex-supervisor/data/auto-update.json` 和 `auto-update.log`；工具返回的 `update.auto_update` 里也能看到 `started / running / done / failed`。
+
+只对 `npm i -g` 装的那份生效，更新前会用 `npm root -g` 核对路径。git 源码、`npm link`、项目内依赖、`npx` 起的都不碰。同一个版本只试一次，几个会话同时启动也只有一个进程在装。`CODEX_SUPERVISOR_NO_AUTO_UPDATE=1` 关掉；CI 里自动跳过。
+
+全局目录要 sudo 才能写的机器上会装失败，`update` 字段里会带上原因，这时还是手动：
+
 ```bash
 npm install -g codex-supervisor-mcp@latest
-npm ls -g --depth=0 | grep codex-supervisor
 ```
 
-然后重启 Claude Code / Codex。三个坑：
+0.6.1 及以前的版本只提醒、不自己装。从那些版本上来，手动升一次，之后就自动了。注册不用重做。
+
+手动更的坑：
 
 - 刚发布的版本 registry 要几分钟才切 `latest`，装完版本没变就等一会，或者写死版本号。
-- `npm link` 装出来的是软链，改 `src/` 立即生效，但 skill 不会自动同步，手动跑 `codex-supervisor-setup`。
 - 换了 Node 版本，注册的绝对路径就失效了。先 `claude mcp remove -s user codex-supervisor` 和 `codex mcp remove codex-supervisor`，再装。
+- skill 不用单独管：server 每次启动会把自带的 skill 刷到 `~/.claude/skills/`、`~/.agents/skills/`、`~/.codex/skills/` 里已经存在的那几个目录，内容不同先备份成 `SKILL.md.bak-<时间戳>`。已经加载了 skill 的会话要重新加载才看到新文本。`CODEX_SUPERVISOR_SKIP_SKILL_SYNC=1` 关掉。
 
 ### 卸载
 

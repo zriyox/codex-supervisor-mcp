@@ -209,6 +209,9 @@ Cached an hour, re-checked every six while running. An unreachable registry is n
 | `CODEX_SUPERVISOR_REGISTRY` | `https://registry.npmjs.org` | Registry for the update check |
 | `CODEX_SUPERVISOR_UPDATE_TIMEOUT_MS` | `4000` | How long to wait for the registry |
 | `CODEX_SUPERVISOR_SKIP_SETUP` | unset | `1` skips the `postinstall` setup |
+| `CODEX_SUPERVISOR_NO_AUTO_UPDATE` | unset | `1` turns the background auto-update off (notify only) |
+| `CODEX_SUPERVISOR_SKIP_SKILL_SYNC` | unset | `1` turns the skill sync at server start off |
+| `CODEX_SUPERVISOR_NPM` | unset | npm for the auto-update (path to `npm-cli.js` or an executable); default is the one shipped with the running node |
 
 A process started by a GUI client often has no `codex` on `PATH`; set `CODEX_BIN` in the config:
 
@@ -250,16 +253,23 @@ An existing skill with different content is backed up to `SKILL.md.bak-<timestam
 
 ### Upgrading
 
+Nothing to do by hand. Every server start asks the registry in the background (then every six hours); when a newer version is published it starts a detached process that runs `npm i -g codex-supervisor-mcp@<that version>` into the same global path. **The running session is untouched; the next session starts on the new version.** Progress lands in `~/.codex-supervisor/data/auto-update.json` and `auto-update.log`, and tool results carry it as `update.auto_update` (`started / running / done / failed`).
+
+Only a copy that `npm i -g` installed is touched, and the updater checks the path against `npm root -g` first. A git checkout, an `npm link`, a project-local dependency and an `npx`-started copy are left alone. Each published version is attempted once, and several sessions starting together share one updater. `CODEX_SUPERVISOR_NO_AUTO_UPDATE=1` turns it off; CI is skipped automatically.
+
+On a machine where the global directory needs sudo the install fails, the `update` field says why, and the manual way still works:
+
 ```bash
 npm install -g codex-supervisor-mcp@latest
-npm ls -g --depth=0 | grep codex-supervisor
 ```
 
-Then restart Claude Code / Codex. Three things to know:
+Versions up to 0.6.1 only notify and never install. Coming from one of those, upgrade by hand once; after that it is automatic. No re-registration needed.
+
+Manual-update pitfalls:
 
 - The registry takes a few minutes to move `latest` after a publish. If the version did not change, wait, or pin the version.
-- `npm link` installs a symlink: `src/` changes apply at once, the skill does not sync by itself; run `codex-supervisor-setup`.
 - Switching Node versions breaks the registered absolute path. Run `claude mcp remove -s user codex-supervisor` and `codex mcp remove codex-supervisor` first, then install.
+- The skill takes care of itself: every server start copies the bundled skill into whichever of `~/.claude/skills/`, `~/.agents/skills/` and `~/.codex/skills/` already exist, backing up a differing file as `SKILL.md.bak-<timestamp>`. A session that already loaded the skill sees the new text only after loading it again. `CODEX_SUPERVISOR_SKIP_SKILL_SYNC=1` turns the sync off.
 
 ### Uninstall
 
