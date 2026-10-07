@@ -9,157 +9,79 @@ description: 把 Codex CLI 当并行 worker 派活、盯进度、收结果。用
 
 ## 什么时候用
 
-- 一批能拆开的活：改 5 个模块、写 6 篇文档、清点 3 个仓库
-- 活偏大，不想让它占自己的上下文
-- 跑到一半可能断，需要能接回来
+一批能拆开的活、活偏大不想占自己的上下文、跑到一半可能断要能接回来。一个文件的小改、纯问答、要来回确认的活，自己干更快。
 
-**不用**：一个文件的小改、纯问答、需要来回确认的活。这些自己干更快。
+## 派单
 
-## 一次派单
-
-1. 拆活。每路写清楚：干什么、能写哪些文件、怎么算做完。
-2. 第一路派单时带 `session_id` + `session_title`（一句话说这批活是干什么的，30 字以内，比如「给 12 个接口补单测」），要交代背景再加 `session_note`。看板左栏和 `get_session_works` 显示的是这个标题，不是 id。漏了就事后调 `describe_session` 补。
-3. `create_codex_worker` 派出去。返回的是一张精简回执（`id`、`worktree_path`、`branch`、`owned_paths`、`status`），任务原文不回传，派十一路也不会把你的提示词抄十一遍。
-4. 派完就 `wait_codex_workers` 等。默认只等 2 分钟，到点返回进度快照，worker 照跑；拿同一批 `task_ids` 接着调，直到 `timed_out: false`。默认**不带**事件（`includeEvents: false`），返回只够看状态，要事件得自己开。
-5. 收结果走 `get_worker_result`，拿完整汇报，别一上来读事件流。
-
-`ownedPaths` 和 `goal` 必填，不是可选项。
-
-`wait_codex_workers` 的等待预算管的是这一次调用，不是 worker。返回里 `still_running: true` 是等满了，不是活挂了，按 `next_step` 接着调就行。别把 `timeoutMinutes` 开到超过客户端的 MCP 工具超时——那样被掐掉的是这次调用，丢的是这次的结果。
-
-## 长任务怎么等
-
-一路活要跑二十分钟、一小时，正确的等法只有一种：**反复调 `wait_codex_workers`**，每次默认 2 分钟，回来看一眼 `still_running`，没完就再调。只想知道完没完，带 `compact: true`，每路一行。中间想省一点上下文就改调 `get_orchestration_overview`。
-
-**不要自己写 shell 循环去 `grep` / `tail` `data/runs/<taskId>.jsonl`**，哪怕看起来更省事。原因：
-
-- 那个文件只是 Codex 的原始输出。进程被杀、`failed`、`lost`、`exit_code` 这些只有状态机知道，文件里没有。你的循环会在一个已经死掉的 worker 上一直 `sleep`。
-- `turn.completed` 出现不等于活完成：进程退出后 `exit_code` 才落，`wait` 等的是这个；resume 过的 worker 文件里有多条 `turn.completed`，按条数判断会误判。
-- 用户在终端里看到的是一行 `until grep ... sleep 15` 的黑盒，不知道你在等什么、等了多久；`wait` 的返回有每路的状态和进度。
-
-要盯某一路的具体动作，用 `get_codex_worker_status`（`current_action` 是它正在跑的命令）；要看它说了什么，用 `get_worker_result`。
+1. 先 `search_works` 搜一下，别重复派。
+2. 拆活。每路写清楚：干什么、能写哪些文件、怎么算做完。改同一批文件就串行，文件完全不重叠才并行。
+3. `create_codex_worker` 派出去。回执只有 `id`、`worktree_path`、`branch`、`owned_paths`、`status`，不回传任务原文。
+4. `wait_codex_workers` 等。默认 2 分钟，到点返回快照，worker 照跑；拿同一批 `task_ids` 接着调到 `timed_out: false`。只想知道完没完带 `compact: true`。
 
 | 参数 | 怎么填 |
 |---|---|
-| `task` | 这一路具体干什么。要能让对方直接开工，别写"优化一下" |
-| `cwd` | 项目根目录。worker 在它的 worktree 里干活，不动你的工作区 |
-| `ownedPaths` | 这个 worker 允许写的路径。和正在跑的 worker 重叠会被拒，返回冲突的 `task_id` |
-| `goal.objective` | 一句话说清这路活的目标 |
-| `session_id` | 同一批派单传同一个值。断线重连靠它 |
-| `session_title` / `session_note` | 这批活是干什么的，一句话 + 可选说明。第一路带上就行，后面几路不用重复 |
-| `dependsOn` | 有先后依赖时填上游的 `task_id` |
-| `baseRef` | worktree 从哪个提交切。默认仓库 `HEAD`；要接着另一路还没合进主线的活干，填它的分支 `codex/<taskId>` |
+| `task` | 这一路具体干什么。要能直接开工，别写"优化一下" |
+| `cwd` | 项目根目录。worker 在自己的 worktree 里干活，不动你的工作区 |
+| `ownedPaths` | 必填。这路允许写的路径，和在跑的 worker 重叠会被拒。冲突是好事，说明该改拆法 |
+| `goal.objective` | 必填。一句话说目标，worker 会建成 Codex 原生 goal |
+| `session_id` | 同一批传同一个值。第一路顺手带 `session_title`（30 字内，看板和 `get_session_works` 显示它），漏了用 `describe_session` 补 |
+| `dependsOn` | 有先后依赖填上游的 `task_id` |
+| `baseRef` | worktree 从哪个提交切，默认 `HEAD`。第 N+1 步要建立在第 N 步上，填 `codex/<第 N 步 task_id>` |
+| `sandbox` | 默认 `workspace-write`，worker 提交不了（Codex 把 `.git` 设成只读）。要它自己提交就 `danger-full-access`，否则收活时让 supervisor 替它提交 |
 
-一次派一批：
+等待的几条规矩：
 
-```
-create_codex_worker × N   （同一个 session_id）
-wait_codex_workers        （task_ids: [...], mode: "all"）
-```
-
-## 看到 `update` 字段就转告用户
-
-`get_orchestration_overview`、派单回执、`wait_codex_workers` 的返回里出现 `update` 且 `update_available: true`（或 `integrity_matches: false`）时，当轮回复里告诉用户一句，内容照 `notice` 说。`auto_update.state` 是 `started`、`running` 或 `done` 时，新版已经在后台装或装好了，用户只需要重开会话；`install_command` 有值才让用户自己跑它再重启 Claude Code / Codex。只说一次，不要每轮重复。用户让你查时调 `check_for_update`。
-
-## 读结果别把上下文撑爆
-
-按这个顺序读，能不动后面就别动：
-
-| 想干什么 | 用哪个 | 代价 |
-|---|---|---|
-| 看全部 worker 现在什么状态 | `get_orchestration_overview` | ~1750 token，封顶 |
-| 收一路活的完整结论 | `get_worker_result` | 汇报全文，大活可能上万字 |
-| 只想知道活着还是完了 | `get_worker_summary` | 一段话 |
-| 看某个 worker 干了什么 | `get_codex_worker_events` | 用 `limit` / `kinds` / `maxChars` 压 |
-| 看某个 worker 的状态 | `get_codex_worker_status` | 比 overview 一行细，命令和 prompt 都裁过 |
-| 看 goal 和 token 消耗 | `get_worker_goal` | 很小 |
-
-**收结论必须走 `get_worker_result`。** `wait_codex_workers` 返回里的 `last_message` 会被截到 400 字只留开头，`get_orchestration_overview` 干脆不给这一列。拿截断版当结论，后面的证据、数字和结论全会漏掉。`get_worker_result` 还会带回 `status`、`exit_code`、`changed_files`，顺便就能判断是真跑完还是崩了。
-
-**默认读回来的长文本都是裁过的**，别把裁剪当成"活没干"：`current_action` 截 300 字（一条 heredoc 命令能写一整个文件，原样回传一次就是几万字）、`get_codex_worker_status` 的 `prompt` 截 300 字（要全文传 `includePrompt: true`）、`last_message` 在 overview 和 wait 里截 400 字、在 status 里截 4000 字。全量在库里：命令流看 `get_codex_worker_events`，结论看 `get_worker_result`。
-
-`get_codex_worker_events` 的三个闸门：`kinds` 先过滤再取 `limit`；`maxChars` 把超长字符串中间截断；不知道有哪些 `kinds` 时先看返回里的 `available_kinds`。
-
-**别做**：一次 `limit: 200` 拉全量事件。那是几万 token。
+- 等待预算管这次调用，不管 worker。`still_running: true` 是等满了不是挂了，按 `next_step` 再调。
+- `timeoutMinutes` 别超过客户端的 MCP 工具超时，否则被掐的是这次调用。
+- **不要自己写 shell 循环 grep `data/runs/*.jsonl`**。进程被杀、`failed`、`lost`、`exit_code` 只有状态机知道，文件里没有；resume 过的 worker 文件里有多条 `turn.completed`；用户在终端里看到的是一行黑盒。
+- 想省上下文改调 `get_orchestration_overview`，封顶 7000 字节。
 
 ## 收活：先看证据，再问，再改，再落
 
-worker 回来以后按这个顺序，别跳：
+1. `get_worker_result`：它说自己做了什么。`wait` 和 overview 里的 `last_message` 是截过的，结论必须走这里。
+2. `get_worker_diff`：它实际做了什么。起点到工作区的全部改动，提交没提交都算；`maxChars` 管总量，`paths` 缩范围。它说过了不算，diff 对得上才算。
+3. 对不上、看不懂为什么：`ask_codex_worker` 带 `question` 问它。fork 出一个只读旁路，worker 自己的线程不动；fork 没网络没 MCP 工具，问"改了什么、为什么、在哪"，别问要联网才能答的事。超时回 `running`，只带 `task_id` 再调拿答案。worker 被 resume 过后下一问自动换新 fork，`fresh: true` 强制换，问完 `end: true` 删。
+4. 要它改：`resume_codex_worker`，写清问题在哪，让它改完 `git commit --amend --no-edit` 并进原来那个提交。旁路只读，改东西永远走 resume。
+5. 过了：`land_codex_worker` 把 `codex/<id>` 上的提交 cherry-pick 到派单目录当前分支。目标脏了、分支不对、冲突都拒绝并原样退回。worker 没提交（默认沙箱提交不了）就带 `commitMessage`，supervisor 在它分支上替它提交一笔再落。
 
-1. `get_worker_result`：它说自己做了什么。
-2. `get_worker_diff`：它实际做了什么。从 worktree 起点到工作区的全部改动，提交没提交都算，按文件给 patch；`maxChars` 管总量，`paths` 缩范围。它说过了不算，diff 对得上才算。
-3. 对不上、看不懂为什么这么改：`ask_codex_worker` 带 `question` 问它。走的是 fork 出来的只读旁路，worker 自己的线程不动；fork 带着它的全部上下文，一句话能答。fork 没网络、没 MCP 工具，它自己知道，所以别问它"远端跑通了没"这类要联网才能答的事，问"你改了什么、为什么、在哪"。超过 `timeoutMs` 回 `running`，之后只带 `task_id` 再调一次拿答案。worker 被 `resume` 过以后，下一问自动换一个新 fork（返回 `refreshed: "worker_resumed"`）；想强制换就 `fresh: true`。问完 `end: true` 删 fork。
-4. 要它改：`resume_codex_worker`，提示词里写清问题在哪，让它改完 `git commit --amend --no-edit` 并进原来那个提交，保持一步一个提交。旁路只读，改东西永远走 resume。
-5. 过了：`land_codex_worker` 把 `codex/<id>` 上的提交 cherry-pick 到派单目录的当前分支。目标脏了、分支不对、冲突，都会拒绝并原样退回，不留半截。
+一批活全部到终态后：`get_orchestration_overview` 确认没有 `needs_attention`，再逐路走上面五步。合不合、怎么合由主线程定。
 
-**worker 在默认的 `workspace-write` 沙箱里提交不了**：Codex 把 `.git` 设成只读，`git add` 就会报 `index.lock: Operation not permitted`。两条路，派单时定一条：
-- 让它只改文件不提交，收活时 `land_codex_worker` 带 `commitMessage`，由 supervisor 在它的分支上替它提交一笔再落。一步一个提交照样成立。
-- 要它自己提交（比如要 `--amend`），派单 `sandbox: "danger-full-access"`。
+## 读结果别把上下文撑爆
 
-串行做活（第 N+1 步建立在第 N 步上）两种走法：落完第 N 步再派第 N+1 步；或者第 N+1 步派单时 `baseRef: "codex/<第 N 步的 task_id>"`，直接从它的分支开，最后只落最后一路。
+| 想干什么 | 用哪个 |
+|---|---|
+| 全部 worker 的状态 | `get_orchestration_overview` |
+| 一路的完整结论 | `get_worker_result` |
+| 一路改了什么 | `get_worker_diff` |
+| 活着还是完了 | `get_worker_summary` |
+| 过程 | `get_codex_worker_events`，`kinds` 先滤、`limit` 限条数、`maxChars` 截长串，先看 `available_kinds` |
+| 一路的状态细节 | `get_codex_worker_status`，`current_action` 是它正在跑的命令 |
 
-## 中断了怎么接
+默认读回来的长文本都是裁过的（`current_action` 300 字、`prompt` 300 字、`last_message` 400 字），别把裁剪当成活没干。全量在库里。别一次 `limit: 200` 拉全量事件。
 
-先分清是哪种断：
+## 断了怎么接
 
-| 情况 | 用什么 | 效果 |
-|---|---|---|
-| 想接着**同一个** Codex 会话干 | `resume_codex_worker` | 上下文不丢，`thread_id` 不变 |
-| 想开**新会话**，带着老活的摘要干 | `create_codex_followup_worker` | 新线程，靠文本重述 |
-| 主线程自己挂了，要找回那批活 | `get_session_works` | 按 `session_id` 列全部 |
-| worker 变 `lost`（MCP 进程没了把它带走了） | `resume_codex_worker` | 同一线程接着干，worktree 里的改动都在 |
+| 情况 | 用什么 |
+|---|---|
+| 主线程自己挂了 | 先 `get_session_works({ session_id })`，一次拿回那批活 |
+| worker 变 `lost`（MCP 进程没了把它带走了，或被信号杀了） | `resume_codex_worker`。worktree 里的改动和 `thread_id` 都在，同一线程接着干；被杀时正在做的那一步可能要重做 |
+| worker `failed` | 看 `error` 和日志，查完再 resume 或重派 |
+| 没记到 `thread_id` 的老行 | `create_codex_followup_worker`，新线程靠文本重述 |
 
-主线程重启后第一件事：`get_session_works({ session_id })`。一次拿到那批活的清单和状态，不用凭记忆猜。
+`status` 是生命周期：`queued` / `running` / `completed` / `failed` / `cancelled` / `lost`。`phase` 只在跑着时有值：`starting` → `thinking` → `command` → `editing` → `reporting`。`completed` 配 `exit_code: null` 是中间态，`wait` 会等到退出码落了再返回。goal 的 `paused` / `blocked` 不是结束，是等人管，overview 会列进 `needs_attention`。
 
-`resume_codex_worker` 只有在原任务记了 `thread_id` 时能用。没记过就用 `create_codex_followup_worker`。
+## 看到 `update` 字段就转告用户
 
-## 找以前的活
-
-`search_works({ query })` 在 title、goal、prompt、last_message 里做子串匹配，从新到旧返回。
-
-想按状态筛就用 `list_codex_workers({ status, includeHistory: true })`。
-
-## 状态怎么读
-
-`status` 是生命周期，一个 work 一个值：`queued` / `running` / `completed` / `failed` / `cancelled` / `lost`。
-
-`phase` 只在跑着的时候有值：`starting` → `thinking` → `command` → `editing` → `reporting`。
-
-**`failed` 和 `lost` 不是一回事**：
-
-- `failed`：跑完了但没成。去看日志和 `error`。
-- `lost`：进程被外部信号杀了，或者 MCP 进程自己没了（worker 是它的子进程）。worktree 里的改动都还在，`thread_id` 也在库里。**用 `resume_codex_worker` 接回同一个线程**，提示词里说"接着上次的做，先看工作区现状"；它被杀时正在做的那一步可能要重做。只有没记到 `thread_id` 的老行才走 `create_codex_followup_worker` 重派。
-
-`paused` 和 `blocked` 的 goal 不是结束，是等人管。`get_orchestration_overview` 会把它们列进 `needs_attention`。
-
-## goal 是干嘛的
-
-每个 worker 起手会自己调 Codex 的 `create_goal`，把 `goal.objective` 建成那个线程的原生 goal；干完调 `update_goal` 标 `complete`。所以：
-
-- `get_worker_goal` 里的 `native_goal` 是 Codex 自己的记录，带真实 token 和时间消耗
-- Go 到 Codex 界面上能直接看到这个 goal
-- `resume_codex_worker` **不会**再建 goal（有未完成 goal 时 `create_goal` 会失败）
+overview、派单回执、`wait` 返回里出现 `update` 且 `update_available: true` 时，当轮回复里照 `notice` 告诉用户一句。`auto_update.state` 是 `started` / `running` / `done` 时新版已在后台装，重开会话即可；`install_command` 有值才让用户自己跑。只说一次。
 
 ## 常见坑
 
-- **worker 的命绑在 MCP 进程上**。MCP 被 kill，正在跑的 worker 会被留下，下次读状态时结算成 `lost`。
-- **worktree 是从一个提交建的，你工作区里没 commit 的东西不在里面**。默认从 `HEAD` 切；要让第 5 步接着还没合进主线的第 4 步干，派单时传 `baseRef: "codex/<第4步的taskId>"`，不用自己垫临时分支。未提交的修改和未跟踪文件 worker 既看不到也写不到。要让它读到就把绝对路径写进 `task`，或者先把改动 commit。它自己的改动落在 `codex/<taskId>` 分支上，不碰你的工作区。
-- **它只管"跑完了"，不管写得对不对**。终态来自 Codex 的 `turn.completed` 和进程退出码，`exit_code: 0` 只说明没崩。每批活回来，验收得自己做：跑校验、抽看内容。
-- **`completed` 配 `exit_code: null` 是中间态，不是崩了**。`turn.completed` 先写状态，进程退出才写退出码。`wait_codex_workers` 会等到退出码落了再返回；直接读 status 撞上这个组合就过一会再读。
-- **`ownedPaths` 冲突是好事**。说明两路活会踩同一个文件，这时候该改拆法，不是绕过检测。
-- **`ownedPaths` 是派单前的冲突检测，不是运行时的沙箱**。它只挡「两路活登记写同一个文件」，拦不住 worker 在自己 worktree 里新建清单外的文件——sandbox 是 `workspace-write`，写自己 worktree 里的任何路径都合法。收活时该看 diff 还得看：`get_worker_result` / `get_worker_summary` 里的 `changed_files` 已经包含 worker 在自己分支上 commit 过的文件（按 `base_commit` 和 `HEAD` 比），不用再去 worktree 里跑 `git show --stat`。
-- **worktree 只隔离工作区，不隔离端口和数据库**。多路活要是都会连同一个 dev server 或同一个库，得自己错开。
-- **`cancel_codex_worker` 跨进程靠 pid**。要求那个 pid 的命令行里带 `codex`，防止误杀复用 pid 的进程。
+- worktree 从一个提交切，你工作区里没 commit 的东西 worker 看不到。要让它读到就给绝对路径或先 commit。
+- 它只管"跑完了"不管"对不对"，`exit_code: 0` 只说明没崩，验收自己做。
+- `ownedPaths` 是派单前的冲突检测，不是运行时沙箱，拦不住 worker 新建清单外的文件。收活看 diff。
+- worktree 只隔离工作区，端口和数据库是共用的。
+- `resume_codex_worker` 不会再建 goal。`cancel_codex_worker` 跨进程靠 pid，要求那个 pid 的命令行里带 `codex`。
 
 ## 看板
 
-用户想用眼睛看这批活在干什么时，告诉他起 `codex-supervisor-web`（全局装过）或 `npx -p codex-supervisor-mcp codex-supervisor-web`，开 `http://127.0.0.1:7877`。看板按 session 分组，显示的就是派单时记的 `session_title`，所以标题要写得让人一眼看懂。看板里每路 worker 有个「旁问」tab，用户可以直接问它（fork 出只读旁路会话，不影响 worker），所以不用替用户去 resume 一路 worker 就为了问个问题。
-
-## 收尾
-
-一批活全部到终态后：
-
-1. `get_orchestration_overview` 确认没有 `needs_attention`
-2. 逐路 `get_worker_result` 拿完整汇报，对着验收标准核内容
-3. 失败的区分 `failed`（查原因）和 `lost`（重跑）
-4. 改动在各自 worktree 的 `codex/<taskId>` 分支上，合并由主线程决定
+用户想用眼睛看就让他起 `codex-supervisor-web`（或 `npx -p codex-supervisor-mcp codex-supervisor-web`），开 `http://127.0.0.1:7877`。按 session 分组，每路有「旁问」tab，用户可以自己问 worker。
