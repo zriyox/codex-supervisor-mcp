@@ -79,7 +79,7 @@
     "@modelcontextprotocol/sdk": "^1.21.0"
   },
   "optionalDependencies": {
-    "ink": "^7.0.2",
+    "ink": "^8.0.0",
     "react": "^19.2.6",
     "tsx": "^4.21.0"
   },
