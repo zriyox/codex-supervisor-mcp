@@ -93,6 +93,19 @@ export function truncateMiddleChars(s, maxBytes) {
   return truncateWithByteEstimate(s, maxBytes, false);
 }
 
+// A worker's report leads with its conclusion and ends with what it left
+// out, so a clipped report keeps most of the head and some of the tail
+// instead of an even split, which cut exactly the verification section out
+// of a three-part report.
+export function truncateReport(s, maxBytes, headShare = 0.7) {
+  if (s === "") return s;
+  const totalBytes = Buffer.byteLength(s, "utf8");
+  if (maxBytes <= 0 || totalBytes <= maxBytes) return s;
+  const head = Math.floor(maxBytes * headShare);
+  const { removedChars, before, after } = splitString(s, head, maxBytes - head);
+  return `${before}\n${formatTruncationMarker(false, removedChars)}\n${after}`;
+}
+
 export function truncateMiddleWithTokenBudget(s, maxTokens) {
   if (s === "") return { text: "", originalTokenCount: null };
   if (maxTokens > 0 && Buffer.byteLength(s, "utf8") <= approxBytesForTokens(maxTokens)) {

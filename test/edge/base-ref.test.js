@@ -31,7 +31,7 @@ test("a worker cut from another worker's branch sees that worker's commit", asyn
     const b = await call("create_codex_worker", dispatchArgs("step-b", dir, { baseRef: a.branch }));
     assert.equal(b.base_commit, aHead, "b starts where a finished");
     await waitFor(call, b.id, (t) => t.status === "completed");
-    const result = await call("get_worker_result", { task_id: b.id });
+    const result = await call("get_worker_result", { task_id: b.id, includeFiles: true });
     const names = result.changed_files.map((f) => basename(f)).sort();
     assert.deepEqual(names, ["committed.txt", "uncommitted.txt"], "b's own work only, not a's commit, is reported as b's change");
   });

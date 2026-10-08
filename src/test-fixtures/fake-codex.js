@@ -122,6 +122,20 @@ async function main() {
     process.exit(1);
   }
 
+  // A worker whose check fails and who calls the work done anyway: the
+  // command exits 1 with output, the report says the tests pass.
+  if (scenario === "failing-command") {
+    emit({ type: "thread.started", thread_id: threadId });
+    emit({ type: "turn.started" });
+    emit({ type: "item.started", item: { id: "item_1", type: "command_execution", command: "npm test" } });
+    emit({ type: "item.completed", item: { id: "item_1", type: "command_execution", command: "npm test", exit_code: 1, status: "failed", aggregated_output: `${"line\n".repeat(80)}npm ERR! Test failed.  See above for more details.\n` } });
+    emit({ type: "item.started", item: { id: "item_2", type: "command_execution", command: "echo done" } });
+    emit({ type: "item.completed", item: { id: "item_2", type: "command_execution", command: "echo done", exit_code: 0, status: "completed", aggregated_output: "done\n" } });
+    emit({ type: "item.completed", item: { id: "item_3", type: "agent_message", text: "All tests pass. Done." } });
+    emit({ type: "turn.completed", usage: {} });
+    return;
+  }
+
   if (scenario === "hang") {
     emit({ type: "thread.started", thread_id: threadId });
     await wait(stepMs);

@@ -27,8 +27,9 @@ import {
 } from "./task-store.js";
 import { readNativeGoal } from "./goal-store.js";
 import { readTaskChanges, readWorktreeDiff, worktreeRef } from "./worktree.js";
+import { summarizeVerification } from "./event-parser.js";
 import { ACTIVE_STATUSES, TERMINAL_STATUSES, TASK_STATUSES, isGoalNeedingAttention } from "./status.js";
-import { approxTokenCount, truncateEventStrings, truncateMiddleChars } from "./truncate.js";
+import { approxTokenCount, truncateEventStrings, truncateMiddleChars, truncateReport } from "./truncate.js";
 import { checkForUpdate, updateNotice } from "./update-check.js";
 import { syncSkills } from "./skill-sync.js";
 import { maybeAutoUpdate } from "./auto-update.js";
@@ -834,14 +835,16 @@ server.registerTool(
   {
     title: "Get worker result",
     description:
-      "Read a worker's own final report in full. The overview and the wait response clip the last message so a batch stays inside a context budget; this is the door for the actual conclusion. Returns the last N agent messages plus the status fields needed to tell a real finish from a crash.",
+      "Read a worker's own final report. The overview and the wait response clip the last message; this is the door for the actual conclusion. Returns the last N agent messages (each clipped past maxChars, default 6000 bytes, with truncated: true and the full size so you can re-read it whole), the status fields that tell a real finish from a crash, verification (the commands the worker ran, their exit codes and the tail of any failing output, to hold its report against), and changed_file_count. includeFiles: true adds the changed_files list; get_worker_diff is the ground truth for what changed.",
     inputSchema: {
       task_id: z.string().min(1),
       limit: z.number().int().min(1).max(20).default(1),
-      maxChars: z.number().int().min(0).max(1000000).optional()
+      // Per report, UTF-8 bytes. 0 means no clipping.
+      maxChars: z.number().int().min(0).max(1000000).default(6000),
+      includeFiles: z.boolean().default(false)
     }
   },
-  async ({ task_id, limit, maxChars }) => {
+  async ({ task_id, limit, maxChars, includeFiles }) => {
     const task = await getTask(task_id);
     if (!task) return textResult({ error: "task_not_found", task_id });
     let reports = await readAgentMessages(task_id, limit);
@@ -852,8 +855,13 @@ server.registerTool(
       reports = [task.last_message];
       source = "task_row";
     }
-    const truncated = maxChars === undefined ? reports : reports.map((text) => truncateMiddleChars(text, maxChars));
+    const reportBytes = reports.map((text) => Buffer.byteLength(text, "utf8"));
+    const clipped = maxChars === 0 ? reports : reports.map((text) => truncateReport(text, maxChars));
+    const truncated = clipped.some((text, index) => text !== reports[index]);
     const changed = readTaskChanges(task);
+    // A worker that ran in place has no worktree to diff, so this list is
+    // the only record of what it touched; it is never hidden for those.
+    const listFiles = includeFiles || !task.worktree_path;
     return textResult({
       task_id,
       title: task.title,
@@ -864,9 +872,16 @@ server.registerTool(
       session_id: task.session_id ?? null,
       worktree_path: task.worktree_path,
       goal_status: task.goal_status,
-      changed_files: changed,
-      report_count: truncated.length,
-      reports: truncated,
+      changed_file_count: changed.length,
+      changed_files: listFiles ? changed : undefined,
+      verification: summarizeVerification(task),
+      report_count: clipped.length,
+      report_bytes: reportBytes,
+      truncated,
+      next_step: truncated
+        ? `a report was clipped to ${maxChars} bytes; call again with maxChars: ${Math.max(...reportBytes)} (or 0) to read it whole`
+        : null,
+      reports: clipped,
       source,
       error: task.error ?? null,
       completed_at: task.completed_at ?? null
@@ -890,7 +905,7 @@ server.registerTool(
     const task = await getTask(task_id);
     if (!task) return textResult({ error: "task_not_found", task_id });
     if (!task.worktree_path) {
-      return textResult({ error: "no_worktree", task_id, reason: "this worker ran in place (its cwd is not a git repository or the worktree could not be created), so there is no isolated diff to read; look at changed_files from get_worker_result instead" });
+      return textResult({ error: "no_worktree", task_id, reason: "this worker ran in place (its cwd is not a git repository or the worktree could not be created), so there is no isolated diff to read; call get_worker_result with includeFiles: true for the files it touched" });
     }
     const diff = readWorktreeDiff(task.worktree_path, worktreeRef(task), { maxChars, paths: paths ?? [] });
     return textResult({

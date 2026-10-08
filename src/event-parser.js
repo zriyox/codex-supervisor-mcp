@@ -125,15 +125,17 @@ export function applyCodexEvent(task, event) {
       const command = inferCommand(item);
       next.phase = "command";
       next.current_command = null;
-      next.commands = [
-        ...(next.commands ?? []),
-        {
-          command,
-          exit_code: item?.exit_code ?? item?.exitCode ?? null,
-          status: item?.status ?? "completed",
-          completed_at: now
-        }
-      ];
+      const exitCode = item?.exit_code ?? item?.exitCode ?? null;
+      const status = item?.status ?? "completed";
+      const entry = { command, exit_code: exitCode, status, completed_at: now };
+      // The tail of a failing command's output is the one piece of evidence
+      // a reviewer needs to tell "the build is broken" from "the network was
+      // down". Only failures keep it: the commands column is one row cell.
+      if (commandFailed(entry)) {
+        const tail = outputTail(item?.aggregated_output ?? item?.output ?? null);
+        if (tail) entry.output_tail = tail;
+      }
+      next.commands = [...(next.commands ?? []), entry];
       return next;
     }
     if (itemType === "file_change") {
@@ -203,4 +205,57 @@ function errorText(value) {
     }
   }
   return String(value);
+}
+
+const OUTPUT_TAIL_BYTES = 300;
+
+function outputTail(output) {
+  if (typeof output !== "string" || !output) return null;
+  const buf = Buffer.from(output, "utf8");
+  if (buf.length <= OUTPUT_TAIL_BYTES) return output.trim() || null;
+  // Cut on a character boundary: drop bytes until the slice decodes cleanly.
+  let start = buf.length - OUTPUT_TAIL_BYTES;
+  while (start < buf.length && (buf[start] & 0xc0) === 0x80) start += 1;
+  return `…${buf.subarray(start).toString("utf8").trim()}`;
+}
+
+// A sandbox-refused command can come back with no exit code at all, only a
+// failed status, so both are failure.
+export function commandFailed(entry) {
+  if (!entry) return false;
+  if (entry.status === "failed") return true;
+  return entry.exit_code !== null && entry.exit_code !== undefined && entry.exit_code !== 0;
+}
+
+function clipText(value, max) {
+  const text = String(value ?? "");
+  return text.length > max ? `${text.slice(0, max)}…` : text;
+}
+
+// What the worker actually ran, condensed for a reviewer to hold its report
+// against: a worker that says "tests pass" with commands_run 0, or that ends
+// on a failing command and calls the work done, is caught here without
+// reading the event stream. The commands list accumulates across resumes,
+// so runs says how many turns it covers.
+export function summarizeVerification(task, { limit = 10, clip = 160 } = {}) {
+  const commands = Array.isArray(task?.commands) ? task.commands : [];
+  const failed = commands.filter(commandFailed);
+  const last = commands[commands.length - 1] ?? null;
+  return {
+    runs: task?.run_count ?? 0,
+    commands_run: commands.length,
+    failed_count: failed.length,
+    last_exit_code: last ? (last.exit_code ?? null) : null,
+    last_command_failed: commandFailed(last),
+    failed: failed.slice(-limit).map((entry) => ({
+      command: clipText(entry.command, clip),
+      exit_code: entry.exit_code ?? null,
+      output_tail: entry.output_tail ?? null
+    })),
+    last: commands.slice(-limit).map((entry) => ({
+      command: clipText(entry.command, clip),
+      exit_code: entry.exit_code ?? null,
+      failed: commandFailed(entry)
+    }))
+  };
 }
