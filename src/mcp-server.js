@@ -26,7 +26,7 @@ import {
   upsertTask
 } from "./task-store.js";
 import { readNativeGoal } from "./goal-store.js";
-import { readTaskChanges, readWorktreeDiff, worktreeRef } from "./worktree.js";
+import { baseBehind, readTaskChanges, readWorktreeDiff, worktreeRef } from "./worktree.js";
 import { summarizeVerification } from "./event-parser.js";
 import { ACTIVE_STATUSES, TERMINAL_STATUSES, TASK_STATUSES, isGoalNeedingAttention } from "./status.js";
 import { approxTokenCount, truncateEventStrings, truncateMiddleChars, truncateReport } from "./truncate.js";
@@ -402,7 +402,8 @@ function errorResult(error) {
   return textResult({
     error: error.code ?? "error",
     message: error.message,
-    ...(error.conflicts ? { conflicts: error.conflicts } : {})
+    ...(error.conflicts ? { conflicts: error.conflicts } : {}),
+    ...(error.details ? { files: error.details.files ?? [], git: error.details.git ?? null, base_commit: error.details.base_commit ?? null, head: error.details.head ?? null } : {})
   });
 }
 
@@ -502,16 +503,17 @@ server.registerTool(
   {
     title: "Resume Codex worker",
     description:
-      "Continue the SAME Codex session for an existing worker via `codex exec resume <thread_id>`. Works from a different MCP process or a fresh client session as long as the task recorded a thread_id.",
+      "Continue the SAME Codex session for an existing worker via `codex exec resume <thread_id>`. Works from a different MCP process or a fresh client session as long as the task recorded a thread_id. The worktree stays on the commit it was cut from unless rebaseOnto names a ref (resolved in the project directory, e.g. HEAD or main): uncommitted edits are stashed, the worker's own commits are replayed onto it, the stash comes back and base_commit moves, so the worker continues on current code. A conflict in either step puts the worktree back as it was, lists the files and does not start the worker. The receipt carries base_behind: how many commits the project's HEAD is past the worktree's base.",
     inputSchema: {
       task_id: z.string().min(1),
-      prompt: z.string().min(1)
+      prompt: z.string().min(1),
+      rebaseOnto: z.string().min(1).optional()
     }
   },
-  async ({ task_id, prompt }) => {
+  async ({ task_id, prompt, rebaseOnto }) => {
     try {
-      const record = await resumeCodexWorker({ taskId: task_id, prompt });
-      return textResult(receipt(record));
+      const record = await resumeCodexWorker({ taskId: task_id, prompt, rebaseOnto: rebaseOnto ?? null });
+      return textResult({ ...receipt(record), rebase: record.rebase ?? null, base_behind: baseBehind(record.project_root, record.base_commit) });
     } catch (error) {
       return errorResult(error);
     }
@@ -857,7 +859,7 @@ server.registerTool(
   {
     title: "Get worker result",
     description:
-      "Read a worker's own final report. The overview and the wait response clip the last message; this is the door for the actual conclusion. Returns the last N agent messages (each clipped past maxChars, default 6000 bytes, with truncated: true and the full size so you can re-read it whole), the status fields that tell a real finish from a crash, verification (the commands the worker ran, their exit codes and the tail of any failing output, to hold its report against), and changed_file_count. includeFiles: true adds the changed_files list; get_worker_diff is the ground truth for what changed.",
+      "Read a worker's own final report. The overview and the wait response clip the last message; this is the door for the actual conclusion. Returns the last N agent messages (each clipped past maxChars, default 6000 bytes, with truncated: true and the full size so you can re-read it whole), the status fields that tell a real finish from a crash, verification (the commands the worker ran, their exit codes and the tail of any failing output, to hold its report against), changed_file_count, and base_behind (how many commits the project's HEAD is past the worktree's base; resume with rebaseOnto when it is not 0). includeFiles: true adds the changed_files list; get_worker_diff is the ground truth for what changed.",
     inputSchema: {
       task_id: z.string().min(1),
       limit: z.number().int().min(1).max(20).default(1),
@@ -896,6 +898,8 @@ server.registerTool(
       goal_status: task.goal_status,
       changed_file_count: changed.length,
       changed_files: listFiles ? changed : undefined,
+      base_commit: task.base_commit ?? null,
+      base_behind: task.worktree_path ? baseBehind(task.project_root, task.base_commit) : null,
       verification: summarizeVerification(task),
       report_count: clipped.length,
       report_bytes: reportBytes,

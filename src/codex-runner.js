@@ -13,10 +13,11 @@ import {
   upsertTask
 } from "./task-store.js";
 import { applyCodexEvent } from "./event-parser.js";
-import { TERMINAL_STATUSES } from "./status.js";
+import { ACTIVE_STATUSES, TERMINAL_STATUSES } from "./status.js";
 import { worktreesDir } from "./paths.js";
 import { frameWorkerPrompt } from "./prompt.js";
 import { readTaskChanges } from "./worktree.js";
+import { rebaseWorktree } from "./landing.js";
 import { defaultBinDirs, findBinaryPath, resolveCommand, shimMessage } from "./bin-resolver.js";
 
 const processes = new Map();
@@ -491,14 +492,53 @@ export async function createCodexWorker({
 // Continue the *same* Codex session. The worktree, thread id, ownership and
 // goal are all inherited from the original task, and the row is reused so one
 // logical piece of work stays one row.
-export async function resumeCodexWorker({ taskId, prompt }) {
+//
+// `rebaseOnto` names a ref, resolved in the project directory (HEAD, main, a
+// sha): the worktree is moved onto it first so the worker continues on
+// current code, and base_commit is recorded before the worker starts so a
+// spawn failure cannot leave the row describing the old base. A rebase that
+// does not go through puts the worktree back and throws with the file list;
+// the worker is not started. Refused while the worker is still running.
+export async function resumeCodexWorker({ taskId, prompt, rebaseOnto = null }) {
   if (!prompt || typeof prompt !== "string") throw new Error("prompt is required");
-  const task = await getTask(taskId);
+  let task = await getTask(taskId);
   if (!task) throw new Error(`task not found: ${taskId}`);
   if (!task.thread_id) {
     throw new Error(
       `task ${taskId} has no Codex thread_id recorded. Only workers created by this version of codex-supervisor-mcp can be resumed; use create_codex_followup_worker otherwise.`
     );
+  }
+  let rebase = null;
+  if (rebaseOnto) {
+    if (ACTIVE_STATUSES.has(task.status) || processes.has(task.id)) {
+      const error = new Error(`task ${taskId} is still ${task.status}; wait for it to settle (or cancel it) before rebasing its worktree`);
+      error.code = "worker_active";
+      throw error;
+    }
+    if (!task.worktree_path) {
+      const error = new Error(`task ${taskId} ran in place and has no worktree to rebase`);
+      error.code = "no_worktree";
+      throw error;
+    }
+    let ontoCommit;
+    try {
+      ontoCommit = resolveCommit(task.project_root, rebaseOnto);
+    } catch {
+      const error = new Error(`rebaseOnto "${rebaseOnto}" does not resolve to a commit in ${task.project_root}`);
+      error.code = "invalid_rebase_onto";
+      throw error;
+    }
+    rebase = rebaseWorktree(task, ontoCommit);
+    if (rebase.error) {
+      const error = new Error(rebase.reason);
+      error.code = rebase.error;
+      error.details = rebase;
+      throw error;
+    }
+    if (!rebase.noop && rebase.base_commit !== task.base_commit) {
+      task = { ...task, base_commit: rebase.base_commit, updated_at: new Date().toISOString() };
+      await upsertTask(task);
+    }
   }
 
   const cwd = (await exists(task.cwd)) ? task.cwd : task.project_root;
@@ -521,7 +561,7 @@ export async function resumeCodexWorker({ taskId, prompt }) {
     spawnOptions: { cwd }
   });
   await upsertTask(started.record);
-  return started.record;
+  return rebase ? { ...started.record, rebase } : started.record;
 }
 
 // `powershell` by name is not always on PATH for a process a GUI client

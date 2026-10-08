@@ -211,3 +211,31 @@ export function worktreeRef(task) {
 export function readTaskChanges(task) {
   return mergeChangedFiles(task.changed_files, readWorktreeChanges(task.worktree_path, worktreeRef(task)));
 }
+
+// How far the project has moved since the worktree was cut. Compared with
+// the project directory's HEAD, which is the branch the main thread
+// integrates on. contains_base false means the base was rewritten (an
+// amend or a rebase on the main branch) and the count is of a history the
+// base is not in; every git error is reported as null, never as 0.
+export function baseBehind(projectRoot, baseCommit) {
+  if (!projectRoot || !baseCommit || !existsSync(projectRoot)) return { behind: null, contains_base: null, ref: null };
+  let ref = null;
+  try {
+    ref = git(projectRoot, ["symbolic-ref", "--short", "-q", "HEAD"]).trim() || "HEAD";
+  } catch {
+    ref = "HEAD";
+  }
+  try {
+    const behind = Number(git(projectRoot, ["rev-list", "--count", `${baseCommit}..HEAD`]).trim());
+    let containsBase = true;
+    try {
+      git(projectRoot, ["merge-base", "--is-ancestor", baseCommit, "HEAD"]);
+    } catch (error) {
+      if (error.status === 1) containsBase = false;
+      else return { behind: null, contains_base: null, ref };
+    }
+    return { behind: Number.isFinite(behind) ? behind : null, contains_base: containsBase, ref };
+  } catch {
+    return { behind: null, contains_base: null, ref };
+  }
+}
