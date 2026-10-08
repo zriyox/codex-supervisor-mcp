@@ -15,7 +15,7 @@ import {
 import { applyCodexEvent } from "./event-parser.js";
 import { TERMINAL_STATUSES } from "./status.js";
 import { worktreesDir } from "./paths.js";
-import { withGoalPreamble } from "./prompt.js";
+import { frameWorkerPrompt } from "./prompt.js";
 import { readTaskChanges } from "./worktree.js";
 import { defaultBinDirs, findBinaryPath, resolveCommand, shimMessage } from "./bin-resolver.js";
 
@@ -474,7 +474,7 @@ export async function createCodexWorker({
   const started = await startTrackedRun({
     record,
     args,
-    prompt: withGoalPreamble(task, {
+    prompt: frameWorkerPrompt(task, {
       objective: validatedGoal.objective,
       tokenBudget: validatedGoal.tokenBudget
     }),
@@ -509,7 +509,7 @@ export async function resumeCodexWorker({ taskId, prompt }) {
   const started = await startTrackedRun({
     record: { ...task, resumed_from: task.resumed_from ?? task.id },
     args,
-    prompt: withGoalPreamble(prompt, {
+    prompt: frameWorkerPrompt(prompt, {
       objective: task.goal_objective ?? task.title ?? task.id,
       resume: true
     }),

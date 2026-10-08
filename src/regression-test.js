@@ -465,6 +465,12 @@ await test("R5-4 create asks for a native goal and resume does not", async () =>
       createPrompt.indexOf("create_goal") < createPrompt.indexOf("Task preamble-create"),
       "the goal instruction has to come before the task body"
     );
+    assert.match(createPrompt, /Final report/, "a new worker must be told the report format");
+    assert.ok(
+      createPrompt.indexOf("Task preamble-create") < createPrompt.indexOf("Final report"),
+      "the report format has to come after the task body"
+    );
+    assert.match(createPrompt, /Do not list the files you changed/, "the report format must forbid file lists");
 
     const resumed = await call(client, "resume_codex_worker", {
       task_id: created.id,
@@ -475,6 +481,8 @@ await test("R5-4 create asks for a native goal and resume does not", async () =>
     assert.doesNotMatch(resumePrompt, /Call the create_goal tool/, "resume must not ask for a second goal");
     assert.match(resumePrompt, /already has a goal/, "resume must point at the existing goal");
     assert.match(resumePrompt, /continue the work/, "resume must still carry the caller prompt");
+    assert.match(resumePrompt, /Report as before/, "resume carries the short report reminder");
+    assert.doesNotMatch(resumePrompt, /Final report \(your last message\)/, "resume must not repeat the full report format");
   });
 });
 
