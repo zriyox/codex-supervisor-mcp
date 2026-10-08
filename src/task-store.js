@@ -27,7 +27,9 @@ const POST_V1_COLUMNS = [
   ["base_commit", "TEXT"],
   ["acceptance", "TEXT"],
   ["acceptance_timeout_ms", "INTEGER"],
-  ["acceptance_results", "TEXT"]
+  ["acceptance_results", "TEXT"],
+  ["landed_at", "TEXT"],
+  ["landed_head", "TEXT"]
 ];
 
 const TASKS_DDL = `
@@ -80,6 +82,8 @@ const TASKS_DDL = `
       acceptance TEXT,
       acceptance_timeout_ms INTEGER,
       acceptance_results TEXT,
+      landed_at TEXT,
+      landed_head TEXT,
       run_log TEXT NOT NULL
     );
 `;
@@ -92,7 +96,7 @@ const TASK_COLUMNS = [
   "current_command", "error", "followup_of", "resumed_from", "session_id", "thread_id", "owned_paths",
   "depends_on", "goal_objective", "goal_token_budget", "goal_status", "goal_tokens_used",
   "goal_time_used_seconds", "goal_updated_at", "run_count", "cancel_requested_at",
-  "notices", "worktree_path", "base_commit", "acceptance", "acceptance_timeout_ms", "acceptance_results", "run_log"
+  "notices", "worktree_path", "base_commit", "acceptance", "acceptance_timeout_ms", "acceptance_results", "landed_at", "landed_head", "run_log"
 ];
 
 function tableColumns(dbInstance, tableName) {

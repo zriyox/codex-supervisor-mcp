@@ -145,6 +145,30 @@ export function landWorker(task, { onto = null, commitMessage = null, ignoreAcce
     commits.push(committedForWorker);
     uncommitted = [];
   }
+  // Commits whose patch is already on the target (a previous land, or the
+  // main thread cherry-picked by hand) are skipped by patch id; picking
+  // them again produces an empty commit and git stops with an error.
+  const targetHead = git(target, ["rev-parse", "HEAD"]).trim();
+  let alreadyLanded = [];
+  if (commits.length > 0) {
+    try {
+      const workerHead = git(task.worktree_path, ["rev-parse", "HEAD"]).trim();
+      const pending = new Set(lines(git(target, ["rev-list", "--cherry-pick", "--right-only", `${targetHead}...${workerHead}`])));
+      alreadyLanded = commits.filter((sha) => !pending.has(sha));
+      commits = commits.filter((sha) => pending.has(sha));
+    } catch {
+      // comparison failed; try to land everything and let the pick decide
+    }
+  }
+  if (commits.length === 0 && alreadyLanded.length > 0) {
+    return {
+      error: "nothing_to_land",
+      reason: `every commit on this worker's branch is already on ${branch} (landed before, by patch); nothing new to land`,
+      already_landed: alreadyLanded,
+      uncommitted,
+      base_commit: base
+    };
+  }
   if (commits.length === 0) {
     return {
       error: "nothing_to_land",
@@ -156,7 +180,7 @@ export function landWorker(task, { onto = null, commitMessage = null, ignoreAcce
     };
   }
 
-  const before = git(target, ["rev-parse", "HEAD"]).trim();
+  const before = targetHead;
   try {
     git(target, ["cherry-pick", "--allow-empty-message", ...commits], { timeout: 10 * 60 * 1000 });
   } catch (error) {
@@ -191,6 +215,7 @@ export function landWorker(task, { onto = null, commitMessage = null, ignoreAcce
     base_commit: base,
     head: landed.at(-1) ?? before,
     landed: landed.map((sha, index) => ({ sha, original: commits[index] ?? null, subject: subjectOf.get(sha) ?? null })),
+    already_landed: alreadyLanded,
     committed_for_worker: committedForWorker,
     uncommitted
   };

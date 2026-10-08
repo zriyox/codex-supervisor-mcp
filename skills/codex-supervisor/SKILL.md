@@ -22,6 +22,7 @@ description: 把 Codex CLI 当并行 worker 派活、盯进度、收结果。用
 |---|---|
 | `task` | 这一路具体干什么。要能直接开工，别写"优化一下"。汇报格式 supervisor 已经附在 task 后面（结论 / 验证 / 没做的），别再要它列改动文件，diff 自己看 |
 | `cwd` | 项目根目录。worker 在自己的 worktree 里干活，不动你的工作区 |
+| `acceptance` | 这一步"做完了"的判据，shell 命令列表，worker 退出后 supervisor 在它的 worktree 里逐条跑，退出码 0 算过，worker 在 prompt 里看得到。任务书里的验证命令原样抄：查那个文件在不在、那个接口通不通、那个测试文件过不过。写能判这一步的，不写全仓回归；远端机器的检查包进 `ssh`。命令用 supervisor 自己的权限跑，等于你自己跑 |
 | `ownedPaths` | 必填。这路允许写的路径，和在跑的 worker 重叠会被拒。冲突是好事，说明该改拆法 |
 | `goal.objective` | 必填。一句话说目标，worker 会建成 Codex 原生 goal |
 | `session_id` | 同一批传同一个值。第一路顺手带 `session_title`（30 字内，看板和 `get_session_works` 显示它），漏了用 `describe_session` 补 |
@@ -39,13 +40,16 @@ description: 把 Codex CLI 当并行 worker 派活、盯进度、收结果。用
 
 ## 收活：先看证据，再问，再改，再落
 
+0. 先看 `acceptance`（compact wait、overview 的 `acceptance_failed`、`get_worker_result.acceptance` 都有）。`failed`：不用读它的汇报，直接走第 4 步，把 `checks[].output_tail` 原样贴进 resume 的 prompt。`passed` 但它说没做成、goal 是 `blocked`：信命令不信它，去看 diff。命令本身写错了，resume 带新的 `acceptance` 换掉，别 `ignoreAcceptance`。`null` 是没配，退出码只说明没崩，对不对自己看。
 1. `get_worker_result`：它说自己做了什么。默认截到 6000 字节，`truncated: true` 就按 `next_step` 带 `maxChars` 读全。`verification` 是它真跑过的命令和退出码：说"测过了"但 `commands_run: 0`、说"没建成"但那条命令退出码是 0、`last_command_failed: true` 却说完成、说"环境问题"但 `failed[].output_tail` 里是代码报错，都打回（走第 4 步），别替它圆。`base_behind.behind > 0` 说明派单后主线往前走了，改之前先 rebase（第 4 步）。
 2. `get_worker_diff`：它实际做了什么。起点到工作区的全部改动，提交没提交都算；`maxChars` 管总量，`paths` 缩范围。它说过了不算，diff 对得上才算。
 3. 对不上、看不懂为什么：`ask_codex_worker` 带 `question` 问它。fork 出一个只读旁路，worker 自己的线程不动；fork 没网络没 MCP 工具，问"改了什么、为什么、在哪"，别问要联网才能答的事。超时回 `running`，只带 `task_id` 再调拿答案。worker 被 resume 过后下一问自动换新 fork，`fresh: true` 强制换，问完 `end: true` 删。
 4. 要它改：`resume_codex_worker`，写清问题在哪，让它改完 `git commit --amend --no-edit` 并进原来那个提交。旁路只读，改东西永远走 resume。主线往前走过（`base_behind.behind > 0`）就带 `rebaseOnto: "HEAD"`（在派单目录里解析）：未提交的改动先 stash，它自己的提交重放到新头，stash 放回，`base_commit` 跟着动。冲突（`rebase_conflict` / `stash_conflict`）会原样退回、不起 worker、`files` 列冲突文件；这时让它先 `land_codex_worker` 带 `commitMessage` 提交成一笔再 rebase，或者重派一路 `baseRef` 填新头。
-5. 过了：`land_codex_worker` 把 `codex/<id>` 上的提交 cherry-pick 到派单目录当前分支。目标脏了、分支不对、冲突都拒绝并原样退回。worker 没提交（默认沙箱提交不了）就带 `commitMessage`，supervisor 在它分支上替它提交一笔再落。
+5. 过了：`land_codex_worker` 把 `codex/<id>` 上的提交 cherry-pick 到派单目录当前分支。目标脏了、分支不对、冲突都拒绝并原样退回。worker 没提交（默认沙箱提交不了）就带 `commitMessage`，supervisor 在它分支上替它提交一笔再落。验收 `failed` 它会拒，修完再落；`ignoreAcceptance` 只在用户说了"就这样落"时用。
 
-一批活全部到终态后：`get_orchestration_overview` 确认没有 `needs_attention`，再逐路走上面五步。合不合、怎么合由主线程定。
+一批活全部到终态后：`get_orchestration_overview` 确认没有 `needs_attention`、`acceptance_failed` 为空，再逐路走上面几步。合不合、怎么合由主线程定。
+
+高风险的步（迁移、改公共接口、"做完了"写不成命令的）再派一路 verifier：`sandbox: "read-only"`、`ownedPaths: []`，task 只给这一步的目标和原 worker 的 `worktree_path`，不给它的汇报，不说你怀疑什么，让它答"目标达成没有，证据是哪几行"。它不改东西，只读只跑。两路说法对不上，两边都别信，自己看 diff。
 
 ## 读结果别把上下文撑爆
 
@@ -57,6 +61,7 @@ description: 把 Codex CLI 当并行 worker 派活、盯进度、收结果。用
 | 活着还是完了 | `get_worker_summary` |
 | 过程 | `get_codex_worker_events`，`kinds` 先滤、`limit` 限条数、`maxChars` 截长串，先看 `available_kinds` |
 | 一路的状态细节 | `get_codex_worker_status`，`current_action` 是它正在跑的命令 |
+| 验收过没过 | 每个读都带 `acceptance`；命令和每条的输出在 `get_worker_result.acceptance.checks` |
 
 默认读回来的长文本都是裁过的（`current_action` 300 字、`prompt` 300 字、`last_message` 400 字），别把裁剪当成活没干。全量在库里。别一次 `limit: 200` 拉全量事件。
 
@@ -79,7 +84,7 @@ overview、派单回执、`wait` 返回里出现 `update` 且 `update_available:
 ## 常见坑
 
 - worktree 从一个提交切，你工作区里没 commit 的东西 worker 看不到。要让它读到就给绝对路径或先 commit。
-- 它只管"跑完了"不管"对不对"，`exit_code: 0` 只说明没崩。`verification` 给你退出码和失败输出，worker 根本没去查的事它也抓不到，对不对还是自己看 diff。
+- `exit_code: 0` 只说明没崩。`acceptance` 是 supervisor 替你跑的验收，`verification` 是它自己跑过的，两个都没有就只剩 diff。验收命令别往 worktree 写文件，会混进它的改动。
 - `ownedPaths` 是派单前的冲突检测，不是运行时沙箱，拦不住 worker 新建清单外的文件。收活看 diff。
 - worktree 只隔离工作区，端口和数据库是共用的。
 - `resume_codex_worker` 不会再建 goal。`cancel_codex_worker` 跨进程靠 pid，要求那个 pid 的命令行里带 `codex`。

@@ -184,3 +184,32 @@ test("a read-only verifier may own nothing; a writing worker may not", async () 
     assert.match(writer.message, /ownedPaths/);
   });
 });
+
+test("landing is recorded on the row, a second land skips what is already there, and drift after landing is not stale", async () => {
+  const home = await tempHome("supervisor-acceptance-");
+  const { dir } = await makeRepo(join(home, "repo"));
+  await withMcp({ SUPERVISOR_HOME: home, FAKE_CODEX_SCENARIO: "commit-in-worktree" }, async ({ call }) => {
+    const created = await call("create_codex_worker", dispatchArgs("landed-once", dir, { acceptance: PASS }));
+    await waitFor(call, created.id, settled);
+    const first = await call("land_codex_worker", { task_id: created.id, commitMessage: "the draft too" });
+    assert.ok(!first.error, JSON.stringify(first).slice(0, 300));
+    assert.equal(first.landed.length, 2);
+    assert.deepEqual(first.already_landed, []);
+    const mainHead = git(dir, ["rev-parse", "HEAD"]);
+
+    const result = await call("get_worker_result", { task_id: created.id });
+    assert.equal(result.landed.head, mainHead);
+    assert.ok(result.landed.at);
+    assert.equal(result.base_behind.behind, 2, "main moved by the landed commits");
+    assert.equal(result.acceptance.stale, false, "the move is the landing itself, not drift");
+    assert.equal(result.acceptance.next_step, null);
+    const status = await call("get_codex_worker_status", { task_id: created.id });
+    assert.ok(status.landed_at);
+
+    const again = await call("land_codex_worker", { task_id: created.id });
+    assert.equal(again.error, "nothing_to_land");
+    assert.equal(again.already_landed.length, 2, "both commits are recognised by patch");
+    assert.match(again.reason, /already on main/);
+    assert.equal(git(dir, ["rev-parse", "HEAD"]), mainHead, "the branch did not move");
+  });
+});

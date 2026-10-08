@@ -195,7 +195,9 @@ function acceptanceView(task, behind) {
     run: results?.run ?? null,
     checks: results?.checks ?? [],
     error: results?.error ?? null,
-    stale: Boolean(results && behind && behind.behind > 0),
+    // Drift matters only before the work is landed: once it is on the
+    // branch, the branch having moved is expected.
+    stale: Boolean(results && behind && behind.behind > 0 && !(task.landed_at && task.landed_at >= (results.finished_at ?? ""))),
     next_step: null
   };
   if (!configured) return view;
@@ -246,6 +248,7 @@ function summarizeTask(task) {
     command_count: (task.commands ?? []).length,
     run_count: task.run_count ?? 0,
     acceptance: acceptanceVerdict(task),
+    landed_at: task.landed_at ?? null,
     current_action: clip(task.current_action, ACTION_PREVIEW_CHARS),
     ...liveness(task),
     last_event_at: task.last_event_at ?? null,
@@ -977,6 +980,7 @@ server.registerTool(
       changed_files: listFiles ? changed : undefined,
       base_commit: task.base_commit ?? null,
       base_behind: behind,
+      landed: task.landed_at ? { at: task.landed_at, head: task.landed_head ?? null } : null,
       acceptance: acceptanceView(task, behind),
       verification: summarizeVerification(task),
       report_count: clipped.length,
@@ -1083,7 +1087,14 @@ server.registerTool(
   async ({ task_id, onto, commitMessage, ignoreAcceptance }) => {
     const task = await getTask(task_id);
     if (!task) return textResult({ error: "task_not_found", task_id });
-    return textResult({ task_id, title: task.title, status: task.status, branch: `codex/${task.id}`, ...landWorker(task, { onto, commitMessage: commitMessage ?? null, ignoreAcceptance }) });
+    const outcome = landWorker(task, { onto, commitMessage: commitMessage ?? null, ignoreAcceptance });
+    if (!outcome.error) {
+      // Recorded so a later read knows the work is on the branch: the
+      // board shows it, and base_behind after this is not drift.
+      const now = new Date().toISOString();
+      await upsertTask({ ...task, landed_at: now, landed_head: outcome.head ?? null, updated_at: now });
+    }
+    return textResult({ task_id, title: task.title, status: task.status, branch: `codex/${task.id}`, ...outcome });
   }
 );
 

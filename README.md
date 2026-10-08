@@ -28,6 +28,7 @@
 | 进程重启后不知道谁还在跑 | `supervisor.sqlite` 一行一个 work，带 `thread_id` |
 | 换个会话接不上之前的 worker | `resume_codex_worker` 走 `codex exec resume <thread_id>`，接的是同一个 Codex 会话 |
 | 分不清「跑失败」和「进程没了」 | 状态机把 `failed` 和 `lost` 分开 |
+| worker 说做完了其实没有 | 派单给 `acceptance` 验收命令，worker 退出后 supervisor 在它的 worktree 里跑，失败 `land` 拒绝 |
 | 看不见一批活现在到哪了 | `codex-supervisor-web` 开一个看板，按 session 看每路 worker 在干什么 |
 
 worker 跑的是 `codex exec`，`model` 透传：主线程留在 Claude，worker 可以挂 DeepSeek 或任何 Codex 配了 provider 的模型，账单分开算。
@@ -101,6 +102,7 @@ npx -p codex-supervisor-mcp codex-supervisor-web
            整批用同一个 session_id
            改同一批文件就串行，文件完全不重叠才并行，每路 ownedPaths 写清
            一个 worker 只做一步。task 写全：背景、文档出处、要改的文件、验证命令、输出格式
+           验证命令同时填 acceptance，supervisor 替你跑，它说过了不算
            worker 交回来先看 diff。它说过了不算，你看到才算
 【构建和测试】全走远端机器，本机不跑
 【红线】   不改什么，不推什么，不读什么
@@ -143,15 +145,15 @@ land_codex_worker       核过了，落进集成分支
 
 | 工具 | 入参 | 作用 |
 |---|---|---|
-| `create_codex_worker` | `task`, `cwd`, **`ownedPaths`**, **`goal`**, `session_id`, `session_title`, `session_note`, `dependsOn`, `baseRef`, `sandbox`, `model`, `reasoningEffort`, `title`, `skipGitRepoCheck` | 起一个 worker。`baseRef` 指定 worktree 从哪个提交切，默认 `HEAD`，接着另一路干就填它的 `codex/<id>` |
+| `create_codex_worker` | `task`, `cwd`, **`ownedPaths`**, **`goal`**, `acceptance`, `session_id`, `session_title`, `session_note`, `dependsOn`, `baseRef`, `sandbox`, `model`, `reasoningEffort`, `title`, `skipGitRepoCheck` | 起一个 worker。`acceptance` 是验收命令，worker 退出后 supervisor 在它的 worktree 里跑，退出码 0 算过。`baseRef` 指定 worktree 从哪个提交切，默认 `HEAD`，接另一路填它的 `codex/<id>` |
 | `create_codex_followup_worker` | `task_id`, `followup_prompt`, `session_id`, 其余同上 | 开一个新会话，把老 worker 的 prompt、状态、近期事件拼进去 |
-| `resume_codex_worker` | `task_id`, `prompt`, `rebaseOnto` | 接同一个 Codex 会话继续跑，`thread_id` 不变。`rebaseOnto` 先把 worktree 挪到主线新头（stash、重放它自己的提交、放回），冲突原样退回不起 worker |
+| `resume_codex_worker` | `task_id`, `prompt`, `rebaseOnto`, `acceptance` | 接同一个 Codex 会话继续跑，`thread_id` 不变。`rebaseOnto` 先把 worktree 挪到主线新头（stash、重放它自己的提交、放回），冲突原样退回不起 worker |
 | `wait_codex_workers` | `task_ids`, `mode`(any/all), `timeoutMinutes`, `timeoutMs`, `compact`, `includeEvents`, `eventLimit`, `eventMaxChars`, `eventKinds` | 等终态。默认 2 分钟，到点带快照返回，worker 照跑；`compact` 每路只回一行，带 `idle_seconds` / `command_running`，分得清长命令和卡住 |
 | `get_orchestration_overview` | `status`, `limit` | 全部 worker 的状态表，封顶 7000 字节。带 `version` 和 `update` |
-| `get_worker_result` | `task_id`, `limit`, `maxChars`, `includeFiles` | worker 自己的汇报，默认截 6000 字节、`truncated` 提示读全。`verification` 是它跑过的命令、退出码、失败输出尾巴；`base_behind` 是主线走了多远。文件列表要 `includeFiles` |
+| `get_worker_result` | `task_id`, `limit`, `maxChars`, `includeFiles` | worker 自己的汇报，默认截 6000 字节、`truncated` 提示读全。`acceptance` 是 supervisor 替你跑的验收过没过，`verification` 是它自己跑过的命令和退出码，`base_behind` 是主线走了多远 |
 | `get_worker_diff` | `task_id`, `maxChars`, `paths` | worker 实际改了什么：从 worktree 起点到工作区的 patch，提交没提交都算。`maxChars` 管总量，超了的文件只列名 |
 | `ask_codex_worker` | `task_id`, `question`, `timeoutMs`, `maxChars`, `fresh`, `end` | 旁路问 worker 一句。线程 fork 成只读侧会话，没网络、没 MCP 工具，worker 本身不动。worker 被 resume 过会自动换新 fork，`fresh` 强制换，`end` 删 |
-| `land_codex_worker` | `task_id`, `onto`, `commitMessage` | 把 worker 在 `codex/<id>` 上的提交 cherry-pick 到派单目录的当前分支。目标必须干净，冲突就回滚。`commitMessage` 先替它把未提交的改动提交成一笔 |
+| `land_codex_worker` | `task_id`, `onto`, `commitMessage`, `ignoreAcceptance` | 把 worker 在 `codex/<id>` 上的提交 cherry-pick 到派单目录的当前分支。目标要干净，冲突回滚，验收 `failed` 拒绝。`commitMessage` 先替它把未提交的改动提交成一笔，`ignoreAcceptance` 放行 |
 | `get_worker_summary` | `task_id` | 一段话：goal、状态、改动、最后一条命令和消息 |
 | `get_codex_worker_status` | `task_id`, `includePrompt`, `promptMaxChars` | 单个 worker 的状态细节 |
 | `get_codex_worker_events` | `task_id`, `limit`, `maxChars`, `kinds` | 原始事件流 |
@@ -277,7 +279,7 @@ rm -rf ~/.claude/skills/codex-supervisor ~/.agents/skills/codex-supervisor ~/.co
 - worktree 从一个提交切，你工作区里没 commit 的东西不在里面。
 - 只隔离工作目录。临时目录、数据库、端口是共用的。
 - `ownedPaths` 只在派单时查，拦不住 worker 新建清单外的文件。收活看 diff。
-- 只管「跑完了」不管「对不对」。`verification` 给退出码和失败输出，worker 没去查的事它也抓不到，验收得主线程自己做。
+- 验收是 `acceptance` 里写了什么就查什么。没写的事它不会替你查，`verification` 只是 worker 自己跑过的命令，剩下的靠主线程看 diff。
 - 一次 `wait_codex_workers` 等不到底，客户端的 MCP 工具超时是硬墙，靠反复调。
 - `search_works` 是子串匹配，几百条够用。
 

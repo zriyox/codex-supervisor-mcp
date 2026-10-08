@@ -23,6 +23,7 @@ Point several agents at one repository and they overwrite each other, nobody can
 | Problem | What it does |
 |---|---|
 | Workers trample each other's files | One Git worktree per worker, `ownedPaths` checked for overlap before dispatch |
+| A worker says it is done and it is not | Dispatch with `acceptance` commands; the supervisor runs them in the worktree after the worker exits, and `land` refuses while they fail |
 | Worker output floods the main thread | Events go to `data/runs/<taskId>.jsonl`; reads are gated by `limit` / `maxChars` / `kinds` |
 | One status read fills the context | `get_orchestration_overview` fits every worker into 7000 bytes |
 | Nobody knows who is still running after a restart | `supervisor.sqlite`, one row per work, with `thread_id` |
@@ -101,6 +102,7 @@ One block of text passes between the two sessions, pasted into the main-brain se
               One session_id for the whole batch
               Serial when steps touch the same files, parallel only when ownedPaths do not overlap
               One worker per step. Write the task in full: background, where in the docs, files to change, verify command, output format
+              Put the verify command in acceptance too; the supervisor runs it, the worker's word does not count
               Read the diff when a worker returns. Its word is not enough; what you see is
 [Build/test]  Everything on the remote machine, nothing locally
 [Red lines]   What not to change, push or read
@@ -143,15 +145,15 @@ Nineteen.
 
 | Tool | Arguments | What it does |
 |---|---|---|
-| `create_codex_worker` | `task`, `cwd`, **`ownedPaths`**, **`goal`**, `session_id`, `session_title`, `session_note`, `dependsOn`, `baseRef`, `sandbox`, `model`, `reasoningEffort`, `title`, `skipGitRepoCheck` | Start a worker. `baseRef` picks the commit the worktree is cut from (default `HEAD`); pass another worker's `codex/<id>` to build on it |
+| `create_codex_worker` | `task`, `cwd`, **`ownedPaths`**, **`goal`**, `acceptance`, `session_id`, `session_title`, `session_note`, `dependsOn`, `baseRef`, `sandbox`, `model`, `reasoningEffort`, `title`, `skipGitRepoCheck` | Start a worker. `acceptance` lists the commands the supervisor runs in the worktree once the worker exits; exit 0 on every one passes. `baseRef` picks the commit the worktree is cut from (default `HEAD`); pass another worker's `codex/<id>` to build on it |
 | `create_codex_followup_worker` | `task_id`, `followup_prompt`, `session_id`, plus the above | A new session seeded with the old worker's prompt, status and recent events |
-| `resume_codex_worker` | `task_id`, `prompt`, `rebaseOnto` | Continue the same Codex conversation; `thread_id` stays. `rebaseOnto` first moves the worktree onto the project's newer commit (stash, replay its own commits, unstash); a conflict puts it back and does not start the worker |
+| `resume_codex_worker` | `task_id`, `prompt`, `rebaseOnto`, `acceptance` | Continue the same Codex conversation; `thread_id` stays. `rebaseOnto` first moves the worktree onto the project's newer commit (stash, replay its own commits, unstash); a conflict puts it back and does not start the worker |
 | `wait_codex_workers` | `task_ids`, `mode` (any/all), `timeoutMinutes`, `timeoutMs`, `compact`, `includeEvents`, `eventLimit`, `eventMaxChars`, `eventKinds` | Wait for terminal states. Two minutes by default, then a snapshot while the workers keep running; `compact` returns one line per worker with `idle_seconds` / `command_running`, so a long command and a stuck worker look different |
 | `get_orchestration_overview` | `status`, `limit` | Every worker in one table, capped at 7000 bytes. Carries `version` and `update` |
-| `get_worker_result` | `task_id`, `limit`, `maxChars`, `includeFiles` | The worker's own report, clipped past 6000 bytes with `truncated` and the size to ask for. `verification` is the commands it ran, exit codes and the tail of failing output; `base_behind` is how far main has moved. The file list needs `includeFiles` |
+| `get_worker_result` | `task_id`, `limit`, `maxChars`, `includeFiles` | The worker's own report, clipped past 6000 bytes with `truncated` and the size to ask for. `acceptance` is whether the supervisor's own checks passed, `verification` the commands the worker ran with exit codes, `base_behind` how far main has moved |
 | `get_worker_diff` | `task_id`, `maxChars`, `paths` | What the worker actually changed: patches from the worktree's start to its working tree, committed or not. `maxChars` bounds the answer; files past it are listed without a patch |
 | `ask_codex_worker` | `task_id`, `question`, `timeoutMs`, `maxChars`, `fresh`, `end` | Ask the worker on the side. Its thread is forked into a read-only session with no network and no MCP tools; the worker itself is untouched. A resumed worker gets a new fork by itself, `fresh` forces one, `end` deletes it |
-| `land_codex_worker` | `task_id`, `onto`, `commitMessage` | Cherry-pick the worker's `codex/<id>` commits onto the current branch of the directory it was dispatched from. Clean target only, a conflict rolls back. `commitMessage` first commits the worker's uncommitted edits as one commit |
+| `land_codex_worker` | `task_id`, `onto`, `commitMessage`, `ignoreAcceptance` | Cherry-pick the worker's `codex/<id>` commits onto the current branch of the dispatch directory: clean target only, a conflict rolls back, a failed acceptance is refused. `commitMessage` first commits its uncommitted edits as one commit; `ignoreAcceptance` lands anyway |
 | `get_worker_summary` | `task_id` | One paragraph: goal, status, changes, last command and message |
 | `get_codex_worker_status` | `task_id`, `includePrompt`, `promptMaxChars` | One worker in detail |
 | `get_codex_worker_events` | `task_id`, `limit`, `maxChars`, `kinds` | The raw event stream |
@@ -277,7 +279,7 @@ rm -rf ~/.claude/skills/codex-supervisor ~/.agents/skills/codex-supervisor ~/.co
 - The worktree is cut from a commit; uncommitted work in your checkout is not in it.
 - Only the working directory is isolated. Temp directories, databases and ports are shared.
 - `ownedPaths` is checked at dispatch only; it does not stop a worker from creating files outside its list. Read the diff.
-- It knows "finished", not "correct". `verification` gives exit codes and failing output; what the worker never checked it cannot catch. Acceptance is the main thread's job.
+- Acceptance checks exactly what `acceptance` says. Anything not written there is not checked; `verification` is only what the worker ran itself, and the rest is the main thread reading the diff.
 - One `wait_codex_workers` cannot wait to the end; the client's MCP tool timeout is a hard wall. Call it again.
 - `search_works` is substring matching, fine for hundreds of works.
 

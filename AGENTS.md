@@ -11,7 +11,8 @@ src/task-store.js        sqlite: tasks, task_events, sessions, side_sessions / s
 src/event-parser.js      codex --json events -> status / phase / error on the row; summarizeVerification
 src/prompt.js            goal preamble in front of the task text, report format after it
 src/worktree.js          what a worker changed (readTaskChanges, readWorktreeDiff)
-src/landing.js           land_codex_worker, and rebaseWorktree for resume's rebaseOnto
+src/landing.js           land_codex_worker (gated on acceptance), and rebaseWorktree for resume's rebaseOnto
+src/acceptance.js        the supervisor's own run of a worker's acceptance commands
 src/side-chat.js         ask_codex_worker and the board's side chat (codex exec fork)
 src/auto-update*.js      background npm i -g; skill-sync.js copies the bundled skill
 src/web-server.js        the board; UI source in web/, built to web/dist
