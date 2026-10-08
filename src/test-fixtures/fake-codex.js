@@ -136,6 +136,15 @@ async function main() {
     return;
   }
 
+  // A command that never finishes: item.started went out, nothing follows.
+  if (scenario === "hang-in-command") {
+    emit({ type: "thread.started", thread_id: threadId });
+    emit({ type: "turn.started" });
+    emit({ type: "item.started", item: { id: "item_1", type: "command_execution", command: "sleep 3600 && npm test" } });
+    setInterval(() => {}, 1000);
+    return;
+  }
+
   if (scenario === "hang") {
     emit({ type: "thread.started", thread_id: threadId });
     await wait(stepMs);

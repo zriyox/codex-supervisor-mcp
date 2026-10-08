@@ -160,6 +160,23 @@ function isSettled(task) {
   return !isPidAlive(task.pid);
 }
 
+// Codex emits nothing while a command runs and nothing while the model
+// thinks, so a snapshot that has not moved for ten minutes looks the same
+// either way. These three fields tell them apart: current_command is set
+// from the command's item.started until its item.completed, so a long idle
+// with a command is a long command, and a long idle without one is the model
+// (or a stuck process, which reconcile turns into lost on its own).
+const LIVE_COMMAND_PREVIEW_CHARS = 120;
+function liveness(task) {
+  if (!ACTIVE_STATUSES.has(task.status)) {
+    return { idle_seconds: null, command_running: false, current_command: null };
+  }
+  const since = Date.parse(task.last_event_at ?? task.started_at ?? "");
+  const idle = Number.isFinite(since) ? Math.max(0, Math.floor((Date.now() - since) / 1000)) : null;
+  const command = task.current_command ? clip(task.current_command, LIVE_COMMAND_PREVIEW_CHARS) : null;
+  return { idle_seconds: idle, command_running: Boolean(task.current_command), current_command: command };
+}
+
 function summarizeTask(task) {
   return {
     id: task.id,
@@ -185,6 +202,8 @@ function summarizeTask(task) {
     command_count: (task.commands ?? []).length,
     run_count: task.run_count ?? 0,
     current_action: clip(task.current_action, ACTION_PREVIEW_CHARS),
+    ...liveness(task),
+    last_event_at: task.last_event_at ?? null,
     last_event_type: task.last_event_type,
     last_message: clip(task.last_message, 400),
     notices: clip(task.notices, 400),
@@ -268,6 +287,8 @@ function overviewRow(task, caps) {
     goal: clip(task.goal_objective, caps.goal),
     goal_status: task.goal_status ?? null,
     last_action: clip(task.current_action, caps.action),
+    idle_seconds: liveness(task).idle_seconds,
+    command_running: Boolean(task.current_command) && ACTIVE_STATUSES.has(task.status),
     changed_files: (task.changed_files ?? []).length,
     depends_on: task.depends_on ?? [],
     owned_paths: (task.owned_paths ?? []).map((entry) => clip(entry, caps.path))
@@ -648,6 +669,7 @@ server.registerTool(
             phase: task.phase ?? null,
             exit_code: task.exit_code ?? null,
             changed_file_count: readTaskChanges(task).length,
+            ...liveness(task),
             updated_at: task.updated_at ?? null
           }))
         : summaries

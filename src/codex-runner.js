@@ -241,6 +241,10 @@ async function startTrackedRun({ record, args, prompt, logPath, spawnOptions = {
     error: null,
     current_action: null,
     current_command: null,
+    // A resumed row still carries the last event of the run that ended;
+    // idle time for this run counts from now.
+    last_event_at: now,
+    last_event_type: null,
     run_count: (record.run_count ?? 0) + 1,
     updated_at: now
   };
