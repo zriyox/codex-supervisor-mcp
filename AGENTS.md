@@ -8,9 +8,10 @@ For any agent working in this repository. CONTRIBUTING.md has the human version.
 src/mcp-server.js        the 19 MCP tools; everything else is called from here
 src/codex-runner.js      spawns codex exec, one worktree per worker, writes the task row
 src/task-store.js        sqlite: tasks, task_events, sessions, side_sessions / side_turns
-src/event-parser.js      codex --json events -> status / phase / error on the row
+src/event-parser.js      codex --json events -> status / phase / error on the row; summarizeVerification
+src/prompt.js            goal preamble in front of the task text, report format after it
 src/worktree.js          what a worker changed (readTaskChanges, readWorktreeDiff)
-src/landing.js           land_codex_worker
+src/landing.js           land_codex_worker, and rebaseWorktree for resume's rebaseOnto
 src/side-chat.js         ask_codex_worker and the board's side chat (codex exec fork)
 src/auto-update*.js      background npm i -g; skill-sync.js copies the bundled skill
 src/web-server.js        the board; UI source in web/, built to web/dist

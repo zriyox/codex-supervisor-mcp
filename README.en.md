@@ -62,7 +62,7 @@ What the main thread does underneath (you can call the tools yourself):
 ```
 create_codex_worker ×3   each with session_id, session_title, ownedPaths, goal
 wait_codex_workers       two minutes by default, then a snapshot, call again until done
-get_worker_result ×3     each worker's full report and changed files
+get_worker_result ×3     each worker's report, with the commands it really ran
 ```
 
 Each worker's changes sit on its own `codex/<taskId>` branch; whether and how to merge is the main thread's call.
@@ -114,10 +114,10 @@ What the main brain calls in one round:
 search_works            has this batch been dispatched before
 create_codex_worker     one worker per step, same session_id, ownedPaths disjoint
 wait_codex_workers      two minutes a round, compact: true, call again until done
-get_worker_result       what it says it did
+get_worker_result       what it says it did; verification is what it really ran
 get_worker_diff         what it actually did
 ask_codex_worker        when the two differ, ask why; read-only, its thread untouched
-resume_codex_worker     when it must change something, one follow-up, amended into the same commit
+resume_codex_worker     when it must change something, one follow-up, amended into the same commit; rebaseOnto when main has moved
 land_codex_worker       checked, then landed on the integration branch
 ```
 
@@ -145,10 +145,10 @@ Nineteen.
 |---|---|---|
 | `create_codex_worker` | `task`, `cwd`, **`ownedPaths`**, **`goal`**, `session_id`, `session_title`, `session_note`, `dependsOn`, `baseRef`, `sandbox`, `model`, `reasoningEffort`, `title`, `skipGitRepoCheck` | Start a worker. `baseRef` picks the commit the worktree is cut from (default `HEAD`); pass another worker's `codex/<id>` to build on it |
 | `create_codex_followup_worker` | `task_id`, `followup_prompt`, `session_id`, plus the above | A new session seeded with the old worker's prompt, status and recent events |
-| `resume_codex_worker` | `task_id`, `prompt` | Continue the same Codex conversation; `thread_id` stays |
-| `wait_codex_workers` | `task_ids`, `mode` (any/all), `timeoutMinutes`, `timeoutMs`, `compact`, `includeEvents`, `eventLimit`, `eventMaxChars`, `eventKinds` | Wait for terminal states. Two minutes by default, then a snapshot while the workers keep running; `compact` returns one line per worker |
+| `resume_codex_worker` | `task_id`, `prompt`, `rebaseOnto` | Continue the same Codex conversation; `thread_id` stays. `rebaseOnto` first moves the worktree onto the project's newer commit (stash, replay its own commits, unstash); a conflict puts it back and does not start the worker |
+| `wait_codex_workers` | `task_ids`, `mode` (any/all), `timeoutMinutes`, `timeoutMs`, `compact`, `includeEvents`, `eventLimit`, `eventMaxChars`, `eventKinds` | Wait for terminal states. Two minutes by default, then a snapshot while the workers keep running; `compact` returns one line per worker with `idle_seconds` / `command_running`, so a long command and a stuck worker look different |
 | `get_orchestration_overview` | `status`, `limit` | Every worker in one table, capped at 7000 bytes. Carries `version` and `update` |
-| `get_worker_result` | `task_id`, `limit`, `maxChars` | The worker's own full report plus `status` / `exit_code` / `changed_files` |
+| `get_worker_result` | `task_id`, `limit`, `maxChars`, `includeFiles` | The worker's own report, clipped past 6000 bytes with `truncated` and the size to ask for. `verification` is the commands it ran, exit codes and the tail of failing output; `base_behind` is how far main has moved. The file list needs `includeFiles` |
 | `get_worker_diff` | `task_id`, `maxChars`, `paths` | What the worker actually changed: patches from the worktree's start to its working tree, committed or not. `maxChars` bounds the answer; files past it are listed without a patch |
 | `ask_codex_worker` | `task_id`, `question`, `timeoutMs`, `maxChars`, `fresh`, `end` | Ask the worker on the side. Its thread is forked into a read-only session with no network and no MCP tools; the worker itself is untouched. A resumed worker gets a new fork by itself, `fresh` forces one, `end` deletes it |
 | `land_codex_worker` | `task_id`, `onto`, `commitMessage` | Cherry-pick the worker's `codex/<id>` commits onto the current branch of the directory it was dispatched from. Clean target only, a conflict rolls back. `commitMessage` first commits the worker's uncommitted edits as one commit |
@@ -277,7 +277,7 @@ rm -rf ~/.claude/skills/codex-supervisor ~/.agents/skills/codex-supervisor ~/.co
 - The worktree is cut from a commit; uncommitted work in your checkout is not in it.
 - Only the working directory is isolated. Temp directories, databases and ports are shared.
 - `ownedPaths` is checked at dispatch only; it does not stop a worker from creating files outside its list. Read the diff.
-- It knows "finished", not "correct". Acceptance is the main thread's job.
+- It knows "finished", not "correct". `verification` gives exit codes and failing output; what the worker never checked it cannot catch. Acceptance is the main thread's job.
 - One `wait_codex_workers` cannot wait to the end; the client's MCP tool timeout is a hard wall. Call it again.
 - `search_works` is substring matching, fine for hundreds of works.
 

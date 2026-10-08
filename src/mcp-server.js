@@ -574,7 +574,7 @@ server.registerTool(
   {
     title: "Wait for Codex workers",
     description:
-      "Block until selected Codex workers reach a terminal status, then return summaries. The wait budget bounds this call, not the workers: when it runs out you get a progress snapshot and the workers keep running, so call this again with the same task_ids to keep waiting. Keep the budget under your client's MCP tool timeout, or the client kills the call instead of the wait returning.",
+      "Block until selected Codex workers reach a terminal status, then return summaries. The wait budget bounds this call, not the workers: when it runs out you get a progress snapshot and the workers keep running, so call this again with the same task_ids to keep waiting. Keep the budget under your client's MCP tool timeout, or the client kills the call instead of the wait returning. compact: true returns one line per worker: status, phase, exit_code, changed_file_count, plus idle_seconds since the last Codex event of this run, command_running and current_command. Codex emits nothing while a command runs or while the model thinks, so a long idle with command_running: true is a long command and a long idle without it is thinking (or a process that reconcile will report as lost).",
     inputSchema: {
       task_ids: z.array(z.string().min(1)).min(1),
       mode: z.enum(["any", "all"]).default("all"),

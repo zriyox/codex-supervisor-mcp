@@ -62,7 +62,7 @@ codex mcp add codex-supervisor -- npx -y codex-supervisor-mcp
 ```
 create_codex_worker ×3   每路带 session_id、session_title、ownedPaths、goal
 wait_codex_workers       默认等 2 分钟，到点返回快照，没完就接着等
-get_worker_result ×3     收每路的完整汇报和改动清单
+get_worker_result ×3     收每路的汇报，带它真跑过的命令和退出码
 ```
 
 每路的改动在各自的 `codex/<taskId>` 分支上，合不合、怎么合由主线程定。
@@ -114,10 +114,10 @@ npx -p codex-supervisor-mcp codex-supervisor-web
 search_works            查这批活派过没有
 create_codex_worker     一步一个 worker，同一个 session_id，ownedPaths 不重叠
 wait_codex_workers      2 分钟一轮，compact: true，没完接着调
-get_worker_result       它说自己做了什么
+get_worker_result       它说自己做了什么，verification 里是它真跑过的命令
 get_worker_diff         它实际做了什么
 ask_codex_worker        对不上就问它为什么，只读，不动它的线程
-resume_codex_worker     要改就追一条，让它 amend 进原来那个提交
+resume_codex_worker     要改就追一条，让它 amend 进原来那个提交；主线走远了带 rebaseOnto
 land_codex_worker       核过了，落进集成分支
 ```
 
@@ -145,10 +145,10 @@ land_codex_worker       核过了，落进集成分支
 |---|---|---|
 | `create_codex_worker` | `task`, `cwd`, **`ownedPaths`**, **`goal`**, `session_id`, `session_title`, `session_note`, `dependsOn`, `baseRef`, `sandbox`, `model`, `reasoningEffort`, `title`, `skipGitRepoCheck` | 起一个 worker。`baseRef` 指定 worktree 从哪个提交切，默认 `HEAD`，接着另一路干就填它的 `codex/<id>` |
 | `create_codex_followup_worker` | `task_id`, `followup_prompt`, `session_id`, 其余同上 | 开一个新会话，把老 worker 的 prompt、状态、近期事件拼进去 |
-| `resume_codex_worker` | `task_id`, `prompt` | 接同一个 Codex 会话继续跑，`thread_id` 不变 |
-| `wait_codex_workers` | `task_ids`, `mode`(any/all), `timeoutMinutes`, `timeoutMs`, `compact`, `includeEvents`, `eventLimit`, `eventMaxChars`, `eventKinds` | 等终态。默认 2 分钟，到点带快照返回，worker 照跑；`compact` 每路只回一行 |
+| `resume_codex_worker` | `task_id`, `prompt`, `rebaseOnto` | 接同一个 Codex 会话继续跑，`thread_id` 不变。`rebaseOnto` 先把 worktree 挪到主线新头（stash、重放它自己的提交、放回），冲突原样退回不起 worker |
+| `wait_codex_workers` | `task_ids`, `mode`(any/all), `timeoutMinutes`, `timeoutMs`, `compact`, `includeEvents`, `eventLimit`, `eventMaxChars`, `eventKinds` | 等终态。默认 2 分钟，到点带快照返回，worker 照跑；`compact` 每路只回一行，带 `idle_seconds` / `command_running`，分得清长命令和卡住 |
 | `get_orchestration_overview` | `status`, `limit` | 全部 worker 的状态表，封顶 7000 字节。带 `version` 和 `update` |
-| `get_worker_result` | `task_id`, `limit`, `maxChars` | worker 自己的完整汇报，外加 `status` / `exit_code` / `changed_files` |
+| `get_worker_result` | `task_id`, `limit`, `maxChars`, `includeFiles` | worker 自己的汇报，默认截 6000 字节、`truncated` 提示读全。`verification` 是它跑过的命令、退出码、失败输出尾巴；`base_behind` 是主线走了多远。文件列表要 `includeFiles` |
 | `get_worker_diff` | `task_id`, `maxChars`, `paths` | worker 实际改了什么：从 worktree 起点到工作区的 patch，提交没提交都算。`maxChars` 管总量，超了的文件只列名 |
 | `ask_codex_worker` | `task_id`, `question`, `timeoutMs`, `maxChars`, `fresh`, `end` | 旁路问 worker 一句。线程 fork 成只读侧会话，没网络、没 MCP 工具，worker 本身不动。worker 被 resume 过会自动换新 fork，`fresh` 强制换，`end` 删 |
 | `land_codex_worker` | `task_id`, `onto`, `commitMessage` | 把 worker 在 `codex/<id>` 上的提交 cherry-pick 到派单目录的当前分支。目标必须干净，冲突就回滚。`commitMessage` 先替它把未提交的改动提交成一笔 |
@@ -277,7 +277,7 @@ rm -rf ~/.claude/skills/codex-supervisor ~/.agents/skills/codex-supervisor ~/.co
 - worktree 从一个提交切，你工作区里没 commit 的东西不在里面。
 - 只隔离工作目录。临时目录、数据库、端口是共用的。
 - `ownedPaths` 只在派单时查，拦不住 worker 新建清单外的文件。收活看 diff。
-- 只管「跑完了」不管「对不对」，验收得主线程自己做。
+- 只管「跑完了」不管「对不对」。`verification` 给退出码和失败输出，worker 没去查的事它也抓不到，验收得主线程自己做。
 - 一次 `wait_codex_workers` 等不到底，客户端的 MCP 工具超时是硬墙，靠反复调。
 - `search_works` 是子串匹配，几百条够用。
 
