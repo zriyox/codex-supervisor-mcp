@@ -21,6 +21,12 @@ function porcelain(cwd) {
   return execFileSync("git", ["-C", cwd, "status", "--porcelain"], { encoding: "utf8" }).replace(/\n$/, "");
 }
 
+// Windows runners have core.autocrlf on, so a file that went through the
+// stash comes back with CRLF; the content is what is being checked.
+async function text(path) {
+  return (await readFile(path, "utf8")).replace(/\r\n/g, "\n");
+}
+
 function settled(t) {
   return t.status === "completed" && t.exit_code !== null;
 }
@@ -80,7 +86,7 @@ test("a workspace-write worker's uncommitted edits and untracked files ride acro
     await waitFor(call, created.id, settled);
     assert.equal(git(created.worktree_path, ["rev-parse", "HEAD"]), mainHead, "no commits to replay: the branch now sits on main");
     assert.equal(porcelain(created.worktree_path), " M second.txt\n?? new.txt", "edits and untracked files are back");
-    assert.equal(await readFile(join(created.worktree_path, "second.txt"), "utf8"), "two, edited by the worker\n");
+    assert.equal(await text(join(created.worktree_path, "second.txt")), "two, edited by the worker\n");
     assert.equal(git(created.worktree_path, ["stash", "list"]), "", "nothing left on the stash");
   });
 });
@@ -143,8 +149,8 @@ test("uncommitted edits that conflict with the new base: the rebase is undone an
     assert.match(refused.message, /commitMessage/);
     assert.equal(git(created.worktree_path, ["rev-parse", "HEAD"]), head);
     assert.equal(porcelain(created.worktree_path), " M first.txt\n?? note.txt");
-    assert.equal(await readFile(join(created.worktree_path, "first.txt"), "utf8"), "worker's draft\n");
-    assert.equal(await readFile(join(created.worktree_path, "note.txt"), "utf8"), "untracked note\n");
+    assert.equal(await text(join(created.worktree_path, "first.txt")), "worker's draft\n");
+    assert.equal(await text(join(created.worktree_path, "note.txt")), "untracked note\n");
     assert.equal(git(created.worktree_path, ["stash", "list"]), "");
     assert.equal(baseCommitInDb(home, created.id), created.base_commit);
   });
@@ -164,7 +170,7 @@ test("an untracked file that the new base now tracks is handled the same way", a
     assert.equal(refused.error, "stash_conflict", JSON.stringify(refused).slice(0, 400));
     assert.equal(git(created.worktree_path, ["rev-parse", "HEAD"]), head);
     assert.equal(git(created.worktree_path, ["status", "--porcelain"]), "?? new.txt");
-    assert.equal(await readFile(join(created.worktree_path, "new.txt"), "utf8"), "worker's new file\n");
+    assert.equal(await text(join(created.worktree_path, "new.txt")), "worker's new file\n");
     assert.equal(git(created.worktree_path, ["stash", "list"]), "");
   });
 });
