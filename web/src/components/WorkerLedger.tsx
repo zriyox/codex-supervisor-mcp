@@ -22,6 +22,17 @@ const GRID = "grid-cols-[112px_minmax(0,1fr)_96px_64px_64px_112px]";
 function Row({ worker, active, onSelect, index }: { worker: WorkerRow; active: boolean; onSelect: () => void; index: number }) {
   const running = worker.status === "running";
   const secondary = running ? worker.current_action : (worker.error ?? (plain(worker.last_message, 160) || worker.goal));
+  // The dispatcher's own checks: one glyph, since this is the one place the
+  // user looks instead of reading logs.
+  const acceptance = worker.acceptance === "passed"
+    ? { glyph: "✓", cls: "text-green", title: "验收通过" }
+    : worker.acceptance === "failed"
+      ? { glyph: "✗", cls: "text-red", title: "验收失败" }
+      : worker.acceptance === "running"
+        ? { glyph: "…", cls: "text-orange", title: "验收中" }
+        : worker.acceptance
+          ? { glyph: "?", cls: "text-label-3", title: `验收${worker.acceptance === "interrupted" ? "中断" : "取消"}` }
+          : null;
   return (
     <motion.li initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.2, delay: Math.min(index, 10) * 0.025 }}>
       <button
@@ -49,6 +60,7 @@ function Row({ worker, active, onSelect, index }: { worker: WorkerRow; active: b
           </HoverCard>
 
           <span className={`t-footnote mt-0.5 block truncate ${running ? "mono text-orange" : worker.error ? "text-red" : "text-label-2"}`} title={secondary ?? undefined}>
+            {acceptance && <span className={`${acceptance.cls} mr-1`} title={acceptance.title}>{acceptance.glyph}</span>}
             {secondary || "—"}
           </span>
         </span>

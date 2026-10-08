@@ -61,6 +61,8 @@ export interface WorkerRow {
   current_action: string | null;
   last_message: string | null;
   changed_file_count: number;
+  // The supervisor's own run of the dispatch-time acceptance commands.
+  acceptance: "passed" | "failed" | "running" | "interrupted" | "cancelled" | null;
   command_count: number;
   error: string | null;
   exit_code: number | null;

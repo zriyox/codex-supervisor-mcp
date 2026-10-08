@@ -18,9 +18,13 @@ import { worktreesDir } from "./paths.js";
 import { frameWorkerPrompt } from "./prompt.js";
 import { readTaskChanges } from "./worktree.js";
 import { rebaseWorktree } from "./landing.js";
+import { DEFAULT_ACCEPTANCE_TIMEOUT_MS, normalizeAcceptance, runAcceptance } from "./acceptance.js";
+import { appendFile } from "node:fs/promises";
 import { defaultBinDirs, findBinaryPath, resolveCommand, shimMessage } from "./bin-resolver.js";
 
 const processes = new Map();
+// taskId -> control object of an acceptance run in progress ({ kill, cancelled }).
+const acceptanceRuns = new Map();
 const cancelledTasks = new Set();
 const CODEX_NPM_ENTRY = { pkg: "@openai/codex", bin: "bin/codex.js" };
 const defaultGitBin = process.env.GIT_BIN?.trim() || "git";
@@ -357,7 +361,49 @@ async function startTrackedRun({ record, args, prompt, logPath, spawnOptions = {
       next.error = `codex worker was killed by signal ${signal} before writing a terminal event`;
     }
     if (status === "cancelled") next.error = null;
-    await persist(next);
+
+    // Acceptance runs after the worker is gone, in two writes. The first
+    // records the terminal status with exit_code still null and the run
+    // marked as this process's, so a wait keeps waiting and reconcile
+    // (which sees a dead codex pid) leaves the row alone; the second
+    // records exit_code and the verdict. changed_files is read before the
+    // checks run so build output they leave behind is not counted as the
+    // worker's.
+    const acceptance = Array.isArray(live.acceptance) && live.acceptance.length > 0 ? live.acceptance : null;
+    if (acceptance && (status === "completed" || status === "failed")) {
+      const control = { kill: null, cancelled: false, isCancelled: () => control.cancelled };
+      acceptanceRuns.set(record.id, control);
+      await persist({
+        ...next,
+        exit_code: null,
+        signal: null,
+        current_action: "Running acceptance",
+        acceptance_results: { status: "running", passed: null, run: live.run_count, supervisor_pid: process.pid, started_at: finishedAt }
+      });
+      const results = await runAcceptance(acceptance, {
+        cwd: record.cwd,
+        timeoutMs: live.acceptance_timeout_ms ?? DEFAULT_ACCEPTANCE_TIMEOUT_MS,
+        run: live.run_count,
+        control
+      });
+      acceptanceRuns.delete(record.id);
+      const event = { type: "supervisor.acceptance", ...results };
+      await appendTaskEvent(record.id, event).catch(() => {});
+      await appendFile(logPath, `${JSON.stringify(event)}\n`).catch(() => {});
+      const failing = results.checks.find((check) => check.exit_code !== 0);
+      await persist({
+        ...next,
+        acceptance_results: results,
+        current_action: results.status === "passed"
+          ? "Completed, acceptance passed"
+          : results.status === "failed"
+            ? `Acceptance failed: ${failing ? `${failing.command.slice(0, 80)} exit ${failing.exit_code ?? (failing.timed_out ? "timeout" : "?")}` : results.error ?? "see acceptance_results"}`
+            : next.current_action,
+        updated_at: new Date().toISOString()
+      });
+    } else {
+      await persist(acceptance ? { ...next, acceptance_results: null } : next);
+    }
     cancelledTasks.delete(record.id);
   });
 
@@ -410,15 +456,18 @@ export async function createCodexWorker({
   dependsOn = [],
   followupOf = null,
   useWorktree = true,
-  baseRef = null
+  baseRef = null,
+  acceptance = null,
+  acceptanceTimeoutMs = null
 }) {
   if (!task || typeof task !== "string") throw new Error("task is required");
+  const acceptanceCommands = normalizeAcceptance(acceptance);
   if (!cwd || typeof cwd !== "string") throw new Error("cwd is required");
   if (!allowedReasoningEfforts.has(reasoningEffort)) {
     throw new Error(`unsupported reasoningEffort: ${reasoningEffort}`);
   }
-  if (!Array.isArray(ownedPaths) || ownedPaths.length === 0) {
-    throw new Error("ownedPaths is required and must list at least one path this worker is allowed to write");
+  if (!Array.isArray(ownedPaths) || (ownedPaths.length === 0 && sandbox !== "read-only")) {
+    throw new Error("ownedPaths is required and must list at least one path this worker is allowed to write (an empty list is allowed only for a read-only worker)");
   }
   const validatedGoal = validateGoal(goal);
 
@@ -465,6 +514,9 @@ export async function createCodexWorker({
     run_count: 0,
     worktree_path: worktreePath,
     base_commit: worktree.baseCommit,
+    acceptance: acceptanceCommands,
+    acceptance_timeout_ms: acceptanceCommands ? (acceptanceTimeoutMs ?? DEFAULT_ACCEPTANCE_TIMEOUT_MS) : null,
+    acceptance_results: null,
     prompt: task,
     changed_files: [],
     commands: [],
@@ -482,7 +534,7 @@ export async function createCodexWorker({
     prompt: frameWorkerPrompt(task, {
       objective: validatedGoal.objective,
       tokenBudget: validatedGoal.tokenBudget
-    }),
+    }, { acceptance: acceptanceCommands }),
     logPath: record.run_log
   });
   await upsertTask(started.record);
@@ -499,10 +551,22 @@ export async function createCodexWorker({
 // spawn failure cannot leave the row describing the old base. A rebase that
 // does not go through puts the worktree back and throws with the file list;
 // the worker is not started. Refused while the worker is still running.
-export async function resumeCodexWorker({ taskId, prompt, rebaseOnto = null }) {
+export async function resumeCodexWorker({ taskId, prompt, rebaseOnto = null, acceptance = undefined }) {
   if (!prompt || typeof prompt !== "string") throw new Error("prompt is required");
   let task = await getTask(taskId);
   if (!task) throw new Error(`task not found: ${taskId}`);
+  // `acceptance` replaces the stored commands when given; an empty list
+  // clears them. Left out, the stored commands stay.
+  if (acceptance !== undefined) {
+    const commands = normalizeAcceptance(acceptance);
+    task = {
+      ...task,
+      acceptance: commands,
+      acceptance_timeout_ms: commands ? (task.acceptance_timeout_ms ?? DEFAULT_ACCEPTANCE_TIMEOUT_MS) : null,
+      updated_at: new Date().toISOString()
+    };
+    await upsertTask(task);
+  }
   if (!task.thread_id) {
     throw new Error(
       `task ${taskId} has no Codex thread_id recorded. Only workers created by this version of codex-supervisor-mcp can be resumed; use create_codex_followup_worker otherwise.`
@@ -556,7 +620,7 @@ export async function resumeCodexWorker({ taskId, prompt, rebaseOnto = null }) {
     prompt: frameWorkerPrompt(prompt, {
       objective: task.goal_objective ?? task.title ?? task.id,
       resume: true
-    }),
+    }, { acceptance: task.acceptance }),
     logPath: task.run_log,
     spawnOptions: { cwd }
   });
@@ -651,6 +715,12 @@ function terminatePid(pid) {
 }
 
 export async function cancelCodexWorker(taskId) {
+  const acceptance = acceptanceRuns.get(taskId);
+  if (acceptance) {
+    acceptance.cancelled = true;
+    acceptance.kill?.();
+    return { cancelled: true, via: "acceptance", pid: null };
+  }
   const child = processes.get(taskId);
   if (child) {
     cancelledTasks.add(taskId);
@@ -693,7 +763,9 @@ export async function createFollowupWorker({
   reasoningEffort,
   ownedPaths,
   goal,
-  baseRef
+  baseRef,
+  acceptance,
+  acceptanceTimeoutMs
 }) {
   const parent = await getTask(taskId);
   if (!parent) throw new Error(`task not found: ${taskId}`);
@@ -737,6 +809,11 @@ export async function createFollowupWorker({
     dependsOn: [parent.id],
     followupOf: parent.id,
     useWorktree: true,
-    baseRef: baseRef ?? null
+    baseRef: baseRef ?? null,
+    // Inherited unless given; the follow-up runs in a fresh worktree cut
+    // from the project HEAD, so the parent's checks only pass there once
+    // the parent's work has landed.
+    acceptance: acceptance === undefined ? parent.acceptance : acceptance,
+    acceptanceTimeoutMs: acceptanceTimeoutMs ?? parent.acceptance_timeout_ms ?? null
   });
 }

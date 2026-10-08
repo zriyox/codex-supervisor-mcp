@@ -82,6 +82,7 @@ function workerRow(task) {
     current_action: clip(task.current_action, 300),
     last_message: clip(task.last_message, 400),
     changed_file_count: liveChangeCount(task),
+    acceptance: task.acceptance_results?.status ?? null,
     command_count: (task.commands ?? []).length,
     error: task.error ?? null,
     exit_code: task.exit_code ?? null,

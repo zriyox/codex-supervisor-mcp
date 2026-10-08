@@ -261,7 +261,10 @@ await test("R2-3 ownedPaths and goal are required", async () => {
       name: "create_codex_worker",
       arguments: { task: "x", cwd: workspace, ownedPaths: [], goal: { objective: "y" } }
     });
-    assert.equal(emptyPaths.isError, true, "empty ownedPaths must be rejected");
+    // Empty is allowed only for a read-only worker (a verifier); a writing
+    // worker is refused by the runner, not the schema.
+    const emptyText = JSON.parse(emptyPaths.content?.[0]?.text ?? "{}");
+    assert.match(emptyText.message ?? "", /ownedPaths/, "empty ownedPaths must be rejected for a writing worker");
   });
 });
 

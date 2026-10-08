@@ -28,6 +28,7 @@ import {
 import { readNativeGoal } from "./goal-store.js";
 import { baseBehind, readTaskChanges, readWorktreeDiff, worktreeRef } from "./worktree.js";
 import { summarizeVerification } from "./event-parser.js";
+import { acceptanceVerdict } from "./acceptance.js";
 import { ACTIVE_STATUSES, TERMINAL_STATUSES, TASK_STATUSES, isGoalNeedingAttention } from "./status.js";
 import { approxTokenCount, truncateEventStrings, truncateMiddleChars, truncateReport } from "./truncate.js";
 import { checkForUpdate, updateNotice } from "./update-check.js";
@@ -156,6 +157,9 @@ function sleep(ms) {
 function isSettled(task) {
   if (!TERMINAL_STATUSES.has(task.status)) return false;
   if (task.status !== "completed" && task.status !== "failed") return true;
+  // Acceptance is running in the supervisor process that owned the worker;
+  // the codex pid is already dead, so that process is what to wait on.
+  if (task.acceptance_results?.status === "running") return !isPidAlive(task.acceptance_results.supervisor_pid);
   if (task.exit_code !== null && task.exit_code !== undefined) return true;
   return !isPidAlive(task.pid);
 }
@@ -175,6 +179,46 @@ function liveness(task) {
   const idle = Number.isFinite(since) ? Math.max(0, Math.floor((Date.now() - since) / 1000)) : null;
   const command = task.current_command ? clip(task.current_command, LIVE_COMMAND_PREVIEW_CHARS) : null;
   return { idle_seconds: idle, command_running: Boolean(task.current_command), current_command: command };
+}
+
+// The acceptance verdict as get_worker_result reports it, with the one
+// contradiction a tool can see spelled out: checks passed, worker says
+// otherwise (the "it was never built" case, where it was).
+function acceptanceView(task, behind) {
+  const configured = Array.isArray(task.acceptance) && task.acceptance.length > 0;
+  const results = task.acceptance_results ?? null;
+  const view = {
+    configured,
+    commands: configured ? task.acceptance : [],
+    status: results?.status ?? null,
+    passed: results?.passed ?? null,
+    run: results?.run ?? null,
+    checks: results?.checks ?? [],
+    error: results?.error ?? null,
+    stale: Boolean(results && behind && behind.behind > 0),
+    next_step: null
+  };
+  if (!configured) return view;
+  if (view.status === "failed") {
+    const failing = view.checks.find((check) => check.exit_code !== 0) ?? null;
+    view.next_step = failing
+      ? `acceptance failed: ${clip(failing.command, 120)} exited ${failing.timed_out ? "by timeout" : failing.exit_code}; resume the worker with checks[].output_tail in the prompt, or fix it yourself. Do not land until it passes.`
+      : `acceptance could not run (${view.error ?? "unknown"}); fix that first`;
+  } else if (view.status === "passed") {
+    const verification = summarizeVerification(task);
+    const workerSaysNo = task.status === "failed" || isGoalNeedingAttention(task.goal_status) || verification.last_command_failed;
+    if (workerSaysNo) view.next_step = "the checks passed but the worker reports otherwise; trust the checks and read the diff";
+    else if (view.stale) view.next_step = "the checks passed on the old base and the project has moved since; resume with rebaseOnto to re-run them on current code before landing";
+  } else if (view.status === "running") {
+    view.next_step = "acceptance is still running in the supervisor; wait_codex_workers returns when it is done";
+  } else if (view.status === "interrupted") {
+    view.next_step = "the supervisor exited while running acceptance; resume the worker (or cancel and redispatch) to run it again";
+  } else if (view.status === "cancelled") {
+    view.next_step = "acceptance was cancelled; resume the worker to run it again";
+  } else if (view.status === null) {
+    view.next_step = "acceptance has not run yet for this worker";
+  }
+  return view;
 }
 
 function summarizeTask(task) {
@@ -201,6 +245,7 @@ function summarizeTask(task) {
     changed_file_count: (task.changed_files ?? []).length,
     command_count: (task.commands ?? []).length,
     run_count: task.run_count ?? 0,
+    acceptance: acceptanceVerdict(task),
     current_action: clip(task.current_action, ACTION_PREVIEW_CHARS),
     ...liveness(task),
     last_event_at: task.last_event_at ?? null,
@@ -289,6 +334,7 @@ function overviewRow(task, caps) {
     last_action: clip(task.current_action, caps.action),
     idle_seconds: liveness(task).idle_seconds,
     command_running: Boolean(task.current_command) && ACTIVE_STATUSES.has(task.status),
+    acceptance: acceptanceVerdict(task),
     changed_files: (task.changed_files ?? []).length,
     depends_on: task.depends_on ?? [],
     owned_paths: (task.owned_paths ?? []).map((entry) => clip(entry, caps.path))
@@ -339,6 +385,10 @@ function buildOverview(tasks, extras = {}) {
       needs_attention: tasks
         .filter((task) => task.status === "running" && isGoalNeedingAttention(task.goal_status))
         .map((task) => task.id),
+      // Terminal rows whose acceptance run failed. Kept apart from
+      // needs_attention, which means "running and stuck"; this means
+      // "finished and wrong", and the next step is a resume with the output.
+      acceptance_failed: tasks.filter((task) => task.acceptance_results?.passed === false).map((task) => task.id),
       workers: tasks.map((task) => overviewRow(task, caps))
     };
     const bytes = settleTokenCount(payload);
@@ -354,6 +404,16 @@ function buildOverview(tasks, extras = {}) {
   return payload;
 }
 
+function acceptanceLine(task) {
+  if (!Array.isArray(task.acceptance) || task.acceptance.length === 0) return "acceptance: none configured";
+  const results = task.acceptance_results;
+  if (!results) return `acceptance: ${task.acceptance.length} configured, not run yet`;
+  const ran = results.checks?.length ?? 0;
+  const ok = (results.checks ?? []).filter((check) => check.exit_code === 0).length;
+  const failing = (results.checks ?? []).find((check) => check.exit_code !== 0);
+  return `acceptance: ${results.status}, ${ok}/${task.acceptance.length} passed (${ran} ran)${failing ? `, first failure: ${clip(failing.command, 80)} exit ${failing.timed_out ? "timeout" : failing.exit_code}` : ""}`;
+}
+
 function buildWorkerSummary(task, nativeGoal) {
   // Read the worktree too: a worker that edits via shell commands emits no
   // file_change events, so the checkout is the authoritative diff.
@@ -367,6 +427,7 @@ function buildWorkerSummary(task, nativeGoal) {
       : "codex goal: none recorded for this thread",
     `changed files (${changed.length}): ${changed.slice(0, 10).join(", ") || "-"}`,
     `last command: ${commands.at(-1)?.command ?? "-"}`,
+    acceptanceLine(task),
     `last action: ${clip(task.current_action, ACTION_PREVIEW_CHARS) ?? "-"}`,
     `runs: ${task.run_count ?? 0}${task.resumed_from ? `, resumed from ${task.resumed_from}` : ""}`,
     task.error ? `error: ${task.error}` : null
@@ -412,7 +473,7 @@ server.registerTool(
   {
     title: "Create Codex worker",
     description:
-      "Launch a Codex CLI worker with codex exec --json and track its events. ownedPaths and goal are required: ownedPaths reserves the files this worker may write, goal records what the worker is for.",
+      "Launch a Codex CLI worker with codex exec --json and track its events. ownedPaths and goal are required: ownedPaths reserves the files this worker may write (empty only for a read-only verifier), goal records what the worker is for. acceptance is the list of shell commands that decide whether the work is done: the supervisor runs them in the worker's worktree after codex exits, each must exit 0, and the worker sees them in its prompt so it can run them first. Write the check for this step (a test file, a file that must exist, an endpoint that must answer), not the whole suite; a check on another machine goes through ssh. They run with the supervisor's own privileges, as if you ran them yourself. The verdict shows as acceptance on wait, the overview and get_worker_result, and land_codex_worker refuses while it is failed.",
     inputSchema: {
       title: z.string().optional(),
       task: z.string().min(1),
@@ -427,7 +488,9 @@ server.registerTool(
       model: z.string().optional(),
       reasoningEffort: z.enum(["minimal", "low", "medium", "high"]).default("high"),
       skipGitRepoCheck: z.boolean().default(true),
-      ownedPaths: z.array(z.string().min(1)).min(1),
+      // Empty only for a read-only worker (a verifier): it writes nothing,
+      // so it owns nothing.
+      ownedPaths: z.array(z.string().min(1)),
       goal: z.object({
         objective: z.string().min(1),
         tokenBudget: z.number().int().positive().optional()
@@ -436,7 +499,11 @@ server.registerTool(
       // Which commit the worktree is cut from. Defaults to the repository's
       // HEAD; pass a branch, tag or sha to build on work that is not on the
       // main line yet (for example another worker's codex/<id> branch).
-      baseRef: z.string().min(1).optional()
+      baseRef: z.string().min(1).optional(),
+      // Shell commands that decide whether the work is done. The supervisor
+      // runs them in the worktree after codex exits; each must exit 0.
+      acceptance: z.union([z.string().min(1), z.array(z.string().min(1)).max(10)]).optional(),
+      acceptanceTimeoutMs: z.number().int().min(1000).max(1800000).optional()
     }
   },
   async (input) => {
@@ -478,7 +545,11 @@ server.registerTool(
           tokenBudget: z.number().int().positive().optional()
         })
         .optional(),
-      baseRef: z.string().min(1).optional()
+      baseRef: z.string().min(1).optional(),
+      // Left out, the parent's acceptance commands are inherited; given, they
+      // replace them, and an empty list clears them.
+      acceptance: z.union([z.string().min(1), z.array(z.string().min(1)).max(10)]).optional(),
+      acceptanceTimeoutMs: z.number().int().min(1000).max(1800000).optional()
     }
   },
   async ({ task_id, followup_prompt, session_id, session_title, session_note, ...options }) => {
@@ -503,16 +574,19 @@ server.registerTool(
   {
     title: "Resume Codex worker",
     description:
-      "Continue the SAME Codex session for an existing worker via `codex exec resume <thread_id>`. Works from a different MCP process or a fresh client session as long as the task recorded a thread_id. The worktree stays on the commit it was cut from unless rebaseOnto names a ref (resolved in the project directory, e.g. HEAD or main): uncommitted edits are stashed, the worker's own commits are replayed onto it, the stash comes back and base_commit moves, so the worker continues on current code. A conflict in either step puts the worktree back as it was, lists the files and does not start the worker. The receipt carries base_behind: how many commits the project's HEAD is past the worktree's base.",
+      "Continue the SAME Codex session for an existing worker via `codex exec resume <thread_id>`. Works from a different MCP process or a fresh client session as long as the task recorded a thread_id. The worktree stays on the commit it was cut from unless rebaseOnto names a ref (resolved in the project directory, e.g. HEAD or main): uncommitted edits are stashed, the worker's own commits are replayed onto it, the stash comes back and base_commit moves, so the worker continues on current code. A conflict in either step puts the worktree back as it was, lists the files and does not start the worker. The receipt carries base_behind: how many commits the project's HEAD is past the worktree's base. acceptance replaces the worker's acceptance commands when the ones given at dispatch were wrong; the supervisor runs them again after this run.",
     inputSchema: {
       task_id: z.string().min(1),
       prompt: z.string().min(1),
-      rebaseOnto: z.string().min(1).optional()
+      rebaseOnto: z.string().min(1).optional(),
+      // Replaces the stored acceptance commands for this and later runs; an
+      // empty list clears them. Left out, the stored commands stay.
+      acceptance: z.union([z.string().min(1), z.array(z.string().min(1)).max(10)]).optional()
     }
   },
-  async ({ task_id, prompt, rebaseOnto }) => {
+  async ({ task_id, prompt, rebaseOnto, acceptance }) => {
     try {
-      const record = await resumeCodexWorker({ taskId: task_id, prompt, rebaseOnto: rebaseOnto ?? null });
+      const record = await resumeCodexWorker({ taskId: task_id, prompt, rebaseOnto: rebaseOnto ?? null, acceptance });
       return textResult({ ...receipt(record), rebase: record.rebase ?? null, base_behind: baseBehind(record.project_root, record.base_commit) });
     } catch (error) {
       return errorResult(error);
@@ -574,7 +648,7 @@ server.registerTool(
   {
     title: "Wait for Codex workers",
     description:
-      "Block until selected Codex workers reach a terminal status, then return summaries. The wait budget bounds this call, not the workers: when it runs out you get a progress snapshot and the workers keep running, so call this again with the same task_ids to keep waiting. Keep the budget under your client's MCP tool timeout, or the client kills the call instead of the wait returning. compact: true returns one line per worker: status, phase, exit_code, changed_file_count, plus idle_seconds since the last Codex event of this run, command_running and current_command. Codex emits nothing while a command runs or while the model thinks, so a long idle with command_running: true is a long command and a long idle without it is thinking (or a process that reconcile will report as lost).",
+      "Block until selected Codex workers reach a terminal status, then return summaries. The wait budget bounds this call, not the workers: when it runs out you get a progress snapshot and the workers keep running, so call this again with the same task_ids to keep waiting. Keep the budget under your client's MCP tool timeout, or the client kills the call instead of the wait returning. compact: true returns one line per worker: status, phase, exit_code, changed_file_count, acceptance (passed / failed / null when none was configured or it did not run), plus idle_seconds since the last Codex event of this run, command_running and current_command. Codex emits nothing while a command runs or while the model thinks, so a long idle with command_running: true is a long command and a long idle without it is thinking (or a process that reconcile will report as lost).",
     inputSchema: {
       task_ids: z.array(z.string().min(1)).min(1),
       mode: z.enum(["any", "all"]).default("all"),
@@ -663,6 +737,7 @@ server.registerTool(
       cancelled_count: tasks.filter((task) => task.status === "cancelled").length,
       lost_count: tasks.filter((task) => task.status === "lost").length,
       active_count: tasks.filter((task) => ACTIVE_STATUSES.has(task.status)).length,
+      acceptance_failed_count: tasks.filter((task) => task.acceptance_results?.passed === false).length,
       workers: compact
         ? tasks.map((task) => ({
             id: task.id,
@@ -671,6 +746,7 @@ server.registerTool(
             phase: task.phase ?? null,
             exit_code: task.exit_code ?? null,
             changed_file_count: readTaskChanges(task).length,
+            acceptance: acceptanceVerdict(task),
             ...liveness(task),
             updated_at: task.updated_at ?? null
           }))
@@ -859,7 +935,7 @@ server.registerTool(
   {
     title: "Get worker result",
     description:
-      "Read a worker's own final report. The overview and the wait response clip the last message; this is the door for the actual conclusion. Returns the last N agent messages (each clipped past maxChars, default 6000 bytes, with truncated: true and the full size so you can re-read it whole), the status fields that tell a real finish from a crash, verification (the commands the worker ran, their exit codes and the tail of any failing output, to hold its report against), changed_file_count, and base_behind (how many commits the project's HEAD is past the worktree's base; resume with rebaseOnto when it is not 0). includeFiles: true adds the changed_files list; get_worker_diff is the ground truth for what changed.",
+      "Read a worker's own final report. The overview and the wait response clip the last message; this is the door for the actual conclusion. Returns the last N agent messages (each clipped past maxChars, default 6000 bytes, with truncated: true and the full size so you can re-read it whole), the status fields that tell a real finish from a crash, verification (the commands the worker ran, their exit codes and the tail of any failing output, to hold its report against), acceptance (the supervisor's own run of the dispatch-time acceptance commands, independent of the report: configured, passed, and each check's exit code and output tail; passed: false means resume the worker with that output instead of reading its report, passed: true against a report that says blocked or not done means trust the checks and read the diff), changed_file_count, and base_behind (how many commits the project's HEAD is past the worktree's base; resume with rebaseOnto when it is not 0). includeFiles: true adds the changed_files list; get_worker_diff is the ground truth for what changed.",
     inputSchema: {
       task_id: z.string().min(1),
       limit: z.number().int().min(1).max(20).default(1),
@@ -883,6 +959,7 @@ server.registerTool(
     const clipped = maxChars === 0 ? reports : reports.map((text) => truncateReport(text, maxChars));
     const truncated = clipped.some((text, index) => text !== reports[index]);
     const changed = readTaskChanges(task);
+    const behind = task.worktree_path ? baseBehind(task.project_root, task.base_commit) : null;
     // A worker that ran in place has no worktree to diff, so this list is
     // the only record of what it touched; it is never hidden for those.
     const listFiles = includeFiles || !task.worktree_path;
@@ -899,7 +976,8 @@ server.registerTool(
       changed_file_count: changed.length,
       changed_files: listFiles ? changed : undefined,
       base_commit: task.base_commit ?? null,
-      base_behind: task.worktree_path ? baseBehind(task.project_root, task.base_commit) : null,
+      base_behind: behind,
+      acceptance: acceptanceView(task, behind),
       verification: summarizeVerification(task),
       report_count: clipped.length,
       report_bytes: reportBytes,
@@ -994,17 +1072,18 @@ server.registerTool(
   {
     title: "Land a worker's commits",
     description:
-      "Cherry-pick the commits a worker made on its codex/<taskId> branch onto the current branch of the directory it was dispatched from. The target must be clean and is never switched to another branch; `onto` is a guard that names the branch you expect to be on. A conflict aborts the cherry-pick, lists the files, and leaves the target as it was. A worker in the workspace-write sandbox cannot commit (Codex keeps .git read-only there): pass commitMessage and its uncommitted edits are committed as one commit on its branch first, then landed. Without commitMessage uncommitted edits are reported, not landed. Check the work first with get_worker_result and get_worker_diff; land once it passes.",
+      "Cherry-pick the commits a worker made on its codex/<taskId> branch onto the current branch of the directory it was dispatched from. The target must be clean and is never switched to another branch; `onto` is a guard that names the branch you expect to be on. A conflict aborts the cherry-pick, lists the files, and leaves the target as it was. A worker in the workspace-write sandbox cannot commit (Codex keeps .git read-only there): pass commitMessage and its uncommitted edits are committed as one commit on its branch first, then landed. Without commitMessage uncommitted edits are reported, not landed. Check the work first with get_worker_result and get_worker_diff; land once it passes. Refuses with acceptance_failed while the worker's last acceptance run failed (and acceptance_not_run while one is running or was interrupted): resume it with the failing output, land once it passes. ignoreAcceptance: true lands anyway; use it only when the user said to land regardless.",
     inputSchema: {
       task_id: z.string().min(1),
       onto: z.string().min(1).optional(),
-      commitMessage: z.string().min(1).optional()
+      commitMessage: z.string().min(1).optional(),
+      ignoreAcceptance: z.boolean().default(false)
     }
   },
-  async ({ task_id, onto, commitMessage }) => {
+  async ({ task_id, onto, commitMessage, ignoreAcceptance }) => {
     const task = await getTask(task_id);
     if (!task) return textResult({ error: "task_not_found", task_id });
-    return textResult({ task_id, title: task.title, status: task.status, branch: `codex/${task.id}`, ...landWorker(task, { onto, commitMessage: commitMessage ?? null }) });
+    return textResult({ task_id, title: task.title, status: task.status, branch: `codex/${task.id}`, ...landWorker(task, { onto, commitMessage: commitMessage ?? null, ignoreAcceptance }) });
   }
 );
 
@@ -1027,7 +1106,9 @@ server.registerTool(
       await upsertTask({ ...task, cancel_requested_at: now, updated_at: now });
     }
     const result = await cancelCodexWorker(task_id);
-    if (result.cancelled && task) {
+    // A cancel that stopped an acceptance run leaves the worker's own
+    // terminal status in place; the exit handler records the verdict.
+    if (result.cancelled && task && result.via !== "acceptance") {
       await upsertTask({
         ...task,
         status: "cancelled",

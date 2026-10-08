@@ -101,7 +101,7 @@ test("wait_codex_workers compact: one short row per worker", async () => {
   await withMcp({ SUPERVISOR_HOME: home }, async ({ call }) => {
     const waited = await call("wait_codex_workers", { task_ids: [worker.id, legacy.id], compact: true, timeoutMs: 2000 });
     assert.equal(waited.workers.length, 2);
-    assert.deepEqual(Object.keys(waited.workers[0]).sort(), ["changed_file_count", "command_running", "current_command", "exit_code", "id", "idle_seconds", "phase", "status", "title", "updated_at"]);
+    assert.deepEqual(Object.keys(waited.workers[0]).sort(), ["acceptance", "changed_file_count", "command_running", "current_command", "exit_code", "id", "idle_seconds", "phase", "status", "title", "updated_at"]);
     assert.ok(JSON.stringify(waited).length < 1500, `compact wait is ${JSON.stringify(waited).length} chars`);
   });
 });

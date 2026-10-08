@@ -46,11 +46,31 @@ export function buildGoalPreamble({ objective, tokenBudget = null, resume = fals
 
 export const REPORT_SECTIONS = ["Result", "Verification", "Not done / risks"];
 
-export function buildReportPreamble({ resume = false } = {}) {
+// The acceptance commands are shown to the worker. Hiding them would not
+// stop a worker from gaming a check (it can see the tests in the tree
+// anyway) and would stop it from running them before it reports, which is
+// the cheapest fix loop there is. The supervisor runs them again after the
+// worker exits regardless of what the worker says.
+export function buildAcceptanceBlock(acceptance, { resume = false } = {}) {
+  const commands = Array.isArray(acceptance) ? acceptance.filter(Boolean) : [];
+  if (commands.length === 0) return "";
   if (resume) {
-    return "Report as before: Result / Verification (every command you ran to check, with exit codes) / Not done and risks. Under 2000 characters, no list of changed files, quote raw errors verbatim.";
+    return `Acceptance is unchanged; run it before you report: ${commands.join(" ; ")}`;
   }
   return [
+    "Acceptance: when you exit, the supervisor runs these commands in this directory and each must exit 0:",
+    ...commands.map((command) => `- ${command}`),
+    "Run them yourself before you report and put their exit codes under Verification. Do not edit what they test to make them pass; if a check is wrong, say why under Not done / risks."
+  ].join("\n");
+}
+
+export function buildReportPreamble({ resume = false, acceptance = null } = {}) {
+  const acceptanceBlock = buildAcceptanceBlock(acceptance, { resume });
+  const withAcceptance = (text) => (acceptanceBlock ? `${text}\n\n${acceptanceBlock}` : text);
+  if (resume) {
+    return withAcceptance("Report as before: Result / Verification (every command you ran to check, with exit codes) / Not done and risks. Under 2000 characters, no list of changed files, quote raw errors verbatim.");
+  }
+  return withAcceptance([
     "Final report (your last message), under 2000 characters, in the language of the task. Quoted command output does not count toward the limit.",
     "1. Result: what is done, in two or three sentences. Say plainly what is not done.",
     "2. Verification: every command you ran to check the work, its exit code, and the output lines that prove the result. Write \"not verified\" if you ran none.",
@@ -58,7 +78,7 @@ export function buildReportPreamble({ resume = false } = {}) {
     "Do not list the files you changed; the supervisor reads the diff.",
     "Never call a failure an environment problem without quoting the raw error verbatim.",
     "If the task above specifies its own report format, use that format and still cover the three points."
-  ].join("\n");
+  ].join("\n"));
 }
 
 export function withGoalPreamble(prompt, goalOptions) {
@@ -67,6 +87,6 @@ export function withGoalPreamble(prompt, goalOptions) {
 }
 
 // The whole frame: goal in front, task text, report format at the end.
-export function frameWorkerPrompt(prompt, goalOptions) {
-  return `${withGoalPreamble(prompt, goalOptions)}\n\n${buildReportPreamble({ resume: Boolean(goalOptions?.resume) })}`;
+export function frameWorkerPrompt(prompt, goalOptions, { acceptance = null } = {}) {
+  return `${withGoalPreamble(prompt, goalOptions)}\n\n${buildReportPreamble({ resume: Boolean(goalOptions?.resume), acceptance })}`;
 }

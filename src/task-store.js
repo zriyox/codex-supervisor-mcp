@@ -24,7 +24,10 @@ const POST_V1_COLUMNS = [
   ["cancel_requested_at", "TEXT"],
   ["notices", "TEXT"],
   ["session_id", "TEXT"],
-  ["base_commit", "TEXT"]
+  ["base_commit", "TEXT"],
+  ["acceptance", "TEXT"],
+  ["acceptance_timeout_ms", "INTEGER"],
+  ["acceptance_results", "TEXT"]
 ];
 
 const TASKS_DDL = `
@@ -74,6 +77,9 @@ const TASKS_DDL = `
       notices TEXT,
       worktree_path TEXT,
       base_commit TEXT,
+      acceptance TEXT,
+      acceptance_timeout_ms INTEGER,
+      acceptance_results TEXT,
       run_log TEXT NOT NULL
     );
 `;
@@ -86,7 +92,7 @@ const TASK_COLUMNS = [
   "current_command", "error", "followup_of", "resumed_from", "session_id", "thread_id", "owned_paths",
   "depends_on", "goal_objective", "goal_token_budget", "goal_status", "goal_tokens_used",
   "goal_time_used_seconds", "goal_updated_at", "run_count", "cancel_requested_at",
-  "notices", "worktree_path", "base_commit", "run_log"
+  "notices", "worktree_path", "base_commit", "acceptance", "acceptance_timeout_ms", "acceptance_results", "run_log"
 ];
 
 function tableColumns(dbInstance, tableName) {
@@ -293,6 +299,8 @@ function rowToTask(row) {
     commands: decodeJson(row.commands, []),
     owned_paths: decodeJson(row.owned_paths, []),
     depends_on: decodeJson(row.depends_on, []),
+    acceptance: decodeJson(row.acceptance, null),
+    acceptance_results: decodeJson(row.acceptance_results, null),
     pid: row.pid ?? null,
     exit_code: row.exit_code ?? null,
     phase: row.phase ?? null,
@@ -341,7 +349,29 @@ function neverStarted(task, now = Date.now()) {
   return now - created > NEVER_STARTED_GRACE_MS;
 }
 
+// A terminal row whose acceptance run was cut short: the MCP process that
+// was running the checks is gone. Left alone it would read as "running"
+// forever and land would treat it as never run.
+async function reconcileInterruptedAcceptance() {
+  const tasks = await readTasks();
+  const interrupted = tasks.filter((task) =>
+    TERMINAL_STATUSES.has(task.status)
+    && task.acceptance_results?.status === "running"
+    && !isPidAlive(task.acceptance_results.supervisor_pid));
+  for (const task of interrupted) {
+    const now = new Date().toISOString();
+    await writeTask({
+      ...task,
+      acceptance_results: { ...task.acceptance_results, status: "interrupted", passed: null, finished_at: now },
+      current_action: "Acceptance interrupted: the supervisor process exited while running the checks",
+      updated_at: now
+    });
+  }
+  return interrupted;
+}
+
 export async function reconcileDetachedActiveTasks() {
+  await reconcileInterruptedAcceptance();
   const tasks = await readActiveTasks();
   const staleTasks = tasks.filter((task) => (task.pid && !isPidAlive(task.pid)) || neverStarted(task));
   for (const task of staleTasks) {
@@ -386,6 +416,10 @@ export async function writeTask(task) {
   params.commands = encodeJson(task.commands);
   params.owned_paths = encodeJson(task.owned_paths);
   params.depends_on = encodeJson(task.depends_on);
+  // JSON columns: node:sqlite refuses to bind an array or object, and a
+  // refused bind drops the whole row update.
+  params.acceptance = task.acceptance ? JSON.stringify(task.acceptance) : null;
+  params.acceptance_results = task.acceptance_results ? JSON.stringify(task.acceptance_results) : null;
   params.run_count = task.run_count ?? 0;
   params.phase = task.phase ?? null;
 

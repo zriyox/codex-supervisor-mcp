@@ -80,8 +80,28 @@ function currentBranch(cwd) {
 //
 // Returns { landed: [{ sha, original, subject }], onto, head } on success;
 // otherwise { error, reason, ... } with nothing changed in the target.
-export function landWorker(task, { onto = null, commitMessage = null } = {}) {
+export function landWorker(task, { onto = null, commitMessage = null, ignoreAcceptance = false } = {}) {
   const target = task.project_root;
+  // The dispatcher's own checks are the gate. A failed run is refused until
+  // it passes; a run that was cut short is refused until it has run.
+  const acceptance = task.acceptance_results ?? null;
+  if (!ignoreAcceptance && acceptance) {
+    const failing = (acceptance.checks ?? []).find((check) => check.exit_code !== 0) ?? null;
+    if (acceptance.passed === false) {
+      return {
+        error: "acceptance_failed",
+        reason: `the worker's acceptance run failed${failing ? ` on "${failing.command.slice(0, 120)}" (exit ${failing.timed_out ? "timeout" : failing.exit_code})` : acceptance.error ? ` (${acceptance.error})` : ""}; resume the worker with the failing output and land once it passes. ignoreAcceptance: true lands anyway, only when the user said to.`,
+        acceptance: { status: acceptance.status, passed: false, checks: acceptance.checks ?? [], error: acceptance.error ?? null }
+      };
+    }
+    if (acceptance.status === "running" || acceptance.status === "interrupted" || acceptance.status === "cancelled") {
+      return {
+        error: "acceptance_not_run",
+        reason: `the worker's acceptance is ${acceptance.status}; wait for it (or resume the worker to run it again) before landing. ignoreAcceptance: true lands anyway, only when the user said to.`,
+        acceptance: { status: acceptance.status, passed: null }
+      };
+    }
+  }
   if (!task.worktree_path || !existsSync(task.worktree_path)) {
     return { error: "no_worktree", reason: "this worker has no worktree (it ran in place), so there is nothing on a codex/ branch to land" };
   }
