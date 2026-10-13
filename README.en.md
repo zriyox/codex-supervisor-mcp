@@ -141,10 +141,11 @@ Light and dark follow the system. No external resources.
 
 ## Tools
 
-Nineteen.
+Twenty.
 
 | Tool | Arguments | What it does |
 |---|---|---|
+| `check_acceptance` | `cwd`, `acceptance`, `baseRef`, `timeoutMs` | Execute supplied checks before dispatch, without creating a worker or proving completion; warns that failure-count greps do not establish an approved failure list or required execution |
 | `create_codex_worker` | `task`, `cwd`, **`ownedPaths`**, **`goal`**, `acceptance`, `session_id`, `session_title`, `session_note`, `dependsOn`, `baseRef`, `sandbox`, `model`, `reasoningEffort`, `title`, `skipGitRepoCheck` | Start a worker. `acceptance` lists the commands the supervisor runs in the worktree once the worker exits; exit 0 on every one passes. `baseRef` picks the commit the worktree is cut from (default `HEAD`); pass another worker's `codex/<id>` to build on it |
 | `create_codex_followup_worker` | `task_id`, `followup_prompt`, `session_id`, plus the above | A new session seeded with the old worker's prompt, status and recent events |
 | `resume_codex_worker` | `task_id`, `prompt`, `rebaseOnto`, `acceptance` | Continue the same Codex conversation; `thread_id` stays. `rebaseOnto` first moves the worktree onto the project's newer commit (stash, replay its own commits, unstash); a conflict puts it back and does not start the worker |
@@ -170,6 +171,8 @@ Two are required: `ownedPaths` (checked against every running worker before disp
 `acceptance` runs in Bash with `errexit` and `pipefail`: an unhandled failure stops the check, including a failing test in `npm test | tail`. Handle expected failures explicitly with `if` or `||`; a timeout always fails, even when the command exits 0 after termination. Windows requires Git for Windows Bash and reports an error when it is missing. Displayed output is clipped without changing the exit code.
 
 Acceptance commands receive `CODEX_SUPERVISOR_TASK_ID`, `CODEX_SUPERVISOR_BASE_COMMIT` and `CODEX_SUPERVISOR_RUN`: the current task, run base and run number, refreshed after rebase/resume.
+
+Structured acceptance entries use `{command, reportPath, baseline}`. The baseline contains `identity.base_commit`, `failures` (test_id/kind/signature), and `required`; the report contains complete, identity, failures, executed, skipped, and the current `CODEX_SUPERVISOR_CHECK_ID`. Missing/skipped required tests, reused evidence, and changed failures reject acceptance while preserving the shell exit code. reportPath must remain inside the working directory; write reports to an ignored temporary directory so they are not landed.
 
 ## How this differs from Claude Code subagents
 

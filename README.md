@@ -141,10 +141,11 @@ land_codex_worker       核过了，落进集成分支
 
 ## 工具
 
-19 个。
+20 个。
 
 | 工具 | 入参 | 作用 |
 |---|---|---|
+| `check_acceptance` | `cwd`, `acceptance`, `baseRef`, `timeoutMs` | 派单前实际运行给定验收命令，不建 worker，不证明 worker 完成；数量 grep 会提示不能证明失败名单和必跑执行 |
 | `create_codex_worker` | `task`, `cwd`, **`ownedPaths`**, **`goal`**, `acceptance`, `session_id`, `session_title`, `session_note`, `dependsOn`, `baseRef`, `sandbox`, `model`, `reasoningEffort`, `title`, `skipGitRepoCheck` | 起一个 worker。`acceptance` 是验收命令，worker 退出后 supervisor 在它的 worktree 里跑，退出码 0 算过。`baseRef` 指定 worktree 从哪个提交切，默认 `HEAD`，接另一路填它的 `codex/<id>` |
 | `create_codex_followup_worker` | `task_id`, `followup_prompt`, `session_id`, 其余同上 | 开一个新会话，把老 worker 的 prompt、状态、近期事件拼进去 |
 | `resume_codex_worker` | `task_id`, `prompt`, `rebaseOnto`, `acceptance` | 接同一个 Codex 会话继续跑，`thread_id` 不变。`rebaseOnto` 先把 worktree 挪到主线新头（stash、重放它自己的提交、放回），冲突原样退回不起 worker |
@@ -170,6 +171,8 @@ land_codex_worker       核过了，落进集成分支
 `acceptance` 在 Bash 中启用 `errexit` 和 `pipefail`：未处理的失败会停止检查，`npm test | tail` 中的测试失败也会保留。预期失败用 `if` 或 `||` 显式处理；超时始终判失败，即使命令收到终止信号后退出 0。Windows 需要 Git for Windows 的 Bash；找不到会报错。显示的输出会裁剪，退出码不会因此改变。
 
 验收命令的环境包含 `CODEX_SUPERVISOR_TASK_ID`、`CODEX_SUPERVISOR_BASE_COMMIT` 和 `CODEX_SUPERVISOR_RUN`；分别是当前任务、当前运行基线和运行次数，rebase/resume 后会更新。
+
+结构化验收项用 `{command, reportPath, baseline}`。baseline 包含 `identity.base_commit`、`failures`（test_id/kind/signature）和 `required`；报告包含 complete、identity、failures、executed、skipped，以及本次 `CODEX_SUPERVISOR_CHECK_ID`。必跑用例缺失/跳过、旧报告、失败名单变化都拒绝通过，原始退出码保留。reportPath 必须在工作目录内；测试报告可能写文件，要用忽略的临时目录，避免把报告合入。
 
 ## 和 Claude Code 的 subagent 有什么区别
 

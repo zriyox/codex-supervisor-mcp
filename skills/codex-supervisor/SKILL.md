@@ -34,6 +34,8 @@ description: 把 Codex CLI 当并行 worker 派活、盯进度、收结果。用
 
 验收取当前身份用 `CODEX_SUPERVISOR_TASK_ID` / `CODEX_SUPERVISOR_BASE_COMMIT` / `CODEX_SUPERVISOR_RUN`；不要在命令里写死旧 base，rebase/resume 后这些值会更新。
 
+派单前可用 `check_acceptance` 实跑验收命令；预检通过不代表 worker 已完成。已知失败必须按结构化 baseline 的用例名/类型/签名比，必跑项写 required；报告必须标本次 `CODEX_SUPERVISOR_CHECK_ID`，给 complete/identity/failures/executed/skipped，缺失、跳过和旧报告都不算过。reportPath 用工作区内忽略的临时目录，验收报告别混进业务提交。
+
 等待的几条规矩：
 
 - 等待预算管这次调用，不管 worker。`still_running: true` 是等满了不是挂了，按 `next_step` 再调。
