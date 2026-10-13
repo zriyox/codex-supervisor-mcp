@@ -6,12 +6,131 @@ import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { dispatchArgs, git, makeRepo, tempHome, waitFor, withMcp } from "./helpers.js";
+import { runAcceptance } from "../../src/acceptance.js";
 
-// Shell lines that behave the same under sh and cmd: double quotes only.
+// Bash shell lines also accepted by the original sh/cmd runner, so RED does
+// not depend on a syntax change in the reproducer.
 const PASS = 'node -e "process.exit(0)"';
 const FAIL = 'node -e "console.log(\'boom from the check\'); process.exit(3)"';
 const HANG = 'node -e "setInterval(function(){}, 1000)"';
 const WRITES_MARKER = 'node -e "require(\'fs\').writeFileSync(\'ran.txt\', \'yes\')"';
+const DRAIN = 'node -e "process.stdin.resume()"';
+
+test("a successful pipeline consumer cannot hide a failing producer, and later checks do not run", async () => {
+  const cwd = await tempHome("supervisor-pipeline-");
+  const result = await runAcceptance([`${FAIL} | ${DRAIN}`, PASS], { cwd, timeoutMs: 10000 });
+  assert.equal(result.status, "failed");
+  assert.equal(result.checks.length, 1);
+  assert.equal(result.checks[0].exit_code, 3);
+  assert.equal(result.checks[0].timed_out, false);
+});
+
+test("a failure followed by a successful statement is not reported as passing", async () => {
+  const cwd = await tempHome("supervisor-pipeline-");
+  const result = await runAcceptance([`${FAIL}; ${PASS}`], { cwd, timeoutMs: 10000 });
+  assert.equal(result.status, "failed");
+  assert.equal(result.checks[0].exit_code, 3);
+  assert.match(result.checks[0].output_tail, /boom from the check/);
+});
+
+test("a failed middle pipeline stage propagates its exit code", async () => {
+  const cwd = await tempHome("supervisor-pipeline-");
+  const result = await runAcceptance([`${PASS} | ${FAIL} | ${DRAIN}`], { cwd, timeoutMs: 10000 });
+  assert.equal(result.status, "failed");
+  assert.equal(result.checks[0].exit_code, 3);
+});
+
+test("successful pipelines and explicitly handled expected failures still pass", async () => {
+  const cwd = await tempHome("supervisor-pipeline-");
+  const result = await runAcceptance([
+    `${PASS} | ${DRAIN}`,
+    `${FAIL} || ${PASS}`,
+    `if ${FAIL}; then exit 9; else ${PASS}; fi`,
+    `! ${FAIL}`
+  ], { cwd, timeoutMs: 10000 });
+  assert.equal(result.status, "passed");
+  assert.equal(result.checks.length, 4);
+  assert.ok(result.checks.every((check) => check.exit_code === 0));
+});
+
+test("a quoted pipe is ordinary data, and grep -E can validate the output", async () => {
+  const cwd = await tempHome("supervisor-pipeline-");
+  const result = await runAcceptance([
+    'node -e "console.log(\'left|right\')"',
+    'printf "PASS\\n" | grep -E "^PASS$"'
+  ], { cwd, timeoutMs: 10000 });
+  assert.equal(result.status, "passed");
+  assert.equal(result.checks[0].output_tail, "left|right");
+});
+
+test("clipping UTF-8 error output preserves the failed pipeline's exit code", async () => {
+  const cwd = await tempHome("supervisor-pipeline-");
+  const command = `node -e "console.error('错'.repeat(4000));process.exit(7)" | ${DRAIN}`;
+  const result = await runAcceptance([command], { cwd, timeoutMs: 10000 });
+  assert.equal(result.status, "failed");
+  assert.equal(result.checks[0].exit_code, 7);
+  assert.ok(Buffer.byteLength(result.checks[0].output_tail, "utf8") <= 2010);
+  assert.match(result.checks[0].output_tail, /^…错/);
+  assert.ok(!result.checks[0].output_tail.includes("\uFFFD"));
+});
+
+test("shell startup files cannot silently disable pipeline failure propagation", async () => {
+  const cwd = await tempHome("supervisor-pipeline-");
+  const startup = join(cwd, "startup.sh");
+  await writeFile(startup, "set +e\nset +o pipefail\n");
+  const result = await runAcceptance([`${FAIL} | ${DRAIN}`], {
+    cwd, timeoutMs: 10000, env: { ...process.env, BASH_ENV: startup, ENV: startup }
+  });
+  assert.equal(result.status, "failed");
+  assert.equal(result.checks[0].exit_code, 3);
+});
+
+test("a pipeline timeout kills its children and cannot become a passing check", async () => {
+  const cwd = await tempHome("supervisor-pipeline-");
+  const result = await runAcceptance([`${HANG} | ${DRAIN}`, PASS], { cwd, timeoutMs: 1500 });
+  assert.equal(result.status, "failed");
+  assert.equal(result.checks.length, 1);
+  assert.equal(result.checks[0].timed_out, true);
+  assert.notEqual(result.checks[0].exit_code, 0);
+});
+
+test("a timed-out command that traps termination and exits zero still fails", { skip: process.platform === "win32" }, async () => {
+  const cwd = await tempHome("supervisor-pipeline-");
+  const result = await runAcceptance([`trap 'exit 0' TERM; ${HANG} & wait`, PASS], { cwd, timeoutMs: 1500 });
+  assert.equal(result.checks[0].timed_out, true);
+  assert.equal(result.checks[0].exit_code, 0, "preserve the actual exit code instead of inventing one");
+  assert.equal(result.status, "failed");
+  assert.equal(result.checks.length, 1);
+});
+
+test("cancelling a pipeline records cancellation and stops subsequent checks", async () => {
+  const cwd = await tempHome("supervisor-pipeline-");
+  const control = {};
+  const pending = runAcceptance([`${HANG} | ${DRAIN}`, PASS], { cwd, timeoutMs: 10000, control });
+  assert.equal(typeof control.kill, "function");
+  control.kill();
+  const result = await pending;
+  assert.equal(result.status, "cancelled");
+  assert.equal(result.passed, null);
+  assert.equal(result.checks.length, 1);
+  assert.equal(result.checks[0].cancelled, true);
+  assert.equal(control.kill, null);
+});
+
+test("a failed pipeline blocks land even when the worker reports success", async () => {
+  const home = await tempHome("supervisor-pipeline-");
+  const { dir } = await makeRepo(join(home, "repo"));
+  await withMcp({ SUPERVISOR_HOME: home, FAKE_CODEX_SCENARIO: "commit-in-worktree" }, async ({ call }) => {
+    const worker = await call("create_codex_worker", dispatchArgs("pipeline-gate", dir, { acceptance: `${FAIL} | ${DRAIN}` }));
+    await waitFor(call, worker.id, settled);
+    const result = await call("get_worker_result", { task_id: worker.id });
+    assert.equal(result.acceptance.passed, false);
+    assert.equal(result.acceptance.checks[0].exit_code, 3);
+    const land = await call("land_codex_worker", { task_id: worker.id });
+    assert.equal(land.error, "acceptance_failed");
+    assert.equal(git(dir, ["rev-list", "--count", "HEAD"]), "2");
+  });
+});
 
 function settled(t) {
   return t.status === "completed" && t.exit_code !== null;
