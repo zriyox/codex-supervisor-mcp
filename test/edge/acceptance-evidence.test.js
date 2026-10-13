@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { runAcceptance, normalizeAcceptance } from "../../src/acceptance.js";
-import { tempHome } from "./helpers.js";
+import { tempHome, makeRepo, withMcp, dispatchArgs, waitFor, git } from "./helpers.js";
 
 const baseline = { identity: { base_commit: "base" }, failures: [], required: ["must-run"] };
 function emit(overrides = {}) {
@@ -61,4 +61,27 @@ test("baseline failures preserve a real nonzero shell status and stop later chec
   assert.equal(result.status, "failed");
   assert.equal(result.checks.length, 1);
   assert.equal(result.checks[0].exit_code, 7);
+});
+
+test("MCP accepts structured evidence checks and refuses skipped required tests at land", async () => {
+  const home = await tempHome("supervisor-evidence-mcp-");
+  const { dir, second } = await makeRepo(join(home, "repo"));
+  await withMcp({ SUPERVISOR_HOME: home, FAKE_CODEX_SCENARIO: "commit-in-worktree" }, async ({ call }) => {
+    const evidence = check(emit({ identity: { base_commit: second }, executed: [], skipped: ["must-run"] }), {
+      baseline: { ...baseline, identity: { base_commit: second } }
+    });
+    const worker = await call("create_codex_worker", dispatchArgs("evidence-mcp", dir, { acceptance: [evidence] }));
+    assert.ok(worker.id, JSON.stringify(worker));
+    await waitFor(call, worker.id, (t) => t.status === "completed" && t.exit_code !== null);
+    const result = await call("get_worker_result", { task_id: worker.id });
+    assert.equal(result.acceptance.passed, false);
+    assert.equal(result.acceptance.checks[0].exit_code, 0);
+    assert.equal(result.acceptance.checks[0].passed, false);
+    assert.match(result.acceptance.next_step, /evidence|baseline/);
+    const summary = await call("get_worker_summary", { task_id: worker.id });
+    assert.match(summary.summary, /0\/1 passed/);
+    const land = await call("land_codex_worker", { task_id: worker.id });
+    assert.equal(land.error, "acceptance_failed");
+    assert.equal(git(dir, ["rev-list", "--count", "HEAD"]), "2");
+  });
 });

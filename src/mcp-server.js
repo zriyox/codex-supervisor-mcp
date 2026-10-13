@@ -204,9 +204,9 @@ function acceptanceView(task, behind) {
   };
   if (!configured) return view;
   if (view.status === "failed") {
-    const failing = view.checks.find((check) => check.exit_code !== 0) ?? null;
+    const failing = view.checks.find((check) => check.passed === false || check.exit_code !== 0 || check.timed_out) ?? null;
     view.next_step = failing
-      ? `acceptance failed: ${clip(failing.command, 120)} exited ${failing.timed_out ? "by timeout" : failing.exit_code}; resume the worker with checks[].output_tail in the prompt, or fix it yourself. Do not land until it passes.`
+      ? `acceptance failed: ${clip(failing.command, 120)} failed ${failing.error ?? (failing.baseline?.passed === false ? "baseline/evidence mismatch" : failing.timed_out ? "by timeout" : `exit ${failing.exit_code}`)}; resume the worker with checks[].output_tail in the prompt, or fix it yourself. Do not land until it passes.`
       : `acceptance could not run (${view.error ?? "unknown"}); fix that first`;
   } else if (view.status === "passed") {
     const verification = summarizeVerification(task);
@@ -414,8 +414,8 @@ function acceptanceLine(task) {
   const results = task.acceptance_results;
   if (!results) return `acceptance: ${task.acceptance.length} configured, not run yet`;
   const ran = results.checks?.length ?? 0;
-  const ok = (results.checks ?? []).filter((check) => check.exit_code === 0).length;
-  const failing = (results.checks ?? []).find((check) => check.exit_code !== 0);
+  const ok = (results.checks ?? []).filter((check) => check.passed !== false && check.exit_code === 0 && !check.timed_out).length;
+  const failing = (results.checks ?? []).find((check) => check.passed === false || check.exit_code !== 0 || check.timed_out);
   return `acceptance: ${results.status}, ${ok}/${task.acceptance.length} passed (${ran} ran)${failing ? `, first failure: ${clip(failing.command, 80)} exit ${failing.timed_out ? "timeout" : failing.exit_code}` : ""}`;
 }
 
@@ -473,6 +473,21 @@ function errorResult(error) {
   });
 }
 
+const acceptanceFailureRecord = z.object({
+  test_id: z.string().min(1), kind: z.enum(["failure", "error"]), signature: z.string().min(1)
+}).strict();
+const acceptanceCheck = z.union([
+  z.string().min(1),
+  z.object({
+    command: z.string().min(1), reportPath: z.string().min(1),
+    baseline: z.object({
+      identity: z.object({ base_commit: z.string().min(1) }).catchall(z.string().min(1)),
+      failures: z.array(acceptanceFailureRecord), required: z.array(z.string().min(1))
+    }).strict()
+  }).strict()
+]);
+const acceptanceInput = z.union([z.string().min(1), z.array(acceptanceCheck).max(10)]);
+
 server.registerTool(
   "create_codex_worker",
   {
@@ -507,7 +522,7 @@ server.registerTool(
       baseRef: z.string().min(1).optional(),
       // Shell commands that decide whether the work is done. The supervisor
       // runs them in the worktree after codex exits; each must exit 0.
-      acceptance: z.union([z.string().min(1), z.array(z.string().min(1)).max(10)]).optional(),
+      acceptance: acceptanceInput.optional(),
       acceptanceTimeoutMs: z.number().int().min(1000).max(1800000).optional()
     }
   },
@@ -553,7 +568,7 @@ server.registerTool(
       baseRef: z.string().min(1).optional(),
       // Left out, the parent's acceptance commands are inherited; given, they
       // replace them, and an empty list clears them.
-      acceptance: z.union([z.string().min(1), z.array(z.string().min(1)).max(10)]).optional(),
+      acceptance: acceptanceInput.optional(),
       acceptanceTimeoutMs: z.number().int().min(1000).max(1800000).optional()
     }
   },
@@ -586,7 +601,7 @@ server.registerTool(
       rebaseOnto: z.string().min(1).optional(),
       // Replaces the stored acceptance commands for this and later runs; an
       // empty list clears them. Left out, the stored commands stay.
-      acceptance: z.union([z.string().min(1), z.array(z.string().min(1)).max(10)]).optional()
+      acceptance: acceptanceInput.optional()
     }
   },
   async ({ task_id, prompt, rebaseOnto, acceptance }) => {
