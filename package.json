@@ -39,6 +39,7 @@
     "src/event-parser.js",
     "src/worktree.js",
     "src/landing.js",
+    "src/acceptance.js",
     "src/truncate.js",
     "src/status.js",
     "src/paths.js",
