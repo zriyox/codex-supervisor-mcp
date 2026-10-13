@@ -390,7 +390,7 @@ function buildOverview(tasks, extras = {}) {
       total: tasks.length,
       active: tasks.filter((task) => ACTIVE_STATUSES.has(task.status)).length,
       needs_attention: tasks
-        .filter((task) => task.status === "running" && isGoalNeedingAttention(task.goal_status))
+        .filter((task) => isGoalNeedingAttention(task.goal_status))
         .map((task) => task.id),
       // Terminal rows whose acceptance run failed. Kept apart from
       // needs_attention, which means "running and stuck"; this means

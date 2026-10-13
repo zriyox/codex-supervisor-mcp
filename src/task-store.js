@@ -4,6 +4,7 @@ import { DatabaseSync } from "node:sqlite";
 import { dataDir, dbPath, runsDir } from "./paths.js";
 import { extractAgentMessage } from "./event-parser.js";
 import { ACTIVE_STATUSES, PHASES, TERMINAL_STATUSES } from "./status.js";
+import { readNativeGoal } from "./goal-store.js";
 
 let db;
 
@@ -296,6 +297,7 @@ function decodeJson(value, fallback) {
 
 function rowToTask(row) {
   if (!row) return null;
+  const nativeGoal = readNativeGoal(row.thread_id);
   return {
     ...row,
     skip_git_repo_check: Boolean(row.skip_git_repo_check),
@@ -309,9 +311,10 @@ function rowToTask(row) {
     exit_code: row.exit_code ?? null,
     phase: row.phase ?? null,
     goal_token_budget: row.goal_token_budget ?? null,
-    goal_tokens_used: row.goal_tokens_used ?? null,
-    goal_time_used_seconds: row.goal_time_used_seconds ?? null,
-    goal_status: row.goal_status ?? null
+    goal_status: nativeGoal?.storage_status ?? row.goal_status ?? null,
+    goal_tokens_used: nativeGoal?.tokens_used ?? row.goal_tokens_used ?? null,
+    goal_time_used_seconds: nativeGoal?.time_used_seconds ?? row.goal_time_used_seconds ?? null,
+    goal_updated_at: nativeGoal?.updated_at ?? row.goal_updated_at ?? null
   };
 }
 
