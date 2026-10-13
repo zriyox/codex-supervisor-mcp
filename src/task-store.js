@@ -242,6 +242,7 @@ function initializeSchema(dbInstance) {
       dbInstance.exec(TASK_EVENTS_INDEX_DDL);
       dbInstance.exec(TASKS_SESSION_INDEX_DDL);
       dbInstance.exec(SESSIONS_DDL);
+      dbInstance.exec("CREATE TABLE IF NOT EXISTS observer_cursors (id TEXT PRIMARY KEY, cursor TEXT NOT NULL, updated_at TEXT NOT NULL)");
       dbInstance.exec(SIDE_DDL);
       // Rows written before 0.7.1 have no worker_run_count: the fork is then
 
@@ -443,6 +444,17 @@ export async function getTask(taskId) {
   await ensureFilesystem();
   const row = openDb().prepare("SELECT * FROM tasks WHERE id = ?").get(taskId);
   return rowToTask(row);
+}
+
+export async function readObserverCursor(observerId) {
+  await ensureFilesystem();
+  return decodeJson(openDb().prepare("SELECT cursor FROM observer_cursors WHERE id=?").get(observerId)?.cursor, {});
+}
+
+export async function writeObserverCursor(observerId, cursor) {
+  await ensureFilesystem();
+  runWithRetry(openDb(), () => openDb().prepare("INSERT INTO observer_cursors VALUES (?,?,?) ON CONFLICT(id) DO UPDATE SET cursor=excluded.cursor,updated_at=excluded.updated_at")
+    .run(observerId, JSON.stringify(cursor), new Date().toISOString()));
 }
 
 // Keyword search over the fields that describe what a work was for and how it
