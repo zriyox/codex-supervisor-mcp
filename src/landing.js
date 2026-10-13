@@ -86,11 +86,11 @@ export function landWorker(task, { onto = null, commitMessage = null, ignoreAcce
   // it passes; a run that was cut short is refused until it has run.
   const acceptance = task.acceptance_results ?? null;
   if (!ignoreAcceptance && acceptance) {
-    const failing = (acceptance.checks ?? []).find((check) => check.exit_code !== 0) ?? null;
+    const failing = (acceptance.checks ?? []).find((check) => check.passed === false || check.exit_code !== 0 || check.timed_out) ?? null;
     if (acceptance.passed === false) {
       return {
         error: "acceptance_failed",
-        reason: `the worker's acceptance run failed${failing ? ` on "${failing.command.slice(0, 120)}" (exit ${failing.timed_out ? "timeout" : failing.exit_code})` : acceptance.error ? ` (${acceptance.error})` : ""}; resume the worker with the failing output and land once it passes. ignoreAcceptance: true lands anyway, only when the user said to.`,
+        reason: `the worker's acceptance run failed${failing ? ` on "${failing.command.slice(0, 120)}" (exit ${failing.error ?? (failing.baseline?.passed === false ? "baseline/evidence mismatch" : failing.timed_out ? "timeout" : failing.exit_code)})` : acceptance.error ? ` (${acceptance.error})` : ""}; resume the worker with the failing output and land once it passes. ignoreAcceptance: true lands anyway, only when the user said to.`,
         acceptance: { status: acceptance.status, passed: false, checks: acceptance.checks ?? [], error: acceptance.error ?? null }
       };
     }

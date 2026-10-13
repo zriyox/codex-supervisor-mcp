@@ -392,14 +392,14 @@ async function startTrackedRun({ record, args, prompt, logPath, spawnOptions = {
       const event = { type: "supervisor.acceptance", ...results };
       await appendTaskEvent(record.id, event).catch(() => {});
       await appendFile(logPath, `${JSON.stringify(event)}\n`).catch(() => {});
-      const failing = results.checks.find((check) => check.exit_code !== 0);
+      const failing = results.checks.find((check) => check.passed === false || check.exit_code !== 0 || check.timed_out);
       await persist({
         ...next,
         acceptance_results: results,
         current_action: results.status === "passed"
           ? "Completed, acceptance passed"
           : results.status === "failed"
-            ? `Acceptance failed: ${failing ? `${failing.command.slice(0, 80)} exit ${failing.exit_code ?? (failing.timed_out ? "timeout" : "?")}` : results.error ?? "see acceptance_results"}`
+            ? `Acceptance failed: ${failing ? `${failing.command.slice(0, 80)} exit ${failing.error ?? (failing.baseline?.passed === false ? "baseline/evidence mismatch" : failing.timed_out ? "timeout" : failing.exit_code ?? "?")}` : results.error ?? "see acceptance_results"}`
             : next.current_action,
         updated_at: new Date().toISOString()
       });
