@@ -20,6 +20,8 @@ import {
   readAgentMessages,
   readTaskEvents,
   readTasks,
+  readObserverCursor,
+  writeObserverCursor,
   readTasksBySession,
   reconcileDetachedActiveTasks,
   recordTerminalChangedFiles,
@@ -28,6 +30,7 @@ import {
   upsertTask
 } from "./task-store.js";
 import { readNativeGoal } from "./goal-store.js";
+import { collectWorkerChanges } from "./worker-changes.js";
 import { baseBehind, readTaskChanges, readWorktreeDiff, worktreeRef } from "./worktree.js";
 import { summarizeVerification } from "./event-parser.js";
 import { acceptanceVerdict, runAcceptance } from "./acceptance.js";
@@ -489,6 +492,24 @@ const acceptanceCheck = z.union([
   }).strict()
 ]);
 const acceptanceInput = z.union([z.string().min(1), z.array(acceptanceCheck).max(10)]);
+
+const observerId = process.env.CODEX_SUPERVISOR_OBSERVER_ID?.trim() || `mcp-${randomUUID()}`;
+let observerRead = Promise.resolve();
+server.registerTool("check_workers", {
+  title: "Check changed workers",
+  description: "Check for newly settled runs or actionable goal/acceptance failures. Unchanged state returns quiet. Call from a host-scheduled loop; this query does not wake a closed host. Set CODEX_SUPERVISOR_OBSERVER_ID to retain this observer's cursor across restarts, with a different ID for each main thread.",
+  inputSchema: {}
+}, async () => {
+  const read = observerRead.then(async () => {
+    await reconcileDetachedActiveTasks();
+    const result = collectWorkerChanges(await readTasks(), await readObserverCursor(observerId));
+    await writeObserverCursor(observerId, result.cursor);
+    const { cursor, ...reply } = result;
+    return textResult(reply);
+  });
+  observerRead = read.catch(() => {});
+  return read;
+});
 
 server.registerTool(
   "check_acceptance",

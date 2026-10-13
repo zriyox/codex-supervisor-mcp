@@ -41,6 +41,7 @@
     "src/landing.js",
     "src/acceptance.js",
     "src/acceptance-baseline.js",
+    "src/worker-changes.js",
     "src/truncate.js",
     "src/status.js",
     "src/paths.js",
