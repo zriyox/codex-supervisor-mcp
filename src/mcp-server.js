@@ -1149,13 +1149,14 @@ server.registerTool(
       task_id: z.string().min(1),
       onto: z.string().min(1).optional(),
       commitMessage: z.string().min(1).optional(),
-      ignoreAcceptance: z.boolean().default(false)
+      ignoreAcceptance: z.boolean().default(false),
+      allowOutsideOwned: z.boolean().default(false)
     }
   },
-  async ({ task_id, onto, commitMessage, ignoreAcceptance }) => {
+  async ({ task_id, onto, commitMessage, ignoreAcceptance, allowOutsideOwned }) => {
     const task = await getTask(task_id);
     if (!task) return textResult({ error: "task_not_found", task_id });
-    const outcome = landWorker(task, { onto, commitMessage: commitMessage ?? null, ignoreAcceptance });
+    const outcome = landWorker(task, { onto, commitMessage: commitMessage ?? null, ignoreAcceptance, allowOutsideOwned });
     if (!outcome.error) {
       // Recorded so a later read knows the work is on the branch: the
       // board shows it, and base_behind after this is not drift.

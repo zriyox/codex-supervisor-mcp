@@ -8,8 +8,9 @@
 // conflict leaves nothing half-applied.
 import { execFileSync } from "node:child_process";
 import { existsSync, rmSync } from "node:fs";
-import { join } from "node:path";
-import { parsePorcelainLine, resolveWorktreeBase, worktreeRef } from "./worktree.js";
+import { join, relative } from "node:path";
+import { parsePorcelainLine, resolveWorktreeBase, worktreeRef, readWorktreeChanges } from "./worktree.js";
+import { findOutsideOwnedChanges } from "./owned-changes.js";
 
 const defaultGitBin = process.env.GIT_BIN?.trim() || "git";
 
@@ -80,7 +81,7 @@ function currentBranch(cwd) {
 //
 // Returns { landed: [{ sha, original, subject }], onto, head } on success;
 // otherwise { error, reason, ... } with nothing changed in the target.
-export function landWorker(task, { onto = null, commitMessage = null, ignoreAcceptance = false } = {}) {
+export function landWorker(task, { onto = null, commitMessage = null, ignoreAcceptance = false, allowOutsideOwned = false } = {}) {
   const target = task.project_root;
   // The dispatcher's own checks are the gate. A failed run is refused until
   // it passes; a run that was cut short is refused until it has run.
@@ -125,6 +126,10 @@ export function landWorker(task, { onto = null, commitMessage = null, ignoreAcce
 
   const base = resolveWorktreeBase(task.worktree_path, worktreeRef(task));
   if (!base) return { error: "no_base_commit", reason: "the commit this worker started from is unknown, so its commits cannot be told apart" };
+  if (!allowOutsideOwned) {
+    const { outside } = findOutsideOwnedChanges(task, readWorktreeChanges(task.worktree_path, worktreeRef(task)));
+    if (outside.length) return { error: "outside_owned_paths", reason: "worker changes exceed declared ownedPaths; review them and obtain explicit authorization before allowing an exception", outside_paths: outside.map((entry) => relative(task.worktree_path, entry)) };
+  }
   let commits;
   try {
     commits = lines(git(task.worktree_path, ["rev-list", "--reverse", `${base}..HEAD`]));

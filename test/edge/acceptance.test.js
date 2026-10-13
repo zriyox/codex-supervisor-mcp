@@ -192,7 +192,7 @@ test("a failing check is recorded with its output, shows on every read, and bloc
   const home = await tempHome("supervisor-acceptance-");
   const { dir } = await makeRepo(join(home, "repo"));
   await withMcp({ SUPERVISOR_HOME: home, FAKE_CODEX_SCENARIO: "commit-in-worktree" }, async ({ call }) => {
-    const created = await call("create_codex_worker", dispatchArgs("checked", dir, { acceptance: [PASS, FAIL, PASS] }));
+    const created = await call("create_codex_worker", dispatchArgs("checked", dir, { acceptance: [PASS, FAIL, PASS], ownedPaths: ["committed.txt", "uncommitted.txt"] }));
     assert.ok(!created.error, JSON.stringify(created).slice(0, 300));
     const waited = await call("wait_codex_workers", { task_ids: [created.id], compact: true, timeoutMs: 15000 });
     assert.equal(waited.timed_out, false);
@@ -360,7 +360,7 @@ test("landing is recorded on the row, a second land skips what is already there,
   const home = await tempHome("supervisor-acceptance-");
   const { dir } = await makeRepo(join(home, "repo"));
   await withMcp({ SUPERVISOR_HOME: home, FAKE_CODEX_SCENARIO: "commit-in-worktree" }, async ({ call }) => {
-    const created = await call("create_codex_worker", dispatchArgs("landed-once", dir, { acceptance: PASS }));
+    const created = await call("create_codex_worker", dispatchArgs("landed-once", dir, { acceptance: PASS, ownedPaths: ["committed.txt", "uncommitted.txt"] }));
     await waitFor(call, created.id, settled);
     const first = await call("land_codex_worker", { task_id: created.id, commitMessage: "the draft too" });
     assert.ok(!first.error, JSON.stringify(first).slice(0, 300));

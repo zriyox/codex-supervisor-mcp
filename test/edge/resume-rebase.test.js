@@ -42,7 +42,7 @@ test("a worker with commits is replayed onto the moved main, and only its own co
   const home = await tempHome("supervisor-rebase-");
   const { dir } = await makeRepo(join(home, "repo"));
   await withMcp({ SUPERVISOR_HOME: home, FAKE_CODEX_SCENARIO: "commit-in-worktree" }, async ({ call }) => {
-    const created = await call("create_codex_worker", dispatchArgs("committer", dir));
+    const created = await call("create_codex_worker", dispatchArgs("committer", dir, { ownedPaths: ["committed.txt", "uncommitted.txt"] }));
     await waitFor(call, created.id, settled);
     const before = await call("get_worker_result", { task_id: created.id });
     assert.deepEqual(before.base_behind, { behind: 0, contains_base: true, ref: "main" });

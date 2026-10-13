@@ -139,10 +139,10 @@ function runOne(command, { cwd, env, timeoutMs, onSpawn }) {
       // user's startup file must not switch off the acceptance failure flags.
       delete shellEnv.BASH_ENV;
       delete shellEnv.ENV;
-      child = spawn(bash, ["--noprofile", "--norc", "-e", "-o", "pipefail", "-c", command], {
+      child = spawn(bash, ["--noprofile", "--norc", "-e", "-o", "pipefail", "-s"], {
         cwd,
         env: shellEnv,
-        stdio: ["ignore", "pipe", "pipe"],
+        stdio: ["pipe", "pipe", "pipe"],
         windowsHide: true,
         detached: process.platform !== "win32"
       });
@@ -194,9 +194,14 @@ function runOne(command, { cwd, env, timeoutMs, onSpawn }) {
       finish(null, null);
     });
     child.on("close", (code, signal) => finish(code, signal));
+    child.stdin.on("error", () => {});
     child.once("spawn", () => {
       spawned = true;
-      if (killed) killTree(child);
+      // The shell cannot create pipeline children until this process has
+      // registered cancellation. An immediate cancel closes its script input
+      // without ever launching the command, avoiding taskkill's startup race.
+      if (killed) child.stdin.end();
+      else child.stdin.end(`${command}\n`);
     });
     // Register close/error handlers before exposing cancellation. Cancelling
     // before spawn is observed is remembered and applied at the spawn event.

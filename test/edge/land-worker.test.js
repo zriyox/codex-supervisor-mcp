@@ -22,9 +22,9 @@ async function commitIn(wt, file, text, message) {
 
 before(async () => {
   await withMcp({ SUPERVISOR_HOME: home }, async ({ call }) => {
-    const created = await call("create_codex_worker", dispatchArgs("lander", repo));
+    const created = await call("create_codex_worker", dispatchArgs("lander", repo, { ownedPaths: ["step.txt", "first.txt", "scratch.txt"] }));
     worker = await waitFor(call, created.id, (t) => t.status === "completed");
-    const second = await call("create_codex_worker", dispatchArgs("idle", repo));
+    const second = await call("create_codex_worker", dispatchArgs("idle", repo, { ownedPaths: ["left.txt"] }));
     idle = await waitFor(call, second.id, (t) => t.status === "completed");
   });
   await commitIn(worker.worktree_path, "step.txt", "step one\n", "step 1: add step.txt");
@@ -75,7 +75,7 @@ test("the worker's commits land in order with their messages; uncommitted edits 
 
 test("a conflict is reported with the files and the target is rolled back", async () => {
   await withMcp({ SUPERVISOR_HOME: home }, async ({ call }) => {
-    const created = await call("create_codex_worker", dispatchArgs("conflicting", repo, { baseRef: "v-first" }));
+    const created = await call("create_codex_worker", dispatchArgs("conflicting", repo, { baseRef: "v-first", ownedPaths: ["first.txt"] }));
     const other = await waitFor(call, created.id, (t) => t.status === "completed");
     await commitIn(other.worktree_path, "first.txt", "one\nsomething else\n", "step 3: clash on first.txt");
     const before = git(repo, ["rev-parse", "HEAD"]);
@@ -113,7 +113,7 @@ test("a machine where git has no identity still lands, with a stand-in committer
     GIT_COMMITTER_EMAIL: ""
   };
   await withMcp(noIdentity, async ({ call }) => {
-    const created = await call("create_codex_worker", dispatchArgs("anonymous", repo));
+    const created = await call("create_codex_worker", dispatchArgs("anonymous", repo, { ownedPaths: ["anon.txt"] }));
     const anon = await waitFor(call, created.id, (t) => t.status === "completed");
     await writeFile(join(anon.worktree_path, "anon.txt"), "no identity here\n");
     const result = await call("land_codex_worker", { task_id: anon.id, commitMessage: "step 5: add anon.txt" });
