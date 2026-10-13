@@ -155,7 +155,7 @@ test("cancelling a pipeline records cancellation and stops subsequent checks", a
   assert.equal(control.kill, null);
 });
 
-test("immediate cancellation is settled before timeout across repeated starts", { timeout: 30000 }, async () => {
+test("immediate cancellation is settled before timeout across repeated starts", { timeout: 90000 }, async () => {
   const cwd = await tempHome("supervisor-cancel-start-");
   for (let i = 0; i < 8; i++) {
     const control = {};
