@@ -24,3 +24,23 @@ test("turn.failed with an object error lands as failed, with the message as text
     assert.equal(waited.lost_count, 0);
   });
 });
+
+test("the last JSONL event without a newline is drained before classifying the run", async () => {
+  await withMcp({ SUPERVISOR_HOME: home, FAKE_CODEX_SCENARIO: "last-line-no-newline" }, async ({ call }) => {
+    const worker = await call("create_codex_worker", dispatchArgs("last-line", repo));
+    const done = await waitFor(call, worker.id, (t) => t.exit_code !== null);
+    assert.equal(done.status, "failed");
+    assert.match(done.error, /last line failure/);
+    assert.equal(done.exit_code, 0);
+  });
+});
+
+test("zero exit without a terminal event is lost, not successful completion", async () => {
+  await withMcp({ SUPERVISOR_HOME: home, FAKE_CODEX_SCENARIO: "zero-without-terminal" }, async ({ call }) => {
+    const worker = await call("create_codex_worker", dispatchArgs("no-terminal", repo));
+    const done = await waitFor(call, worker.id, (t) => t.exit_code !== null);
+    assert.equal(done.status, "lost");
+    assert.match(done.error, /terminal event/);
+    assert.doesNotMatch(done.error, /signal null/);
+  });
+});

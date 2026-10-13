@@ -111,6 +111,17 @@ async function main() {
     process.exit(7);
   }
 
+  if (scenario === "last-line-no-newline") {
+    emit({ type: "thread.started", thread_id: threadId });
+    process.stdout.write(JSON.stringify({ type: "turn.failed", error: { message: "last line failure" } }));
+    return;
+  }
+
+  if (scenario === "zero-without-terminal") {
+    emit({ type: "thread.started", thread_id: threadId });
+    return;
+  }
+
   // The model gateway is down: Codex retries, gives up, writes turn.failed
   // with the error as an object, and exits non-zero. Seen for real against a
   // provider answering 502.

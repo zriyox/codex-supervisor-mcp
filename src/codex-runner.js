@@ -244,6 +244,7 @@ async function startTrackedRun({ record, args, prompt, logPath, spawnOptions = {
     exit_code: null,
     signal: null,
     error: null,
+    acceptance_results: null,
     current_action: null,
     current_command: null,
     // A resumed row still carries the last event of the run that ended;
@@ -281,6 +282,7 @@ async function startTrackedRun({ record, args, prompt, logPath, spawnOptions = {
   });
 
   let eventChain = Promise.resolve();
+  let terminalEvent = false;
   const handleLine = async (line) => {
     let event;
     try {
@@ -290,6 +292,7 @@ async function startTrackedRun({ record, args, prompt, logPath, spawnOptions = {
       return;
     }
     logStream.write(`${JSON.stringify(event)}\n`);
+    if (["turn.completed", "turn.failed"].includes(event.type)) terminalEvent = true;
     await appendTaskEvent(record.id, event);
     await persist(applyCodexEvent(live, event));
   };
@@ -322,8 +325,11 @@ async function startTrackedRun({ record, args, prompt, logPath, spawnOptions = {
     });
   });
 
-  child.on("exit", async (code, signal) => {
+  child.on("close", async (code, signal) => {
     processes.delete(record.id);
+    if (stdoutRest.trim()) eventChain = eventChain.then(() => handleLine(stdoutRest)).catch((error) => {
+      process.stderr.write(`[codex-supervisor] final event failed for ${record.id}: ${error.message}\n`);
+    });
     await eventChain.catch(() => {});
     logStream.end();
     const finishedAt = new Date().toISOString();
@@ -335,12 +341,12 @@ async function startTrackedRun({ record, args, prompt, logPath, spawnOptions = {
       || Boolean(stored?.cancel_requested_at);
     let status;
     if (stored && TERMINAL_STATUSES.has(stored.status) && stored.status !== live.status) status = stored.status;
-    else if (TERMINAL_STATUSES.has(live.status) && live.status !== "failed") status = live.status;
+    else if (terminalEvent && TERMINAL_STATUSES.has(live.status)) status = live.status;
     else if (cancelRequested) status = "cancelled";
     // Killed by a signal nobody asked for: the worker did not fail, it
     // vanished. Re-running is the fix, so it is reported as lost.
     else if (signal) status = "lost";
-    else if (code === 0) status = "completed";
+    else if (code === 0) status = "lost";
     else status = "failed";
     const next = {
       ...live,
@@ -358,7 +364,7 @@ async function startTrackedRun({ record, args, prompt, logPath, spawnOptions = {
       next.error = `codex exited with code ${code}${signal ? ` (signal ${signal})` : ""}`;
     }
     if (status === "lost" && !next.error) {
-      next.error = `codex worker was killed by signal ${signal} before writing a terminal event`;
+      next.error = signal ? `codex worker was killed by signal ${signal} before writing a terminal event` : "Codex worker exited without recording a terminal event";
     }
     if (status === "cancelled") next.error = null;
 
