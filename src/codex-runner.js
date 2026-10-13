@@ -384,6 +384,8 @@ async function startTrackedRun({ record, args, prompt, logPath, spawnOptions = {
         cwd: record.cwd,
         timeoutMs: live.acceptance_timeout_ms ?? DEFAULT_ACCEPTANCE_TIMEOUT_MS,
         run: live.run_count,
+        taskId: record.id,
+        baseCommit: live.base_commit,
         control
       });
       acceptanceRuns.delete(record.id);

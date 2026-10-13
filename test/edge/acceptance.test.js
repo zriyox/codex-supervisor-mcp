@@ -16,6 +16,44 @@ const HANG = 'node -e "setInterval(function(){}, 1000)"';
 const WRITES_MARKER = 'node -e "require(\'fs\').writeFileSync(\'ran.txt\', \'yes\')"';
 const DRAIN = 'node -e "process.stdin.resume()"';
 
+const READ_IDENTITY = 'node -e "console.log(JSON.stringify([process.env.CODEX_SUPERVISOR_TASK_ID,process.env.CODEX_SUPERVISOR_BASE_COMMIT,process.env.CODEX_SUPERVISOR_RUN]))"';
+
+test("acceptance identity overrides inherited values without mutating the parent environment", async () => {
+  const cwd = await tempHome("supervisor-identity-");
+  const env = { ...process.env, CODEX_SUPERVISOR_TASK_ID: "stale", CODEX_SUPERVISOR_BASE_COMMIT: "stale", CODEX_SUPERVISOR_RUN: "99" };
+  const result = await runAcceptance([READ_IDENTITY], { cwd, env, taskId: "current", baseCommit: "abc123", run: 2 });
+  assert.equal(result.status, "passed");
+  assert.deepEqual(JSON.parse(result.checks[0].output_tail), ["current", "abc123", "2"]);
+  assert.equal(env.CODEX_SUPERVISOR_RUN, "99");
+  const anonymous = await runAcceptance([READ_IDENTITY], { cwd, env });
+  assert.deepEqual(JSON.parse(anonymous.checks[0].output_tail), ["", "", ""]);
+});
+
+test("acceptance sees the current worker identity after rebase, resume and follow-up", async () => {
+  const home = await tempHome("supervisor-identity-");
+  const { dir, second } = await makeRepo(join(home, "repo"));
+  await withMcp({ SUPERVISOR_HOME: home }, async ({ call }) => {
+    const worker = await call("create_codex_worker", dispatchArgs("identity", dir, { acceptance: READ_IDENTITY }));
+    await waitFor(call, worker.id, settled);
+    const first = await call("get_worker_result", { task_id: worker.id });
+    assert.deepEqual(JSON.parse(first.acceptance.checks[0].output_tail), [worker.id, second, "1"]);
+    await writeFile(join(dir, "new-base.txt"), "main advanced\n");
+    git(dir, ["add", "new-base.txt"]);
+    git(dir, ["commit", "-q", "-m", "main advanced"]);
+    const head = git(dir, ["rev-parse", "HEAD"]);
+    const resumed = await call("resume_codex_worker", { task_id: worker.id, prompt: "check new base", rebaseOnto: "HEAD" });
+    assert.ok(!resumed.error, JSON.stringify(resumed));
+    await waitFor(call, worker.id, (t) => settled(t) && t.run_count === 2);
+    const next = await call("get_worker_result", { task_id: worker.id });
+    assert.deepEqual(JSON.parse(next.acceptance.checks[0].output_tail), [worker.id, head, "2"]);
+    const followup = await call("create_codex_followup_worker", { task_id: worker.id, followup_prompt: "verify identity" });
+    assert.ok(!followup.error, JSON.stringify(followup));
+    await waitFor(call, followup.id, settled);
+    const last = await call("get_worker_result", { task_id: followup.id });
+    assert.deepEqual(JSON.parse(last.acceptance.checks[0].output_tail), [followup.id, followup.base_commit, "1"]);
+  });
+});
+
 test("a successful pipeline consumer cannot hide a failing producer, and later checks do not run", async () => {
   const cwd = await tempHome("supervisor-pipeline-");
   const result = await runAcceptance([`${FAIL} | ${DRAIN}`, PASS], { cwd, timeoutMs: 10000 });

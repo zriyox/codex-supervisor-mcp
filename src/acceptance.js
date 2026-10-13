@@ -164,20 +164,28 @@ function runOne(command, { cwd, env, timeoutMs, onSpawn }) {
 // Runs every command in order and returns the verdict. `control.kill` is
 // filled in so a cancel can stop the command that is running; `control.isCancelled`
 // is consulted between commands.
-export async function runAcceptance(commands, { cwd, env = process.env, timeoutMs = DEFAULT_ACCEPTANCE_TIMEOUT_MS, run = null, control = {} } = {}) {
+export async function runAcceptance(commands, { cwd, env = process.env, timeoutMs = DEFAULT_ACCEPTANCE_TIMEOUT_MS, run = null, taskId = null, baseCommit = null, control = {} } = {}) {
   const startedAt = new Date().toISOString();
   if (!cwd || !existsSync(cwd)) {
     return { status: "failed", passed: false, run, started_at: startedAt, finished_at: new Date().toISOString(), error: "cwd_missing", cwd, checks: [] };
   }
   const checks = [];
   let passed = true;
+  const checkEnv = {
+    ...env,
+    NO_COLOR: "1",
+    CI: env.CI ?? "1",
+    CODEX_SUPERVISOR_TASK_ID: taskId ?? "",
+    CODEX_SUPERVISOR_BASE_COMMIT: baseCommit ?? "",
+    CODEX_SUPERVISOR_RUN: run == null ? "" : String(run)
+  };
   for (const command of commands) {
     if (control.isCancelled?.()) {
       return { status: "cancelled", passed: null, run, started_at: startedAt, finished_at: new Date().toISOString(), checks };
     }
     const result = await runOne(command, {
       cwd,
-      env: { ...env, NO_COLOR: "1", CI: env.CI ?? "1" },
+      env: checkEnv,
       timeoutMs,
       onSpawn: (kill) => {
         control.kill = kill;
