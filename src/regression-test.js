@@ -211,6 +211,7 @@ await test("R2-1 overview with 20 workers stays under 2000 tokens", async () => 
     const overview = await call(client, "get_orchestration_overview", {});
     assert.equal(overview.workers.length, 20);
     const tokens = approxTokenCount(JSON.stringify(overview));
+    assert.ok(Buffer.byteLength(JSON.stringify(overview), "utf8") <= 7000, "overview must fit its advertised byte budget");
     assert.ok(tokens <= 2000, `overview cost ${tokens} tokens`);
     assert.equal(overview.approx_tokens, tokens);
     assert.notEqual(overview.budget_exceeded, true);

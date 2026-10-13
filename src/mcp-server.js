@@ -110,7 +110,9 @@ const OVERVIEW_CAP_LEVELS = [
   { title: 40, goal: 60, action: 60, path: 60 },
   { title: 28, goal: 40, action: 40, path: 40 },
   { title: 18, goal: 24, action: 24, path: 24 },
-  { title: 12, goal: 16, action: 16, path: 16 }
+  { title: 12, goal: 16, action: 16, path: 16 },
+  { title: 8, goal: 8, action: 8, path: 8 },
+  { title: 0, goal: 0, action: 0, path: 0 }
 ];
 
 // `current_action` is "Running <command>", and a command can be a heredoc that
