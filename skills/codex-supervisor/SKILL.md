@@ -91,7 +91,7 @@ overview、派单回执、`wait` 返回里出现 `update` 且 `update_available:
 
 - worktree 从一个提交切，你工作区里没 commit 的东西 worker 看不到。要让它读到就给绝对路径或先 commit。
 - `exit_code: 0` 只说明没崩。`acceptance` 是 supervisor 替你跑的验收，`verification` 是它自己跑过的，两个都没有就只剩 diff。验收命令别往 worktree 写文件，会混进它的改动。
-- `ownedPaths` 是派单前的冲突检测，不是运行时沙箱，拦不住 worker 新建清单外的文件。收活看 diff。
+- `ownedPaths` 在派单前查重叠，land 按真实 diff 拒越界（提交草稿前就查）。仍不等于运行时沙箱，收活看 diff；`allowOutsideOwned` 只用于用户明确批准的例外。
 - worktree 只隔离工作区，端口和数据库是共用的。
 - `resume_codex_worker` 不会再建 goal。`cancel_codex_worker` 跨进程靠 pid，要求那个 pid 的命令行里带 `codex`。
 
