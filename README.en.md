@@ -141,10 +141,11 @@ Light and dark follow the system. No external resources.
 
 ## Tools
 
-Twenty.
+Twenty-one.
 
 | Tool | Arguments | What it does |
 |---|---|---|
+| `check_workers` | none | Report newly settled runs and actionable acceptance/goal changes; unchanged state is quiet. Call from a host-scheduled loop and use a distinct CODEX_SUPERVISOR_OBSERVER_ID for each reconnecting main thread |
 | `check_acceptance` | `cwd`, `acceptance`, `baseRef`, `timeoutMs` | Execute supplied checks before dispatch, without creating a worker or proving completion; warns that failure-count greps do not establish an approved failure list or required execution |
 | `create_codex_worker` | `task`, `cwd`, **`ownedPaths`**, **`goal`**, `acceptance`, `session_id`, `session_title`, `session_note`, `dependsOn`, `baseRef`, `sandbox`, `model`, `reasoningEffort`, `title`, `skipGitRepoCheck` | Start a worker. `acceptance` lists the commands the supervisor runs in the worktree once the worker exits; exit 0 on every one passes. `baseRef` picks the commit the worktree is cut from (default `HEAD`); pass another worker's `codex/<id>` to build on it |
 | `create_codex_followup_worker` | `task_id`, `followup_prompt`, `session_id`, plus the above | A new session seeded with the old worker's prompt, status and recent events |

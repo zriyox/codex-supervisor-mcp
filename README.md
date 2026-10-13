@@ -141,10 +141,11 @@ land_codex_worker       核过了，落进集成分支
 
 ## 工具
 
-20 个。
+21 个。
 
 | 工具 | 入参 | 作用 |
 |---|---|---|
+| `check_workers` | 无参 | 只交付新终态、验收失败和需处理goal，未变返回quiet；用宿主定时唤醒调用，每个主线程设独立CODEX_SUPERVISOR_OBSERVER_ID可在重启后接回 |
 | `check_acceptance` | `cwd`, `acceptance`, `baseRef`, `timeoutMs` | 派单前实际运行给定验收命令，不建 worker，不证明 worker 完成；数量 grep 会提示不能证明失败名单和必跑执行 |
 | `create_codex_worker` | `task`, `cwd`, **`ownedPaths`**, **`goal`**, `acceptance`, `session_id`, `session_title`, `session_note`, `dependsOn`, `baseRef`, `sandbox`, `model`, `reasoningEffort`, `title`, `skipGitRepoCheck` | 起一个 worker。`acceptance` 是验收命令，worker 退出后 supervisor 在它的 worktree 里跑，退出码 0 算过。`baseRef` 指定 worktree 从哪个提交切，默认 `HEAD`，接另一路填它的 `codex/<id>` |
 | `create_codex_followup_worker` | `task_id`, `followup_prompt`, `session_id`, 其余同上 | 开一个新会话，把老 worker 的 prompt、状态、近期事件拼进去 |

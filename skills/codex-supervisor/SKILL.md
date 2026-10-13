@@ -16,7 +16,7 @@ description: 把 Codex CLI 当并行 worker 派活、盯进度、收结果。用
 1. 先 `search_works` 搜一下，别重复派。
 2. 拆活。每路写清楚：干什么、能写哪些文件、怎么算做完。改同一批文件就串行，文件完全不重叠才并行。
 3. `create_codex_worker` 派出去。回执只有 `id`、`worktree_path`、`branch`、`owned_paths`、`status`，不回传任务原文。
-4. `wait_codex_workers` 等。默认 2 分钟，到点返回快照，worker 照跑；拿同一批 `task_ids` 接着调到 `timed_out: false`。只想知道完没完带 `compact: true`。
+4. 长任务配宿主 `/loop 5m check_workers` 定时收活，没变化 quiet，有新结果按 next_step 收。工具只查询，不会唤醒关闭的主窗口；每个主线程设独立 `CODEX_SUPERVISOR_OBSERVER_ID` 可重启接回。短等用 `wait_codex_workers` 的 `timeoutMs: 60000`、`compact: true`，到点继续同批 task_ids。
 
 | 参数 | 怎么填 |
 |---|---|
