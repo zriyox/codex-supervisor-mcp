@@ -32,6 +32,8 @@ description: 把 Codex CLI 当并行 worker 派活、盯进度、收结果。用
 
 验收用 Bash 的 `errexit` + `pipefail`：`npm test | tail` 不能吞失败；预期失败用 `if` / `||` 显式判。超时即失败，别只看退出码 0。Windows 要有 Git for Windows Bash；缺失先修工具，别换回 cmd。
 
+验收取当前身份用 `CODEX_SUPERVISOR_TASK_ID` / `CODEX_SUPERVISOR_BASE_COMMIT` / `CODEX_SUPERVISOR_RUN`；不要在命令里写死旧 base，rebase/resume 后这些值会更新。
+
 等待的几条规矩：
 
 - 等待预算管这次调用，不管 worker。`still_running: true` 是等满了不是挂了，按 `next_step` 再调。

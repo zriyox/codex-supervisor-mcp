@@ -169,6 +169,8 @@ Two are required: `ownedPaths` (checked against every running worker before disp
 
 `acceptance` runs in Bash with `errexit` and `pipefail`: an unhandled failure stops the check, including a failing test in `npm test | tail`. Handle expected failures explicitly with `if` or `||`; a timeout always fails, even when the command exits 0 after termination. Windows requires Git for Windows Bash and reports an error when it is missing. Displayed output is clipped without changing the exit code.
 
+Acceptance commands receive `CODEX_SUPERVISOR_TASK_ID`, `CODEX_SUPERVISOR_BASE_COMMIT` and `CODEX_SUPERVISOR_RUN`: the current task, run base and run number, refreshed after rebase/resume.
+
 ## How this differs from Claude Code subagents
 
 File isolation is not the difference: a subagent can open a worktree too. The difference is the model and the process.
