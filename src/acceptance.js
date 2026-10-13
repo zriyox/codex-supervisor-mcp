@@ -13,8 +13,11 @@
 // them itself. That is the trust model and it is stated in the tool text.
 import { spawn, execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { lstat, readFile, realpath } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { dirname, join, isAbsolute, relative, resolve } from "node:path";
 import { findBinaryPath } from "./bin-resolver.js";
+import { compareFailureBaseline } from "./acceptance-baseline.js";
 
 export const DEFAULT_ACCEPTANCE_TIMEOUT_MS = 10 * 60 * 1000;
 export const MAX_ACCEPTANCE_COMMANDS = 10;
@@ -24,7 +27,20 @@ const KILL_GRACE_MS = 3000;
 // One string or a list; blanks dropped; an empty list is "not configured".
 export function normalizeAcceptance(value) {
   const list = Array.isArray(value) ? value : typeof value === "string" ? [value] : [];
-  const commands = list.map((entry) => String(entry ?? "").trim()).filter(Boolean);
+  const commands = list.filter((entry) => entry != null && entry !== "").map((entry) => {
+    if (typeof entry === "string") return entry.trim();
+    if (!entry || typeof entry !== "object" || Array.isArray(entry) || typeof entry.command !== "string" || !entry.command.trim()) throw new Error("acceptance requires a command string or structured check");
+    if (typeof entry.reportPath !== "string" || !entry.reportPath || isAbsolute(entry.reportPath) || /^[A-Za-z]:|^\\\\/.test(entry.reportPath) || entry.reportPath.split(/[\\/]/).includes("..")) throw new Error("reportPath must stay inside the worktree");
+    const validation = compareFailureBaseline(entry.baseline, {
+      complete: true, identity: entry.baseline?.identity,
+      executed: [...new Set([...(entry.baseline?.required ?? []), ...(entry.baseline?.failures ?? []).map((item) => item?.test_id)])],
+      skipped: [], failures: entry.baseline?.failures
+    });
+    // Validation errors concern the contract; diff results concern actual
+    // failures, which do not exist at normalization time.
+    if (validation.errors.length) throw new Error(`invalid acceptance baseline: ${validation.errors.join("; ")}`);
+    return { command: entry.command.trim(), reportPath: entry.reportPath, baseline: structuredClone(entry.baseline) };
+  }).filter(Boolean);
   if (commands.length === 0) return null;
   if (commands.length > MAX_ACCEPTANCE_COMMANDS) {
     const error = new Error(`acceptance lists ${commands.length} commands; at most ${MAX_ACCEPTANCE_COMMANDS} are run`);
@@ -32,6 +48,25 @@ export function normalizeAcceptance(value) {
     throw error;
   }
   return commands;
+}
+
+async function readCheckEvidence(check, cwd, checkId, baseCommit) {
+  try {
+    const root = await realpath(cwd);
+    const path = resolve(cwd, check.reportPath);
+    const canonical = await realpath(path);
+    const outside = relative(root, canonical);
+    if (outside === ".." || outside.startsWith(`..${process.platform === "win32" ? "\\" : "/"}`) || isAbsolute(outside)) throw new Error("reportPath escapes the worktree");
+    const info = await lstat(path);
+    if (!info.isFile() || info.isSymbolicLink() || info.size > 1024 * 1024) throw new Error("report must be a regular file of at most 1 MiB");
+    const report = JSON.parse(await readFile(path, "utf8"));
+    if (report.check_id !== checkId) throw new Error("report check_id does not belong to this check; reused evidence is invalid");
+    if (baseCommit && check.baseline.identity.base_commit !== baseCommit) throw new Error("approved baseline base_commit differs from the current run base");
+    const baseline = compareFailureBaseline(check.baseline, report);
+    return { passed: baseline.passed, baseline };
+  } catch (error) {
+    return { passed: false, error: `acceptance evidence: ${error.message}` };
+  }
 }
 
 function tail(buffer) {
@@ -179,24 +214,28 @@ export async function runAcceptance(commands, { cwd, env = process.env, timeoutM
     CODEX_SUPERVISOR_BASE_COMMIT: baseCommit ?? "",
     CODEX_SUPERVISOR_RUN: run == null ? "" : String(run)
   };
-  for (const command of commands) {
+  for (const check of normalizeAcceptance(commands) ?? []) {
+    const command = typeof check === "string" ? check : check.command;
     if (control.isCancelled?.()) {
       return { status: "cancelled", passed: null, run, started_at: startedAt, finished_at: new Date().toISOString(), checks };
     }
+    const checkId = randomUUID();
     const result = await runOne(command, {
       cwd,
-      env: checkEnv,
+      env: { ...checkEnv, CODEX_SUPERVISOR_CHECK_ID: checkId },
       timeoutMs,
       onSpawn: (kill) => {
         control.kill = kill;
       }
     });
     control.kill = null;
+    result.passed = result.exit_code === 0 && !result.timed_out && !result.cancelled;
+    if (typeof check !== "string" && result.passed) Object.assign(result, await readCheckEvidence(check, cwd, checkId, baseCommit));
     checks.push(result);
     if (result.cancelled) {
       return { status: "cancelled", passed: null, run, started_at: startedAt, finished_at: new Date().toISOString(), checks };
     }
-    if (result.exit_code !== 0 || result.timed_out) {
+    if (!result.passed) {
       passed = false;
       break;
     }
