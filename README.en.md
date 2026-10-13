@@ -167,6 +167,8 @@ Nineteen.
 
 Two are required: `ownedPaths` (checked against every running worker before dispatch, overlap refuses the call, dispatch-time only) and `goal.objective` (the worker turns it into a native Codex goal). Without `session_id` nothing groups the batch; use one value for the whole batch.
 
+`acceptance` runs in Bash with `errexit` and `pipefail`: an unhandled failure stops the check, including a failing test in `npm test | tail`. Handle expected failures explicitly with `if` or `||`; a timeout always fails, even when the command exits 0 after termination. Windows requires Git for Windows Bash and reports an error when it is missing. Displayed output is clipped without changing the exit code.
+
 ## How this differs from Claude Code subagents
 
 File isolation is not the difference: a subagent can open a worktree too. The difference is the model and the process.

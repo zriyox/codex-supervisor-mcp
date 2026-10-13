@@ -30,6 +30,8 @@ description: 把 Codex CLI 当并行 worker 派活、盯进度、收结果。用
 | `baseRef` | worktree 从哪个提交切，默认 `HEAD`。第 N+1 步要建立在第 N 步上，填 `codex/<第 N 步 task_id>` |
 | `sandbox` | 默认 `workspace-write`，worker 提交不了（Codex 把 `.git` 设成只读）。要它自己提交就 `danger-full-access`，否则收活时让 supervisor 替它提交 |
 
+验收用 Bash 的 `errexit` + `pipefail`：`npm test | tail` 不能吞失败；预期失败用 `if` / `||` 显式判。超时即失败，别只看退出码 0。Windows 要有 Git for Windows Bash；缺失先修工具，别换回 cmd。
+
 等待的几条规矩：
 
 - 等待预算管这次调用，不管 worker。`still_running: true` 是等满了不是挂了，按 `next_step` 再调。
