@@ -163,16 +163,17 @@ function runOne(command, { cwd, env, timeoutMs, onSpawn }) {
     let timedOut = false;
     let killed = false;
     let spawnError = null;
+    let spawned = false;
     const timer = setTimeout(() => {
+      if (killed) return;
       timedOut = true;
       killTree(child);
     }, timeoutMs);
     timer.unref();
     const kill = () => {
       killed = true;
-      killTree(child);
+      if (spawned) killTree(child);
     };
-    onSpawn?.(kill);
     let finished = false;
     const finish = (code, signal) => {
       if (finished) return;
@@ -193,6 +194,13 @@ function runOne(command, { cwd, env, timeoutMs, onSpawn }) {
       finish(null, null);
     });
     child.on("close", (code, signal) => finish(code, signal));
+    child.once("spawn", () => {
+      spawned = true;
+      if (killed) killTree(child);
+    });
+    // Register close/error handlers before exposing cancellation. Cancelling
+    // before spawn is observed is remembered and applied at the spawn event.
+    onSpawn?.(kill);
   });
 }
 

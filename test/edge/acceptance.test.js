@@ -155,6 +155,20 @@ test("cancelling a pipeline records cancellation and stops subsequent checks", a
   assert.equal(control.kill, null);
 });
 
+test("immediate cancellation is settled before timeout across repeated starts", { timeout: 30000 }, async () => {
+  const cwd = await tempHome("supervisor-cancel-start-");
+  for (let i = 0; i < 8; i++) {
+    const control = {};
+    const started = Date.now();
+    const pending = runAcceptance([`${HANG} | ${DRAIN}`], { cwd, timeoutMs: 10000, control });
+    control.kill();
+    const result = await pending;
+    assert.equal(result.status, "cancelled");
+    assert.equal(result.checks[0].timed_out, false);
+    assert.ok(Date.now() - started < 8000, "cancellation must not wait for the timeout");
+  }
+});
+
 test("a failed pipeline blocks land even when the worker reports success", async () => {
   const home = await tempHome("supervisor-pipeline-");
   const { dir } = await makeRepo(join(home, "repo"));
