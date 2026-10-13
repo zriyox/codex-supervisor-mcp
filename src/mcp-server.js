@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 import { readFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
@@ -28,7 +30,7 @@ import {
 import { readNativeGoal } from "./goal-store.js";
 import { baseBehind, readTaskChanges, readWorktreeDiff, worktreeRef } from "./worktree.js";
 import { summarizeVerification } from "./event-parser.js";
-import { acceptanceVerdict } from "./acceptance.js";
+import { acceptanceVerdict, runAcceptance } from "./acceptance.js";
 import { ACTIVE_STATUSES, TERMINAL_STATUSES, TASK_STATUSES, isGoalNeedingAttention } from "./status.js";
 import { approxTokenCount, truncateEventStrings, truncateMiddleChars, truncateReport } from "./truncate.js";
 import { checkForUpdate, updateNotice } from "./update-check.js";
@@ -487,6 +489,34 @@ const acceptanceCheck = z.union([
   }).strict()
 ]);
 const acceptanceInput = z.union([z.string().min(1), z.array(acceptanceCheck).max(10)]);
+
+server.registerTool(
+  "check_acceptance",
+  {
+    title: "Check acceptance commands",
+    description: "Run explicitly supplied acceptance commands in the requested project before dispatch. This executes the commands with supervisor privileges and can have their side effects; it creates no worker and does not prove worker completion. Structured checks require fresh execution evidence, while failure-count greps are flagged as insufficient baseline evidence.",
+    inputSchema: {
+      cwd: z.string().min(1), acceptance: acceptanceInput,
+      baseRef: z.string().min(1).optional(), timeoutMs: z.number().int().min(1000).max(1800000).default(600000)
+    }
+  },
+  async ({ cwd, acceptance, baseRef = "HEAD", timeoutMs }) => {
+    let base;
+    try {
+      base = execFileSync("git", ["-C", cwd, "rev-parse", "--verify", `${baseRef}^{commit}`], { encoding: "utf8", timeout: 10000, stdio: ["ignore", "pipe", "pipe"] }).trim();
+    } catch {
+      return textResult({ error: "invalid_base_ref", phase: "preflight", reason: `baseRef does not resolve in ${cwd}`, proves_worker_completion: false });
+    }
+    try {
+      const commands = Array.isArray(acceptance) ? acceptance : [acceptance];
+      const warnings = commands.filter((check) => typeof check === "string" && /(?:failures|errors)\s*=\s*\d/.test(check)).map(() => "failure-count checks do not prove baseline test identities or required execution; use structured evidence");
+      const result = await runAcceptance(commands, { cwd, timeoutMs, baseCommit: base, taskId: `preflight-${randomUUID()}` });
+      return textResult({ ...result, phase: "preflight", base_commit: base, proves_worker_completion: false, warnings });
+    } catch (error) {
+      return errorResult(error);
+    }
+  }
+);
 
 server.registerTool(
   "create_codex_worker",
