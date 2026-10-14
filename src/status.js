@@ -33,5 +33,5 @@ export function mapGoalStatus(nativeStatus) {
 // A goal that is not finished but is not progressing on its own.
 export function isGoalNeedingAttention(nativeStatus) {
   const key = String(nativeStatus ?? "").replace(/_/g, "").toLowerCase();
-  return key === "blocked" || key === "paused";
+  return ["blocked", "paused", "usagelimited", "budgetlimited"].includes(key);
 }

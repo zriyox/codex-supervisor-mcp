@@ -55,7 +55,8 @@ check("paused and blocked are flagged as needing attention, complete is not", ()
   assert.equal(isGoalNeedingAttention("blocked"), true);
   assert.equal(isGoalNeedingAttention("active"), false);
   assert.equal(isGoalNeedingAttention("complete"), false);
-  assert.equal(isGoalNeedingAttention("usage_limited"), false);
+  assert.equal(isGoalNeedingAttention("usage_limited"), true);
+  assert.equal(isGoalNeedingAttention("budgetLimited"), true);
   assert.equal(isGoalNeedingAttention(null), false);
 });
 

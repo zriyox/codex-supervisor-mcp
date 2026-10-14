@@ -29,6 +29,8 @@ test("goal and acceptance failures carry specific attention and next actions", (
   for (const [worker, reason] of [
     [task({ goal_status: "blocked" }), "goal_blocked"],
     [task({ goal_status: "paused" }), "goal_paused"],
+    [task({ goal_status: "usage_limited" }), "goal_usage_limited"],
+    [task({ goal_status: "budgetLimited" }), "goal_budgetLimited"],
     [task({ acceptance_results: { status: "failed", passed: false, run: 1 } }), "acceptance_failed"],
     [task({ status: "lost" }), "lost"]
   ]) {
