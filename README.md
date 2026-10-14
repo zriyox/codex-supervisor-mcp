@@ -43,7 +43,7 @@ worker 跑的是 `codex exec`，`model` 透传：主线程留在 Claude，worker
 npm install -g codex-supervisor-mcp
 ```
 
-`postinstall` 装 skill、注册 MCP。`claude mcp list` 里没看到（`npx`、pnpm、`--ignore-scripts` 不跑 `postinstall`）就手动补：
+npm 全局安装在允许执行安装脚本时，会运行 `postinstall`，给检测到的 Claude Code/Codex 装 skill 并注册 MCP。`--ignore-scripts`、禁用安装脚本或只运行 npx 不保证自动注册；没看到时先运行 `codex-supervisor-setup`，再查两端 `mcp get`。手动注册也可以：
 
 ```bash
 claude mcp add -s user codex-supervisor -- npx -y codex-supervisor-mcp
@@ -62,7 +62,7 @@ codex mcp add codex-supervisor -- npx -y codex-supervisor-mcp
 
 ```
 create_codex_worker ×3   每路带 session_id、session_title、ownedPaths、goal
-wait_codex_workers       默认等 2 分钟，到点返回快照，没完就接着等
+wait_codex_workers       默认等 60 秒，到点返回快照，没完就接着等
 get_worker_result ×3     收每路的汇报，带它真跑过的命令和退出码
 ```
 
@@ -115,7 +115,7 @@ npx -p codex-supervisor-mcp codex-supervisor-web
 ```
 search_works            查这批活派过没有
 create_codex_worker     一步一个 worker，同一个 session_id，ownedPaths 不重叠
-wait_codex_workers      2 分钟一轮，compact: true，没完接着调
+wait_codex_workers      60 秒一轮，compact: true，没完接着调
 get_worker_result       它说自己做了什么，verification 里是它真跑过的命令
 get_worker_diff         它实际做了什么
 ask_codex_worker        对不上就问它为什么，只读，不动它的线程
@@ -150,7 +150,7 @@ land_codex_worker       核过了，落进集成分支
 | `create_codex_worker` | `task`, `cwd`, **`ownedPaths`**, **`goal`**, `forbid`, `allowedCommands`, `context`, `contracts`, `externalOutputs`, `networkAccess`, `maxRunMs`, `maxTotalMs`, `acceptance`, `session_id`, `session_title`, `session_note`, `dependsOn`, `baseRef`, `sandbox`, `model`, `reasoningEffort`, `title`, `skipGitRepoCheck` | 起一个 worker。`acceptance` 是验收命令，worker 退出后 supervisor 在它的 worktree 里跑，退出码 0 算过。`baseRef` 指定 worktree 从哪个提交切，默认 `HEAD`，接另一路填它的 `codex/<id>` |
 | `create_codex_followup_worker` | `task_id`, `followup_prompt`, `session_id`, 其余同上 | 开一个新会话，把老 worker 的 prompt、状态、近期事件拼进去 |
 | `resume_codex_worker` | `task_id`, `prompt`, `rebaseOnto`, `acceptance`, `context` | 接同一个 Codex 会话继续跑，`thread_id` 不变。`rebaseOnto` 先把 worktree 挪到主线新头（stash、跳过已合入补丁、重放新增提交、放回），冲突原样退回不起 worker |
-| `wait_codex_workers` | `task_ids`, `mode`(any/all), `timeoutMinutes`, `timeoutMs`, `compact`, `includeEvents`, `eventLimit`, `eventMaxChars`, `eventKinds` | 等终态。默认 2 分钟，到点带快照返回，worker 照跑；`compact` 每路只回一行，带 `idle_seconds` / `command_running`，分得清长命令和卡住 |
+| `wait_codex_workers` | `task_ids`, `mode`(any/all), `timeoutMinutes`, `timeoutMs`, `compact`, `includeEvents`, `eventLimit`, `eventMaxChars`, `eventKinds` | 等终态。默认 60 秒，到点带快照返回，worker 照跑；`compact` 每路只回一行，带 `idle_seconds` / `command_running`，分得清长命令和卡住 |
 | `get_orchestration_overview` | `status`, `limit` | 全部 worker 的状态表，封顶 7000 字节。带 `version` 和 `update` |
 | `get_worker_result` | `task_id`, `limit`, `maxChars`, `includeFiles` | worker 自己的汇报，默认截 6000 字节、`truncated` 提示读全。`acceptance` 是 supervisor 替你跑的验收过没过，`verification` 是它自己跑过的命令和退出码，`base_behind` 是主线走了多远 |
 | `get_worker_diff` | `task_id`, `maxChars`, `paths` | worker 实际改了什么：从 worktree 起点到工作区的 patch，提交没提交都算。`maxChars` 管总量，超了的文件只列名 |
@@ -253,7 +253,7 @@ ownedPaths预留和任务入库在同一事务内，跨MCP并发派单/恢复不
 | `CODEX_SUPERVISOR_SKIP_SETUP` | 未设 | `1` 跳过 `postinstall` 的自动安装 |
 | `CODEX_SUPERVISOR_NPM` | 未设 | 自动更新用的 npm，默认用当前 node 自带的 |
 
-GUI 客户端（Claude Desktop、Cursor、Windsurf）不跑 `postinstall`，自己把这段加进它的 MCP 配置文件，`PATH` 里常常没有 `codex`，显式给 `CODEX_BIN`：
+GUI 客户端（Claude Desktop、Cursor、Windsurf）不在本安装器的自动注册目标中，自己把这段加进它的 MCP 配置文件，`PATH` 里常常没有 `codex`，显式给 `CODEX_BIN`：
 
 ```json
 {
@@ -271,7 +271,7 @@ GUI 客户端（Claude Desktop、Cursor、Windsurf）不跑 `postinstall`，自�
 
 不用手动更。server 启动时后台查一次 registry，有新版就起独立进程 `npm i -g` 到同一个全局路径；正在跑的会话不受影响，下一个新会话就是新版。只对 `npm i -g` 装的那份生效，git 源码和 `npx` 起的不碰。skill 也一样，每次启动刷到已有的 skill 目录，改过的先备份成 `SKILL.md.bak-<时间戳>`。
 
-装失败（全局目录要 sudo）时 `update` 字段带原因，手动 `npm install -g codex-supervisor-mcp@latest`。0.6.1 及以前只提醒不自动装，手动升一次就进自动了。换了 Node 版本注册的路径会失效，`claude mcp remove -s user codex-supervisor`、`codex mcp remove codex-supervisor` 后重装。重跑安装：`codex-supervisor-setup`（`--skill-only` / `--mcp-only` / `--dry-run`）。
+装失败（全局目录要 sudo）时 `update` 字段带原因，手动 `npm install -g codex-supervisor-mcp@latest`。0.6.1 及以前只提醒不自动装，手动升一次就进自动了。换 Node/安装前缀后，setup 会修复本包生成的旧入口，并读回核对 command/args；已有自定义、disabled、project配置保留并提示处理，不擅自覆盖。重跑安装：`codex-supervisor-setup`（`--skill-only` / `--mcp-only` / `--dry-run`）。手动注册失败返回非0，自动安装保持成功但打印warning；没找到CLI时可设 `CLAUDE_BIN` / `CODEX_BIN`。skill路径跟随 `CLAUDE_CONFIG_DIR` / `CODEX_HOME`。
 
 卸载：
 

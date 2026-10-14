@@ -43,7 +43,7 @@ Prerequisites: Node.js 22.13.0 or newer, `codex` on `PATH`. macOS, Linux and Win
 npm install -g codex-supervisor-mcp
 ```
 
-`postinstall` installs the skill and registers the MCP. If `claude mcp list` does not show it (`npx`, pnpm and `--ignore-scripts` skip `postinstall`), add it by hand:
+A global npm install runs `postinstall` when lifecycle scripts are enabled, installing the skill and registering MCP with detected Claude Code/Codex clients. `--ignore-scripts`, disabled lifecycle scripts, and running through npx do not guarantee registration; run `codex-supervisor-setup` and inspect both clients with `mcp get`. Manual registration also works:
 
 ```bash
 claude mcp add -s user codex-supervisor -- npx -y codex-supervisor-mcp
@@ -62,7 +62,7 @@ What the main thread does underneath (you can call the tools yourself):
 
 ```
 create_codex_worker ×3   each with session_id, session_title, ownedPaths, goal
-wait_codex_workers       two minutes by default, then a snapshot, call again until done
+wait_codex_workers       60 seconds by default, then a snapshot, call again until done
 get_worker_result ×3     each worker's report, with the commands it really ran
 ```
 
@@ -115,7 +115,7 @@ What the main brain calls in one round:
 ```
 search_works            has this batch been dispatched before
 create_codex_worker     one worker per step, same session_id, ownedPaths disjoint
-wait_codex_workers      two minutes a round, compact: true, call again until done
+wait_codex_workers      60 seconds a round, compact: true, call again until done
 get_worker_result       what it says it did; verification is what it really ran
 get_worker_diff         what it actually did
 ask_codex_worker        when the two differ, ask why; read-only, its thread untouched
@@ -150,7 +150,7 @@ Twenty-one.
 | `create_codex_worker` | `task`, `cwd`, **`ownedPaths`**, **`goal`**, `forbid`, `allowedCommands`, `context`, `contracts`, `externalOutputs`, `networkAccess`, `maxRunMs`, `maxTotalMs`, `acceptance`, `session_id`, `session_title`, `session_note`, `dependsOn`, `baseRef`, `sandbox`, `model`, `reasoningEffort`, `title`, `skipGitRepoCheck` | Start a worker. `acceptance` lists the commands the supervisor runs in the worktree once the worker exits; exit 0 on every one passes. `baseRef` picks the commit the worktree is cut from (default `HEAD`); pass another worker's `codex/<id>` to build on it |
 | `create_codex_followup_worker` | `task_id`, `followup_prompt`, `session_id`, plus the above | A new session seeded with the old worker's prompt, status and recent events |
 | `resume_codex_worker` | `task_id`, `prompt`, `rebaseOnto`, `acceptance`, `context` | Continue the same Codex conversation; `thread_id` stays. `rebaseOnto` first moves the worktree onto the project's newer commit (stash, skip integrated patches, replay new commits, unstash); a conflict puts it back and does not start the worker |
-| `wait_codex_workers` | `task_ids`, `mode` (any/all), `timeoutMinutes`, `timeoutMs`, `compact`, `includeEvents`, `eventLimit`, `eventMaxChars`, `eventKinds` | Wait for terminal states. Two minutes by default, then a snapshot while the workers keep running; `compact` returns one line per worker with `idle_seconds` / `command_running`, so a long command and a stuck worker look different |
+| `wait_codex_workers` | `task_ids`, `mode` (any/all), `timeoutMinutes`, `timeoutMs`, `compact`, `includeEvents`, `eventLimit`, `eventMaxChars`, `eventKinds` | Wait for terminal states. 60 seconds by default, then a snapshot while the workers keep running; `compact` returns one line per worker with `idle_seconds` / `command_running`, so a long command and a stuck worker look different |
 | `get_orchestration_overview` | `status`, `limit` | Every worker in one table, capped at 7000 bytes. Carries `version` and `update` |
 | `get_worker_result` | `task_id`, `limit`, `maxChars`, `includeFiles` | The worker's own report, clipped past 6000 bytes with `truncated` and the size to ask for. `acceptance` is whether the supervisor's own checks passed, `verification` the commands the worker ran with exit codes, `base_behind` how far main has moved |
 | `get_worker_diff` | `task_id`, `maxChars`, `paths` | What the worker actually changed: patches from the worktree's start to its working tree, committed or not. `maxChars` bounds the answer; files past it are listed without a patch |
@@ -253,7 +253,7 @@ A terminal state lands in two steps: `turn.completed` sets `completed`, the proc
 | `CODEX_SUPERVISOR_SKIP_SETUP` | unset | `1` skips the `postinstall` setup |
 | `CODEX_SUPERVISOR_NPM` | unset | npm for the auto-update; default is the one shipped with the running node |
 
-GUI clients (Claude Desktop, Cursor, Windsurf) do not run `postinstall`: add this to their MCP config file, and since their `PATH` often lacks `codex`, give `CODEX_BIN` explicitly:
+GUI clients (Claude Desktop, Cursor, Windsurf) are not automatic registration targets of this installer: add this to their MCP config file, and since their `PATH` often lacks `codex`, give `CODEX_BIN` explicitly:
 
 ```json
 {
@@ -271,7 +271,7 @@ GUI clients (Claude Desktop, Cursor, Windsurf) do not run `postinstall`: add thi
 
 Nothing to do by hand. At start the server asks the registry in the background; a newer version is installed by a detached `npm i -g` into the same global path, the running session is untouched and the next session starts on it. Only a copy that `npm i -g` installed is touched; a git checkout or an `npx` copy is left alone. The skill does the same: every start copies it into the existing skill directories, backing up an edited file as `SKILL.md.bak-<timestamp>`.
 
-When the install fails (a global directory that needs sudo) the `update` field says why and `npm install -g codex-supervisor-mcp@latest` by hand still works. Versions up to 0.6.1 only notify; upgrade by hand once and it is automatic from then on. A Node version switch breaks the registered path: `claude mcp remove -s user codex-supervisor`, `codex mcp remove codex-supervisor`, reinstall. To run the setup again: `codex-supervisor-setup` (`--skill-only` / `--mcp-only` / `--dry-run`).
+When the install fails (a global directory that needs sudo) the `update` field says why and `npm install -g codex-supervisor-mcp@latest` by hand still works. Versions up to 0.6.1 only notify; upgrade by hand once and it is automatic from then on. After changing Node versions/install prefixes, setup repairs old package-generated paths and verifies command/args through client read-back. Custom, disabled and project registrations are preserved with a repair warning. To run the setup again: `codex-supervisor-setup` (`--skill-only` / `--mcp-only` / `--dry-run`). Manual registration failures exit nonzero; automatic installs warn without failing npm. Set `CLAUDE_BIN` / `CODEX_BIN` for off-PATH CLIs. Skill locations follow `CLAUDE_CONFIG_DIR` / `CODEX_HOME`.
 
 Uninstall:
 
