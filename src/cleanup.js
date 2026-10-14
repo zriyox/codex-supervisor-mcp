@@ -1,9 +1,10 @@
 #!/usr/bin/env node
-import { rm, stat } from "node:fs/promises";
-import { basename, join } from "node:path";
+import { rm, lstat, realpath } from "node:fs/promises";
+import { join, resolve, relative, isAbsolute } from "node:path";
+import { execFileSync } from "node:child_process";
 import { deleteTasks, readTasks, vacuumStore } from "./task-store.js";
 import { runsDir, worktreesDir } from "./paths.js";
-import { TERMINAL_STATUSES } from "./status.js";
+import { ACTIVE_STATUSES, TERMINAL_STATUSES } from "./status.js";
 
 function parseArgs(argv) {
   const options = {
@@ -65,7 +66,10 @@ function isDeleteCandidate(task, cutoffMs, includeFailed) {
 
 async function safeDeleteFile(path, dryRun) {
   try {
-    await stat(path);
+    const rel = relative(await realpath(runsDir), await realpath(path));
+    if (rel === ".." || rel.startsWith(`..${process.platform === "win32" ? "\\" : "/"}`) || isAbsolute(rel)) return false;
+    const info = await lstat(path);
+    if (!info.isFile() || info.isSymbolicLink()) return false;
     if (!dryRun) await rm(path, { force: true });
     return true;
   } catch {
@@ -73,13 +77,36 @@ async function safeDeleteFile(path, dryRun) {
   }
 }
 
-async function safeDeleteDir(path, dryRun) {
+function git(cwd, args) {
+  return execFileSync(process.env.GIT_BIN?.trim() || "git", ["--no-optional-locks", "-C", cwd, ...args], { encoding: "utf8", timeout: 15000, stdio: ["ignore", "pipe", "pipe"] }).trim();
+}
+
+async function cleanupReason(task, tasks) {
+  if (task.status !== "completed") return "unfinished, failed or lost work is preserved";
+  if (task.acceptance_results && task.acceptance_results.passed !== true) return "acceptance is not passed";
+  if (tasks.some((other) => ACTIVE_STATUSES.has(other.status) && (other.depends_on ?? []).includes(task.id))) return "active dependent still needs this worktree";
+  if (!task.worktree_path || !task.project_root) return "no registered isolated worktree";
   try {
-    await stat(path);
-    if (!dryRun) await rm(path, { recursive: true, force: true });
-    return true;
-  } catch {
-    return false;
+    const path = resolve(task.worktree_path);
+    if (path !== resolve(worktreesDir, task.id)) return "worktree is outside its managed task directory";
+    if ((await lstat(path)).isSymbolicLink()) return "symlink worktree is preserved";
+    if (await realpath(path) !== await realpath(resolve(worktreesDir, task.id))) return "unexpected worktree path";
+    const branch = git(path, ["symbolic-ref", "--short", "HEAD"]);
+    if (branch !== `codex/${task.id}`) return "unexpected branch ownership";
+    const registrations = git(task.project_root, ["worktree", "list", "--porcelain", "-z"]).split("\0").filter((line) => line.startsWith("worktree "));
+    let registered = false;
+    for (const line of registrations) {
+      if (await realpath(line.slice(9)) === await realpath(path)) registered = true;
+    }
+    if (!registered) return "worktree registration is missing";
+    if (git(path, ["status", "--porcelain", "--untracked-files=all"])) return "dirty worktree contains uncommitted files";
+    if (!task.landed_at || !task.base_commit) return "unlanded work is preserved";
+    // Patch equivalence covers cherry-pick landing even when ancestry differs.
+    const remaining = git(path, ["cherry", task.project_root ? git(task.project_root, ["rev-parse", "HEAD"]) : "HEAD", "HEAD", task.base_commit]);
+    if (remaining.split("\n").some((line) => line.startsWith("+"))) return "unlanded commits remain";
+    return null;
+  } catch (error) {
+    return `cleanup proof failed: ${error.message.split("\n")[0]}`;
   }
 }
 
@@ -91,29 +118,45 @@ if (options.help) {
 
 const cutoffMs = Date.now() - options.days * 24 * 60 * 60 * 1000;
 const tasks = await readTasks();
-const candidates = tasks.filter((task) => isDeleteCandidate(task, cutoffMs, options.includeFailed));
+const candidates = [];
+const skipped = [];
+for (const task of tasks.filter((item) => isDeleteCandidate(item, cutoffMs, options.includeFailed))) {
+  const reason = await cleanupReason(task, tasks);
+  if (reason) skipped.push({ id: task.id, reason });
+  else candidates.push(task);
+}
 const taskIds = candidates.map((task) => task.id);
 
 const deleted = {
-  tasks: taskIds.length,
+  tasks: 0,
   jsonl: 0,
   worktrees: 0
 };
 
+const removedIds = [];
 for (const task of candidates) {
+  if (!options.dryRun) {
+    const current = (await readTasks()).find((item) => item.id === task.id);
+    const reason = current ? await cleanupReason(current, await readTasks()) : "task disappeared";
+    if (reason) { skipped.push({ id: task.id, reason }); continue; }
+    try {
+      git(task.project_root, ["worktree", "remove", task.worktree_path]);
+      git(task.project_root, ["branch", "-D", `codex/${task.id}`]);
+    } catch (error) {
+      skipped.push({ id: task.id, reason: `git cleanup failed: ${error.message.split("\n")[0]}` });
+      continue;
+    }
+  }
+  deleted.worktrees += 1;
   const logPath = task.run_log ?? join(runsDir, `${task.id}.jsonl`);
   if (await safeDeleteFile(logPath, options.dryRun)) deleted.jsonl += 1;
-  if (task.worktree_path && basename(task.worktree_path) === task.id) {
-    if (await safeDeleteDir(task.worktree_path, options.dryRun)) deleted.worktrees += 1;
-  } else {
-    const fallbackWorktree = join(worktreesDir, task.id);
-    if (await safeDeleteDir(fallbackWorktree, options.dryRun)) deleted.worktrees += 1;
-  }
+  removedIds.push(task.id);
 }
 
 if (!options.dryRun && taskIds.length > 0) {
-  await deleteTasks(taskIds);
+  await deleteTasks(removedIds);
 }
+deleted.tasks = removedIds.length;
 
 if (!options.dryRun && options.vacuum) {
   await vacuumStore();
@@ -124,5 +167,6 @@ console.log(JSON.stringify({
   keep_days: options.days,
   cutoff: new Date(cutoffMs).toISOString(),
   candidates: taskIds,
+  skipped,
   deleted
 }, null, 2));
