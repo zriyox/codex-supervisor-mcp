@@ -38,6 +38,8 @@ description: 把 Codex CLI 当并行 worker 派活、盯进度、收结果。用
 
 同批公共门禁用 `describe_session.default_acceptance`，自动追加本路验收；更新目标/门禁传 `expected_revision`，避免旧窗口覆盖。需要用户拍板时设 `approval_state: waiting_user`，不得自动resume；获批改approved并同步宿主goal。supervisor不改宿主Stop hook，不要拿旧目标反复唤醒。
 
+wait默认60秒和compact，带includeEvents则详细返回；客户端带progress token时每30秒收到通知。通知不能唤醒已关闭宿主，不能假定Claude会因此重置idle。
+
 等待的几条规矩：
 
 - 等待预算管这次调用，不管 worker。`still_running: true` 是等满了不是挂了，按 `next_step` 再调。
