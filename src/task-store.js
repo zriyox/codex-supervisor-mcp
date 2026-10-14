@@ -5,6 +5,7 @@ import { dataDir, dbPath, runsDir } from "./paths.js";
 import { extractAgentMessage } from "./event-parser.js";
 import { ACTIVE_STATUSES, PHASES, TERMINAL_STATUSES } from "./status.js";
 import { readNativeGoal } from "./goal-store.js";
+import { normalizeAcceptance } from "./acceptance.js";
 
 let db;
 
@@ -242,6 +243,12 @@ function initializeSchema(dbInstance) {
       dbInstance.exec(TASK_EVENTS_INDEX_DDL);
       dbInstance.exec(TASKS_SESSION_INDEX_DDL);
       dbInstance.exec(SESSIONS_DDL);
+      for (const [name, definition] of [
+        ["objective", "TEXT"], ["default_acceptance", "TEXT"],
+        ["approval_state", "TEXT NOT NULL DEFAULT 'approved'"], ["policy_revision", "INTEGER NOT NULL DEFAULT 0"]
+      ]) {
+        if (!tableColumns(dbInstance, "sessions").some((column) => column.name === name)) dbInstance.exec(`ALTER TABLE sessions ADD COLUMN ${name} ${definition}`);
+      }
       dbInstance.exec("CREATE TABLE IF NOT EXISTS observer_cursors (id TEXT PRIMARY KEY, cursor TEXT NOT NULL, updated_at TEXT NOT NULL)");
       dbInstance.exec(SIDE_DDL);
       // Rows written before 0.7.1 have no worker_run_count: the fork is then
@@ -498,7 +505,7 @@ export async function recordTerminalChangedFiles(taskId, changedFiles) {
   return result.changes > 0;
 }
 
-export async function upsertSession({ id, title = null, note = null }) {
+export async function upsertSession({ id, title = null, note = null, objective, defaultAcceptance, approvalState, expectedRevision }) {
   if (!id) throw new Error("session id is required");
   await ensureFilesystem();
   const now = new Date().toISOString();
@@ -513,12 +520,39 @@ export async function upsertSession({ id, title = null, note = null }) {
         updated_at = excluded.updated_at
     `)
     .run({ id, title: title ?? null, note: note ?? null, now });
+  if (objective !== undefined || defaultAcceptance !== undefined || approvalState !== undefined || expectedRevision !== undefined) {
+    const acceptance = defaultAcceptance === undefined ? undefined : normalizeAcceptance(defaultAcceptance) ?? [];
+    if (objective !== undefined && (typeof objective !== "string" || !objective.trim())) throw new Error("session objective must be nonempty");
+    if (approvalState !== undefined && !["approved", "waiting_user"].includes(approvalState)) throw new Error("invalid session approval state");
+    runWithRetry(openDb(), () => {
+      const store = openDb();
+      store.exec("BEGIN IMMEDIATE");
+      try {
+        const before = store.prepare("SELECT * FROM sessions WHERE id=?").get(id);
+        if (expectedRevision !== undefined && expectedRevision !== before.policy_revision) {
+          const error = new Error(`session policy changed; current revision is ${before.policy_revision}`);
+          error.code = "session_policy_conflict";
+          throw error;
+        }
+        const policy = {
+          objective: objective ?? before.objective,
+          acceptance: acceptance === undefined ? before.default_acceptance : JSON.stringify(acceptance),
+          approval: approvalState ?? before.approval_state
+        };
+        const changed = policy.objective !== before.objective || policy.acceptance !== before.default_acceptance || policy.approval !== before.approval_state;
+        store.prepare("UPDATE sessions SET objective=?,default_acceptance=?,approval_state=?,policy_revision=?,updated_at=? WHERE id=?")
+          .run(policy.objective, policy.acceptance, policy.approval, before.policy_revision + (changed ? 1 : 0), now, id);
+        store.exec("COMMIT");
+      } catch (error) { store.exec("ROLLBACK"); throw error; }
+    });
+  }
   return getSession(id);
 }
 
 export async function getSession(sessionId) {
   await ensureFilesystem();
-  return openDb().prepare("SELECT * FROM sessions WHERE id = ?").get(sessionId) ?? null;
+  const row = openDb().prepare("SELECT * FROM sessions WHERE id = ?").get(sessionId);
+  return row ? { ...row, default_acceptance: decodeJson(row.default_acceptance, []) } : null;
 }
 
 export async function readSessions() {

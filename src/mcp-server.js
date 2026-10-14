@@ -843,6 +843,10 @@ server.registerTool(
       session_id,
       title: meta?.title ?? null,
       note: meta?.note ?? null,
+      objective: meta?.objective ?? null,
+      default_acceptance: meta?.default_acceptance ?? [],
+      approval_state: meta?.approval_state ?? "approved",
+      policy_revision: meta?.policy_revision ?? 0,
       count: tasks.length,
       active: tasks.filter((task) => ACTIVE_STATUSES.has(task.status)).length,
       works: tasks.map(workRow)
@@ -876,12 +880,18 @@ server.registerTool(
     inputSchema: {
       session_id: z.string().min(1),
       title: z.string().min(1).max(120).optional(),
-      note: z.string().min(1).max(2000).optional()
+      note: z.string().min(1).max(2000).optional(),
+      objective: z.string().min(1).max(5000).optional(),
+      default_acceptance: z.array(acceptanceCheck).max(10).optional(),
+      approval_state: z.enum(["approved", "waiting_user"]).optional(),
+      expected_revision: z.number().int().nonnegative().optional()
     }
   },
-  async ({ session_id, title, note }) => {
-    const row = await upsertSession({ id: session_id, title: title ?? null, note: note ?? null });
-    return textResult({ session_id, title: row?.title ?? null, note: row?.note ?? null, updated_at: row?.updated_at ?? null });
+  async ({ session_id, title, note, objective, default_acceptance, approval_state, expected_revision }) => {
+    try {
+      const row = await upsertSession({ id: session_id, title: title ?? null, note: note ?? null, objective, defaultAcceptance: default_acceptance, approvalState: approval_state, expectedRevision: expected_revision });
+      return textResult({ ...row, session_id });
+    } catch (error) { return errorResult(error); }
   }
 );
 
