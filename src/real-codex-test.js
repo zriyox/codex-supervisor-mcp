@@ -1,7 +1,7 @@
 // End-to-end test against the real `codex` CLI: worktree creation, event
 // parsing, thread id capture and a cross-process `codex exec resume`.
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, writeFile, readdir, stat } from "node:fs/promises";
+import { mkdtemp, mkdir, writeFile, readFile, readdir, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -61,8 +61,7 @@ async function waitFor(client, taskId, predicate, timeoutMs = 300000) {
 
 console.log("creating a worker with the real codex CLI ...");
 
-// Create and poll inside one MCP session: a worker's lifecycle is currently
-// bound to the MCP process that spawned it (the resident daemon is next phase).
+// Wait for the independent run owner's exit write, not only turn.completed.
 const first = await withServer(async (client) => {
   const created = await call(client, "create_codex_worker", {
     title: "real codex pong",
@@ -83,7 +82,7 @@ const first = await withServer(async (client) => {
   const seenPhases = new Set();
   const deadline = Date.now() + 300000;
   let current = created;
-  while (Date.now() < deadline && !TERMINAL.includes(current.status)) {
+  while (Date.now() < deadline && !(TERMINAL.includes(current.status) && current.exit_code !== null)) {
     seenStatuses.add(current.status);
     if (current.phase) seenPhases.add(current.phase);
     await sleep(700);
@@ -168,9 +167,10 @@ const resumed = await withServer(async (client) => {
     task_id: taskId,
     prompt: "Reply with exactly the word PONG2 and nothing else."
   });
+  assert.ok(!started.error, JSON.stringify(started));
   assert.equal(started.thread_id, finished.thread_id, "resume must keep the same thread id");
   assert.equal(started.run_count, 2);
-  const final = await waitFor(client, taskId, (task) => task.status === "completed" && task.run_count === 2);
+  const final = await waitFor(client, taskId, (task) => task.status === "completed" && task.exit_code === 0 && task.run_count === 2);
   const events = await call(client, "get_codex_worker_events", { task_id: taskId, limit: 500 });
   const starts = events.events.filter((event) => event.type === "thread.started");
   assert.ok(starts.length >= 2, `expected two runs in the event stream, got ${starts.length}`);
@@ -199,6 +199,7 @@ const writeRun = await withServer(async (client) => {
     sandbox: "workspace-write",
     reasoningEffort: "low",
     ownedPaths: ["NOTES.md"],
+    acceptance: ['node -e "const fs=require(\'fs\');if(fs.readFileSync(\'NOTES.md\',\'utf8\').trim()!==\'hello from worker\')process.exit(1);console.log(\'real output verified\')"'],
     goal: { objective: "Prove a real worker writes only inside its own worktree" }
   });
   const seenPhases = new Set();
@@ -206,8 +207,21 @@ const writeRun = await withServer(async (client) => {
   // what reconciles changed_files against the worktree.
   const final = await waitFor(client, created.id, (task) => {
     if (task.phase) seenPhases.add(task.phase);
-    return TERMINAL.includes(task.status) && task.exit_code !== null;
+    return TERMINAL.includes(task.status) && task.exit_code !== null && task.acceptance === "passed";
   });
+  const result = await call(client, "get_worker_result", { task_id: created.id });
+  assert.equal(result.acceptance.passed, true);
+  assert.match(result.acceptance.checks[0].output_tail, /real output verified/);
+  assert.equal(await readFile(join(repo, "README.md"), "utf8"), "# test repo\n");
+  assert.equal(await stat(join(repo, "NOTES.md")).then(() => true, () => false), false);
+  const diff = await call(client, "get_worker_diff", { task_id: created.id });
+  assert.equal(diff.files.length, 1);
+  assert.match(diff.files[0].patch, /hello from worker/);
+  const landed = await call(client, "land_codex_worker", { task_id: created.id, commitMessage: "Verify real model worker output" });
+  assert.ok(!landed.error, JSON.stringify(landed));
+  assert.equal(landed.landed.length, 1);
+  assert.equal((await readFile(join(repo, "NOTES.md"), "utf8")).trim(), "hello from worker");
+  console.log("  independent acceptance and land verified against real output");
   return { id: created.id, final, seenPhases };
 });
 
@@ -224,9 +238,9 @@ console.log(`  changed_files=${JSON.stringify(writeRun.final.changed_files)}`);
 const worktreeNotes = await stat(join(writeRun.final.worktree_path, "NOTES.md")).then(() => true, () => false);
 assert.ok(worktreeNotes, "NOTES.md should exist inside the worker worktree");
 const repoTouched = await stat(join(repo, "NOTES.md")).then(() => true, () => false);
-assert.equal(repoTouched, false, "the target repository must not be written by the worker");
+assert.equal(repoTouched, true, "the reviewed output was landed by the supervisor");
 const gitStatus = execFileSync("git", ["status", "--porcelain"], { cwd: repo, encoding: "utf8" }).trim();
 assert.equal(gitStatus, "", `target repo is dirty: ${gitStatus}`);
-console.log("  worktree has NOTES.md, target repo is clean");
+console.log("  worktree output landed, target repo is clean");
 
 console.log(`\nreal codex end-to-end passed  (state dir: ${home})`);
