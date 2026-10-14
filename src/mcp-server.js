@@ -255,6 +255,7 @@ function summarizeTask(task) {
     goal_objective: task.goal_objective,
     goal_token_budget: task.goal_token_budget,
     goal_status: task.goal_status,
+    attention_reason: task.attention_reason ?? null,
     changed_file_count: (task.changed_files ?? []).length,
     command_count: (task.commands ?? []).length,
     run_count: task.run_count ?? 0,
@@ -397,7 +398,7 @@ function buildOverview(tasks, extras = {}) {
       total: tasks.length,
       active: tasks.filter((task) => ACTIVE_STATUSES.has(task.status)).length,
       needs_attention: tasks
-        .filter((task) => isGoalNeedingAttention(task.goal_status))
+        .filter((task) => isGoalNeedingAttention(task.goal_status) || task.attention_reason)
         .map((task) => task.id),
       // Terminal rows whose acceptance run failed. Kept apart from
       // needs_attention, which means "running and stuck"; this means
@@ -1070,6 +1071,8 @@ server.registerTool(
       session_id: task.session_id ?? null,
       worktree_path: task.worktree_path,
       goal_status: task.goal_status,
+      attention_reason: task.attention_reason ?? null,
+      run_evidence: task.run_evidence ?? null,
       changed_file_count: changed.length,
       changed_files: listFiles ? changed : undefined,
       base_commit: task.base_commit ?? null,

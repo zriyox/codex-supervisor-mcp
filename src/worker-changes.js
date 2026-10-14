@@ -10,6 +10,7 @@ export function collectWorkerChanges(tasks, cursor = {}) {
     const acceptance = task.acceptance_results?.run === task.run_count ? task.acceptance_results : null;
     let reason = null;
     if (isGoalNeedingAttention(task.goal_status)) reason = `goal_${task.goal_status}`;
+    else if (task.attention_reason) reason = task.attention_reason;
     else if (acceptance?.passed === false) reason = "acceptance_failed";
     else if (["interrupted", "cancelled"].includes(acceptance?.status)) reason = `acceptance_${acceptance.status}`;
     else if (TERMINAL_STATUSES.has(task.status) && acceptance?.status !== "running" &&

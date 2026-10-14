@@ -29,6 +29,12 @@ test("a write run with no new output or command is marked no_work even when its 
     } finally { db.close(); }
     const result = await call("get_worker_result", { task_id: worker.id });
     assert.equal(result.verification.commands_run, 0, "previous commands cannot validate this run");
+    assert.equal(result.attention_reason, "no_work");
+    assert.equal(result.run_evidence.output_changed, false);
+    const overview = await call("get_orchestration_overview", {});
+    assert.ok(overview.needs_attention.includes(worker.id));
+    const changes = await call("check_workers", {});
+    assert.ok(changes.attention.some((entry) => entry.id === worker.id && entry.reason === "no_work"));
   });
 });
 
