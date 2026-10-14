@@ -193,6 +193,8 @@ workspace-write默认networkAccess:false；需要ssh/联网验证显式true，�
 
 运行前核验Codex CLI是否具备hooks/output-schema（要求0.162+）；能力不足返回start_failed，wait可正常结算。get_worker_goal.native_goal_read区分missing_goal、missing_database、locked和read_error，不能把读取失败当没建goal。原生budget/usage限制也进入needs_attention。cleanup保留ignored artifacts、共享证据和未解决attention。
 
+ownedPaths预留和任务入库在同一事务内，跨MCP并发派单/恢复不能抢同一输出；验收或退出尚未结算时仍保留归属。Git工作区隔离创建失败明确报错，不退回主目录执行。
+
 清理默认只预览：`npm run cleanup -- --dry-run`。`--apply` 只删除已合入、干净、无活跃依赖、Git注册与目录归属可证明的 completed worktree；脏、未合、lost/failed 及证据不足的目录保留并给出原因。
 
 ## 和 Claude Code 的 subagent 有什么区别

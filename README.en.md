@@ -193,6 +193,8 @@ workspace-write defaults to networkAccess:false; explicitly enable it for ssh/ne
 
 Dispatch checks required hooks/output-schema support (Codex 0.162+); unsupported capability returns settled start_failed. get_worker_goal.native_goal_read distinguishes missing_goal, missing_database, locked and read_error; a read failure is not evidence that no goal exists. Native budget/usage limits need attention. Cleanup preserves ignored artifacts, shared evidence and unresolved attention.
 
+Ownership reservation and task insertion are atomic across MCP dispatch/resume processes; ownership remains reserved during acceptance or exit settlement. Failure to create an isolated Git checkout is explicit and never falls back to executing in the project directory.
+
 Cleanup previews by default: `npm run cleanup -- --dry-run`. `--apply` removes only integrated, clean completed worktrees with no active dependents and verified Git registration/ownership. Dirty, unlanded, lost/failed or unproven work is preserved with a reason.
 
 ## How this differs from Claude Code subagents
