@@ -3,6 +3,7 @@ import { mkdir, rm, stat } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { execFileSync, spawn } from "node:child_process";
 import { join, resolve, sep } from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   appendTaskEvent,
   getTask,
@@ -216,7 +217,7 @@ async function spawnAndAwaitStart(target, args, options) {
 // Attaches stream handlers and keeps `record` in the supervisor database.
 // Every write goes through one serialized chain so concurrent stdout/stderr
 // callbacks cannot interleave and persist out of order.
-async function startTrackedRun({ record, args, prompt, logPath, spawnOptions = {} }) {
+async function trackRunInHost({ record, args, prompt, logPath, spawnOptions = {} }) {
   const target = codexTarget();
   if (target.error) return failedStart(record, target.error);
 
@@ -240,11 +241,13 @@ async function startTrackedRun({ record, args, prompt, logPath, spawnOptions = {
     status: "running",
     phase: "starting",
     pid: child.pid ?? null,
+    run_host_pid: process.pid,
     started_at: now,
     completed_at: null,
     exit_code: null,
     signal: null,
     error: null,
+    cancel_requested_at: null,
     acceptance_results: null,
     current_action: null,
     current_command: null,
@@ -268,6 +271,7 @@ async function startTrackedRun({ record, args, prompt, logPath, spawnOptions = {
       });
     return writeChain;
   };
+  await persist(live);
 
   const logStream = createWriteStream(logPath, { flags: "a" });
   logStream.on("error", () => {});
@@ -387,14 +391,24 @@ async function startTrackedRun({ record, args, prompt, logPath, spawnOptions = {
         current_action: "Running acceptance",
         acceptance_results: { status: "running", passed: null, run: live.run_count, supervisor_pid: process.pid, started_at: finishedAt }
       });
-      const results = await runAcceptance(acceptance, {
+      // A fresh MCP has no in-memory acceptance handle. Consume its durable
+      // cancellation marker while a command runs, then stop subsequent checks.
+      const cancellationWatch = setInterval(async () => {
+        const current = await getTask(record.id).catch(() => null);
+        if (current?.cancel_requested_at) {
+          control.cancelled = true;
+          control.kill?.();
+        }
+      }, 100);
+      let results;
+      try { results = await runAcceptance(acceptance, {
         cwd: record.cwd,
         timeoutMs: live.acceptance_timeout_ms ?? DEFAULT_ACCEPTANCE_TIMEOUT_MS,
         run: live.run_count,
         taskId: record.id,
         baseCommit: live.base_commit,
         control
-      });
+      }); } finally { clearInterval(cancellationWatch); }
       acceptanceRuns.delete(record.id);
       const event = { type: "supervisor.acceptance", ...results };
       await appendTaskEvent(record.id, event).catch(() => {});
@@ -427,6 +441,38 @@ async function startTrackedRun({ record, args, prompt, logPath, spawnOptions = {
   }
 
   return { ok: true, record: live, child };
+}
+
+// The MCP client may disappear at any point. A detached process owns the
+// streams, exit write and acceptance until all three settle; IPC is only a
+// startup handshake and never the channel carrying worker results.
+async function startTrackedRun(job) {
+  const host = spawn(process.execPath, [fileURLToPath(import.meta.url), "--run-host"], {
+    detached: true, stdio: ["ignore", "ignore", "ignore", "ipc"],
+    env: process.env, windowsHide: true
+  });
+  const started = await new Promise((resolveStart) => {
+    const finish = (result) => {
+      clearTimeout(timer);
+      host.removeAllListeners("message");
+      host.removeAllListeners("exit");
+      if (host.connected) host.disconnect();
+      host.unref();
+      resolveStart(result);
+    };
+    const timer = setTimeout(() => {
+      host.kill();
+      finish(failedStart(job.record, "run host startup timed out"));
+    }, 30000);
+    host.once("message", finish);
+    host.once("error", (error) => finish(failedStart(job.record, `run host startup failed: ${error.message}`)));
+    host.once("exit", (code) => finish(failedStart(job.record, `run host exited before startup: ${code}`)));
+    host.send(job, (error) => {
+      if (error) finish(failedStart(job.record, `run host IPC failed: ${error.message}`));
+    });
+  });
+  if (!started.ok) await upsertTask(started.record);
+  return started;
 }
 
 function buildExecArgs({ cwd, sandbox, model, reasoningEffort, skipGitRepoCheck }) {
@@ -556,7 +602,6 @@ export async function createCodexWorker({
     }, { acceptance: combinedAcceptance }),
     logPath: record.run_log
   });
-  await upsertTask(started.record);
   return started.record;
 }
 
@@ -652,8 +697,23 @@ export async function resumeCodexWorker({ taskId, prompt, rebaseOnto = null, acc
     logPath: task.run_log,
     spawnOptions: { cwd }
   });
-  await upsertTask(started.record);
   return rebase ? { ...started.record, rebase } : started.record;
+}
+
+if (process.argv[1] === fileURLToPath(import.meta.url) && process.argv[2] === "--run-host") {
+  process.once("message", async (job) => {
+    let result;
+    try {
+      result = await trackRunInHost(job);
+      if (!result.ok) await upsertTask(result.record);
+    } catch (error) {
+      result = failedStart(job.record, `run host failed: ${error.message}`);
+      await upsertTask(result.record);
+    }
+    if (process.connected) process.send({ ok: result.ok, record: result.record }, () => {
+      if (process.connected) process.disconnect();
+    });
+  });
 }
 
 // `powershell` by name is not always on PATH for a process a GUI client
@@ -757,6 +817,10 @@ export async function cancelCodexWorker(taskId) {
   }
   // Another MCP process owns the handle; fall back to the pid recorded on disk.
   const task = await getTask(taskId);
+  if (task?.acceptance_results?.status === "running" && await isPidAlive(task.acceptance_results.supervisor_pid)) {
+    await upsertTask({ ...task, cancel_requested_at: new Date().toISOString(), updated_at: new Date().toISOString() });
+    return { cancelled: true, via: "acceptance", pid: null };
+  }
   if (task?.pid && (await isPidAlive(task.pid)) && isLikelyCodexProcess(task.pid)) {
     try {
       terminatePid(task.pid);

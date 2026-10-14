@@ -12,6 +12,7 @@ let db;
 // Columns added after v1. Kept in one place so the legacy rebuild and the
 // fresh CREATE TABLE cannot drift apart.
 const POST_V1_COLUMNS = [
+  ["run_host_pid", "INTEGER"],
   ["resumed_from", "TEXT"],
   ["thread_id", "TEXT"],
   ["owned_paths", "TEXT NOT NULL DEFAULT '[]'"],
@@ -57,6 +58,7 @@ const TASKS_DDL = `
       started_at TEXT,
       completed_at TEXT,
       pid INTEGER,
+      run_host_pid INTEGER,
       exit_code INTEGER,
       signal TEXT,
       stderr_tail TEXT,
@@ -97,7 +99,7 @@ const TASKS_DDL = `
 const TASK_COLUMNS = [
   "id", "title", "worker", "status", "phase", "cwd", "project_root", "sandbox", "model",
   "reasoning_effort", "skip_git_repo_check", "prompt", "changed_files", "commands",
-  "created_at", "updated_at", "started_at", "completed_at", "pid", "exit_code", "signal",
+  "created_at", "updated_at", "started_at", "completed_at", "pid", "run_host_pid", "exit_code", "signal",
   "stderr_tail", "last_event_at", "last_event_type", "last_message", "current_action",
   "current_command", "error", "followup_of", "resumed_from", "session_id", "thread_id", "owned_paths",
   "depends_on", "goal_objective", "goal_token_budget", "goal_status", "goal_tokens_used",
@@ -394,7 +396,7 @@ export async function reconcileDetachedActiveTasks() {
   await reconcileInterruptedAcceptance();
   const incomplete = (await readTasks()).filter((task) =>
     ["completed", "failed"].includes(task.status) && task.exit_code == null && task.started_at
-    && !isPidAlive(task.pid) && !task.acceptance_results
+    && !isPidAlive(task.pid) && !isPidAlive(task.run_host_pid) && !task.acceptance_results
     && Date.now() - Date.parse(task.updated_at) > 5000);
   for (const task of incomplete) {
     await writeTask({ ...task, status: "lost", phase: null,
@@ -402,7 +404,8 @@ export async function reconcileDetachedActiveTasks() {
       updated_at: new Date().toISOString() });
   }
   const tasks = await readActiveTasks();
-  const staleTasks = tasks.filter((task) => (task.pid && !isPidAlive(task.pid)) || neverStarted(task));
+  const staleTasks = tasks.filter((task) => !isPidAlive(task.run_host_pid)
+    && ((task.pid && !isPidAlive(task.pid)) || neverStarted(task)));
   for (const task of staleTasks) {
     const now = new Date().toISOString();
     const vanished = Boolean(task.pid);

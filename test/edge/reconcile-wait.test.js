@@ -143,3 +143,68 @@ test("resuming a lost worker clears the error from the lost run", async () => {
     assert.equal(final.run_count, 2);
   });
 });
+
+test("worker output and acceptance survive the dispatching MCP being killed", async () => {
+  const { Client } = await import("@modelcontextprotocol/sdk/client/index.js");
+  const { StdioClientTransport } = await import("@modelcontextprotocol/sdk/client/stdio.js");
+  const { repoRoot, fakeCodex, waitFor } = await import("./helpers.js");
+  const home = await tempHome("supervisor-owner-exit-");
+  const transport = new StdioClientTransport({
+    command: process.execPath, args: [join(repoRoot, "src", "mcp-server.js")],
+    env: { ...process.env, SUPERVISOR_HOME: home, CODEX_BIN: fakeCodex,
+      CODEX_SUPERVISOR_NO_UPDATE_CHECK: "1", CODEX_SUPERVISOR_SKIP_SKILL_SYNC: "1",
+      FAKE_CODEX_STEP_MS: "300" }, stderr: "pipe"
+  });
+  const client = new Client({ name: "owner-exit", version: "1" });
+  await client.connect(transport);
+  const call = async (name, args) => JSON.parse((await client.callTool({ name, arguments: args })).content[0].text);
+  let task;
+  try {
+    task = await call("create_codex_worker", dispatchArgs("survive owner", join(home, "workspace"), {
+      acceptance: ["printf owner-survived"]
+    }));
+    await waitFor(call, task.id, (row) => Boolean(row.thread_id));
+    process.kill(transport.pid, "SIGKILL");
+    await client.close();
+    await withMcp({ SUPERVISOR_HOME: home }, async ({ call: recovered }) => {
+      const final = await waitFor(recovered, task.id,
+        (row) => row.exit_code === 0 && row.acceptance === "passed", 10000);
+      assert.equal(final.status, "completed");
+      assert.equal(final.run_count, 1, "completion must not require replaying the model turn");
+      assert.equal(final.last_message, "done");
+      assert.equal(final.commands.length, 1);
+      const result = await recovered("get_worker_result", { task_id: task.id });
+      assert.match(result.acceptance.checks[0].output_tail, /owner-survived/);
+    });
+  } finally {
+    await client.close();
+    if (task) await withMcp({ SUPERVISOR_HOME: home }, async ({ call: cleanup }) => {
+      await cleanup("cancel_codex_worker", { task_id: task.id });
+    });
+  }
+});
+
+test("a fresh MCP can cancel acceptance owned by the independent run host", async () => {
+  const home = await tempHome("supervisor-owner-cancel-");
+  let id;
+  await withMcp({ SUPERVISOR_HOME: home }, async ({ call }) => {
+    const command = `"${process.execPath}" -e "setTimeout(()=>{},15000)"`;
+    const task = await call("create_codex_worker", dispatchArgs("cancel detached acceptance", join(home, "workspace"), {
+      acceptance: [command, "printf must-not-run"]
+    }));
+    id = task.id;
+    const { waitFor } = await import("./helpers.js");
+    await waitFor(call, id, (row) => row.acceptance === "running");
+  });
+  await withMcp({ SUPERVISOR_HOME: home }, async ({ call }) => {
+    const result = await call("cancel_codex_worker", { task_id: id });
+    assert.equal(result.cancelled, true);
+    assert.equal(result.via, "acceptance");
+    const { waitFor } = await import("./helpers.js");
+    const final = await waitFor(call, id, (row) => row.acceptance === "cancelled");
+    assert.equal(final.status, "completed", "cancel the checks without replacing the worker's completed status");
+    const report = await call("get_worker_result", { task_id: id });
+    assert.equal(report.acceptance.checks.length, 1);
+    assert.equal(report.acceptance.checks[0].cancelled, true);
+  });
+});
