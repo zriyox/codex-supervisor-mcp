@@ -2,7 +2,7 @@ import { createWriteStream, existsSync } from "node:fs";
 import { mkdir, rm, stat } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { execFileSync, spawn } from "node:child_process";
-import { join, resolve, sep } from "node:path";
+import { join, resolve, sep, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   appendTaskEvent,
@@ -30,6 +30,7 @@ import { defaultBinDirs, findBinaryPath, resolveCommand, shimMessage } from "./b
 import { findOutsideOwnedChanges } from "./owned-changes.js";
 import { parseWorkerReport, workerReportSchemaPath } from "./worker-report.js";
 import { buildHandoff } from "./handoff.js";
+import { captureExternalOutputs, compareExternalOutputs } from "./external-output.js";
 
 const processes = new Map();
 // taskId -> control object of an acceptance run in progress ({ kill, cancelled }).
@@ -228,7 +229,8 @@ async function trackRunInHost({ record, args, prompt, logPath, spawnOptions = {}
   const target = codexTarget();
   if (target.error) return failedStart(record, target.error);
   const outputBefore = snapshotTaskOutput(record);
-  const owned = findOutsideOwnedChanges(record, []).mapping.map((entry) => entry.worker);
+  const externalBefore = await captureExternalOutputs(record.guard_policy?.externalOutputs ?? [], { checkBaseline: (record.run_count ?? 0) === 0 });
+  const owned = [...findOutsideOwnedChanges(record, []).mapping.map((entry) => entry.worker), ...externalBefore.map((entry) => entry.path)];
   const guardPolicy = { cwd: record.cwd, ownedPaths: owned, ...(record.guard_policy ?? {}),
     allowedCommands: [...(record.guard_policy?.allowedCommands ?? []), ...(record.acceptance ?? []).map((check) => typeof check === "string" ? check : check.command)] };
   const guard = fileURLToPath(new URL("./tool-guard.js", import.meta.url));
@@ -236,6 +238,7 @@ async function trackRunInHost({ record, args, prompt, logPath, spawnOptions = {}
   const hookCommand = `${quoteCommand(process.execPath)} ${quoteCommand(guard)}`;
   const configArgs = ["--output-schema", workerReportSchemaPath, "--dangerously-bypass-hook-trust", "-c",
     `hooks.PreToolUse=[{matcher="Bash|apply_patch",hooks=[{type="command",command=${JSON.stringify(hookCommand)}}]}]`];
+  if (externalBefore.length) configArgs.push("-c", `sandbox_workspace_write.writable_roots=${JSON.stringify([...new Set(externalBefore.map((file) => dirname(file.path)))])}`);
   // Insert before the prompt/session positional arguments for exec/resume.
   const guardedArgs = [...args.slice(0, -1), ...configArgs, args.at(-1)];
   prompt = `Runtime supervisor guard: edits must use apply_patch within ${JSON.stringify(owned)}. Shell verification must exactly match declared commands ${JSON.stringify(guardPolicy.allowedCommands)}. Forbidden: ${JSON.stringify(guardPolicy.forbid ?? [])}. Undeclared shell programs are denied; report a needed validation command instead of bypassing the guard.\n\n${prompt}`;
@@ -399,12 +402,18 @@ async function trackRunInHost({ record, args, prompt, logPath, spawnOptions = {}
     }
     if (status === "cancelled") next.error = null;
     const outputAfter = snapshotTaskOutput(live);
+    let externalChanges = [];
+    try { externalChanges = compareExternalOutputs(externalBefore, await captureExternalOutputs(record.guard_policy?.externalOutputs ?? [])); }
+    catch (error) { next.attention_reason = "external_output_unverified"; next.error = error.message; }
     next.run_evidence = {
       run: live.run_count, commands_run: live.commands.length,
       structured_report: parseWorkerReport(rawReport),
       output_before: outputBefore, output_after: outputAfter,
       output_changed: outputBefore && outputAfter ? outputBefore !== outputAfter : null
     };
+    next.run_evidence.external_outputs = externalChanges;
+    if (externalChanges.some((entry) => entry.changed)) next.run_evidence.output_changed = true;
+    next.changed_files = [...new Set([...next.changed_files, ...externalChanges.filter((entry) => entry.changed).map((entry) => entry.path)])];
     if (status === "completed" && code === 0 && live.sandbox !== "read-only"
       && !next.run_evidence.output_changed && next.run_evidence.output_changed !== null
       && live.commands.length === 0) next.attention_reason = "no_work";
@@ -563,7 +572,8 @@ export async function createCodexWorker({
   forbid = [],
   allowedCommands = [],
   context = [],
-  contracts = []
+  contracts = [],
+  externalOutputs = []
 }) {
   if (!task || typeof task !== "string") throw new Error("task is required");
   const acceptanceCommands = normalizeAcceptance(acceptance);
@@ -576,12 +586,15 @@ export async function createCodexWorker({
   }
   const validatedGoal = validateGoal(goal);
   await buildHandoff({ context, contracts });
+  await captureExternalOutputs(externalOutputs, { checkBaseline: true });
+  if (externalOutputs.length && !acceptanceCommands?.length) throw new Error("shared outputs require explicit acceptance commands");
+  if (externalOutputs.length && sandbox === "read-only") throw new Error("a read-only worker cannot declare writable shared outputs");
   for (const [name, values] of Object.entries({ forbid, allowedCommands })) {
     if (!Array.isArray(values) || values.length > 100 || values.some((value) => typeof value !== "string" || !value.trim())) throw new Error(`${name} must be a list of at most 100 nonempty strings`);
   }
 
   const projectRoot = cwd;
-  const normalizedOwnedPaths = normalizeOwnedPaths(ownedPaths, projectRoot);
+  const normalizedOwnedPaths = normalizeOwnedPaths([...ownedPaths, ...externalOutputs.map((entry) => entry.path)], projectRoot);
   const conflicts = await findOwnershipConflicts(normalizedOwnedPaths);
   if (conflicts.length > 0) throw ownershipConflictError(conflicts);
 
@@ -621,7 +634,7 @@ export async function createCodexWorker({
     session_id: sessionId ?? null,
     thread_id: null,
     owned_paths: normalizedOwnedPaths,
-    guard_policy: { forbid, allowedCommands },
+    guard_policy: { forbid, allowedCommands, externalOutputs },
     input_context: { context, contracts },
     depends_on: Array.isArray(dependsOn) ? dependsOn : [],
     goal_objective: validatedGoal.objective,
@@ -956,7 +969,8 @@ export async function createFollowupWorker({
   forbid,
   allowedCommands,
   context,
-  contracts
+  contracts,
+  externalOutputs
 }) {
   const parent = await getTask(taskId);
   if (!parent) throw new Error(`task not found: ${taskId}`);
@@ -1000,6 +1014,7 @@ export async function createFollowupWorker({
     allowedCommands: allowedCommands ?? parent.guard_policy?.allowedCommands ?? [],
     context: context ?? parent.input_context?.context ?? [],
     contracts: contracts ?? parent.input_context?.contracts ?? [],
+    externalOutputs: externalOutputs ?? parent.guard_policy?.externalOutputs ?? [],
     goal: goal ?? { objective: parent.goal_objective ?? `Follow-up for ${parent.id}`, tokenBudget: parent.goal_token_budget ?? undefined },
     dependsOn: [parent.id],
     followupOf: parent.id,

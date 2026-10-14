@@ -484,6 +484,30 @@ function errorResult(error) {
   });
 }
 
+function externalOutputView(task, maxChars = 6000) {
+  const outputs = task.run_evidence?.external_outputs ?? [];
+  const perContent = Math.floor(maxChars / Math.max(1, outputs.length * 2));
+  return outputs.map((entry) => ({ ...entry, before: { ...entry.before, content: clip(entry.before.content, perContent) },
+    after: { ...entry.after, content: clip(entry.after.content, perContent) } }));
+}
+
+function reportView(task, maxChars) {
+  const value = task.run_evidence?.structured_report;
+  if (!value) return { format: "legacy_text", valid: null };
+  if (!value.valid || !maxChars) return value;
+  const report = value.report;
+  const perEntry = Math.floor(maxChars / Math.max(1, 2 + report.verification.length + report.not_done.length));
+  return { ...value, report: { result: clip(report.result, perEntry * 2),
+    verification: report.verification.map((entry) => clip(entry, perEntry)),
+    not_done: report.not_done.map((entry) => clip(entry, perEntry)) } };
+}
+
+function runEvidenceView(task) {
+  if (!task.run_evidence) return null;
+  const { structured_report, external_outputs, ...evidence } = task.run_evidence;
+  return { ...evidence, external_changed_count: (external_outputs ?? []).filter((entry) => entry.changed).length };
+}
+
 const acceptanceFailureRecord = z.object({
   test_id: z.string().min(1), kind: z.enum(["failure", "error"]), signature: z.string().min(1)
 }).strict();
@@ -573,6 +597,7 @@ server.registerTool(
       allowedCommands: z.array(z.string().min(1)).max(100).optional(),
       context: z.array(z.object({ path: z.string().min(1), sha256: z.string().regex(/^[a-f0-9]{64}$/).optional() })).max(20).optional(),
       contracts: z.array(z.string().min(1).max(2000)).max(20).optional(),
+      externalOutputs: z.array(z.object({ path: z.string().min(1), sha256: z.string().regex(/^[a-f0-9]{64}$/).optional() })).max(20).optional(),
       goal: z.object({
         objective: z.string().min(1),
         tokenBudget: z.number().int().positive().optional()
@@ -625,6 +650,7 @@ server.registerTool(
       allowedCommands: z.array(z.string().min(1)).max(100).optional(),
       context: z.array(z.object({ path: z.string().min(1), sha256: z.string().regex(/^[a-f0-9]{64}$/).optional() })).max(20).optional(),
       contracts: z.array(z.string().min(1).max(2000)).max(20).optional(),
+      externalOutputs: z.array(z.object({ path: z.string().min(1), sha256: z.string().regex(/^[a-f0-9]{64}$/).optional() })).max(20).optional(),
       goal: z
         .object({
           objective: z.string().min(1),
@@ -1083,9 +1109,10 @@ server.registerTool(
       worktree_path: task.worktree_path,
       goal_status: task.goal_status,
       attention_reason: task.attention_reason ?? null,
-      run_evidence: task.run_evidence ?? null,
-      structured_report: task.run_evidence?.structured_report ?? { format: "legacy_text", valid: null },
+      run_evidence: runEvidenceView(task),
+      structured_report: reportView(task, maxChars),
       input_context: task.input_context ?? null,
+      external_outputs: externalOutputView(task, maxChars || 6000),
       changed_file_count: changed.length,
       changed_files: listFiles ? changed : undefined,
       base_commit: task.base_commit ?? null,
@@ -1123,7 +1150,7 @@ server.registerTool(
     const task = await getTask(task_id);
     if (!task) return textResult({ error: "task_not_found", task_id });
     if (!task.worktree_path) {
-      return textResult({ error: "no_worktree", task_id, reason: "this worker ran in place (its cwd is not a git repository or the worktree could not be created), so there is no isolated diff to read; call get_worker_result with includeFiles: true for the files it touched" });
+      return textResult({ error: "no_worktree", task_id, external_outputs: externalOutputView(task, maxChars), reason: "this worker ran in place (its cwd is not a git repository or the worktree could not be created), so there is no isolated diff to read; call get_worker_result with includeFiles: true for the files it touched" });
     }
     const diff = readWorktreeDiff(task.worktree_path, worktreeRef(task), { maxChars, paths: paths ?? [] });
     return textResult({
@@ -1132,7 +1159,8 @@ server.registerTool(
       status: task.status,
       worktree_path: task.worktree_path,
       branch: `codex/${task.id}`,
-      ...diff
+      ...diff,
+      external_outputs: externalOutputView(task, maxChars)
     });
   }
 );
