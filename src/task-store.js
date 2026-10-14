@@ -6,6 +6,7 @@ import { extractAgentMessage } from "./event-parser.js";
 import { ACTIVE_STATUSES, PHASES, TERMINAL_STATUSES } from "./status.js";
 import { readNativeGoal } from "./goal-store.js";
 import { normalizeAcceptance } from "./acceptance.js";
+import { randomUUID } from "node:crypto";
 
 let db;
 
@@ -256,6 +257,7 @@ function initializeSchema(dbInstance) {
         if (!tableColumns(dbInstance, "sessions").some((column) => column.name === name)) dbInstance.exec(`ALTER TABLE sessions ADD COLUMN ${name} ${definition}`);
       }
       dbInstance.exec("CREATE TABLE IF NOT EXISTS observer_cursors (id TEXT PRIMARY KEY, cursor TEXT NOT NULL, updated_at TEXT NOT NULL)");
+      dbInstance.exec("CREATE TABLE IF NOT EXISTS run_claims (task_id TEXT PRIMARY KEY, token TEXT NOT NULL, owner_pid INTEGER NOT NULL)");
       dbInstance.exec(SIDE_DDL);
       // Rows written before 0.7.1 have no worker_run_count: the fork is then
 
@@ -469,6 +471,37 @@ export async function getTask(taskId) {
   await ensureFilesystem();
   const row = openDb().prepare("SELECT * FROM tasks WHERE id = ?").get(taskId);
   return rowToTask(row);
+}
+
+// Compare and claim under one write lock before rebase or spawning. A claim
+// whose dispatcher died can be replaced; a different run cannot be resumed
+// using an earlier snapshot, even when both dispatchers read it together.
+export async function claimTaskRun(taskId, expectedRun) {
+  await ensureFilesystem();
+  const connection = openDb();
+  return runWithRetry(connection, () => {
+    connection.exec("BEGIN IMMEDIATE");
+    try {
+      const row = connection.prepare("SELECT * FROM tasks WHERE id=?").get(taskId);
+      const claim = connection.prepare("SELECT * FROM run_claims WHERE task_id=?").get(taskId);
+      const busy = !row || row.run_count !== expectedRun || ACTIVE_STATUSES.has(row.status)
+        || (["completed", "failed"].includes(row.status) && row.exit_code == null)
+        || decodeJson(row.acceptance_results, null)?.status === "running"
+        || (claim && isPidAlive(claim.owner_pid));
+      let token = null;
+      if (!busy) {
+        token = randomUUID();
+        connection.prepare("INSERT INTO run_claims VALUES (?,?,?) ON CONFLICT(task_id) DO UPDATE SET token=excluded.token,owner_pid=excluded.owner_pid")
+          .run(taskId, token, process.pid);
+      }
+      connection.exec("COMMIT");
+      return token;
+    } catch (error) { connection.exec("ROLLBACK"); throw error; }
+  });
+}
+
+export async function releaseTaskRun(taskId, token) {
+  openDb().prepare("DELETE FROM run_claims WHERE task_id=? AND token=?").run(taskId, token);
 }
 
 export async function readObserverCursor(observerId) {

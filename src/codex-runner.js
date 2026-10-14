@@ -12,7 +12,9 @@ import {
   readTaskEvents,
   taskRunPath,
   upsertSession,
-  upsertTask
+  upsertTask,
+  claimTaskRun,
+  releaseTaskRun
 } from "./task-store.js";
 import { applyCodexEvent } from "./event-parser.js";
 import { ACTIVE_STATUSES, TERMINAL_STATUSES } from "./status.js";
@@ -619,6 +621,13 @@ export async function resumeCodexWorker({ taskId, prompt, rebaseOnto = null, acc
   if (!prompt || typeof prompt !== "string") throw new Error("prompt is required");
   let task = await getTask(taskId);
   if (!task) throw new Error(`task not found: ${taskId}`);
+  const claim = await claimTaskRun(taskId, task.run_count ?? 0);
+  if (!claim) {
+    const error = new Error(`task ${taskId} is active or already claimed by another dispatcher; wait for it to settle`);
+    error.code = "worker_active";
+    throw error;
+  }
+  try {
   const session = task.session_id ? await getSession(task.session_id) : null;
   if (session?.approval_state === "waiting_user") {
     const error = new Error("session is waiting for user approval; do not resume");
@@ -698,6 +707,7 @@ export async function resumeCodexWorker({ taskId, prompt, rebaseOnto = null, acc
     spawnOptions: { cwd }
   });
   return rebase ? { ...started.record, rebase } : started.record;
+  } finally { await releaseTaskRun(taskId, claim); }
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url) && process.argv[2] === "--run-host") {

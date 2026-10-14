@@ -208,3 +208,27 @@ test("a fresh MCP can cancel acceptance owned by the independent run host", asyn
     assert.equal(report.acceptance.checks[0].cancelled, true);
   });
 });
+
+test("two MCP windows cannot resume the same completed run concurrently", async () => {
+  const home = await tempHome("supervisor-resume-claim-");
+  const { waitFor } = await import("./helpers.js");
+  let id;
+  await withMcp({ SUPERVISOR_HOME: home }, async ({ call }) => {
+    const task = await call("create_codex_worker", dispatchArgs("single resume", join(home, "workspace")));
+    id = task.id;
+    await waitFor(call, id, (row) => row.exit_code === 0);
+  });
+  const env = { SUPERVISOR_HOME: home, FAKE_CODEX_STEP_MS: "500" };
+  await withMcp(env, async ({ call: first }) => {
+    await withMcp(env, async ({ call: second }) => {
+      try {
+        const replies = await Promise.all([first, second].map((call) =>
+          call("resume_codex_worker", { task_id: id, prompt: "Continue once only" })));
+        assert.equal(replies.filter((reply) => reply.status === "running").length, 1);
+        assert.equal(replies.filter((reply) => reply.error === "worker_active").length, 1);
+        const row = await first("get_codex_worker_status", { task_id: id });
+        assert.equal(row.run_count, 2);
+      } finally { await first("cancel_codex_worker", { task_id: id }); }
+    });
+  });
+});
