@@ -49,7 +49,15 @@ const FAKE_CLI = `#!/usr/bin/env node
 const fs = require("node:fs");
 const argv = process.argv.slice(2);
 fs.appendFileSync(process.env.WINSIM_LOG, JSON.stringify(argv) + "\\n");
-if (argv[0] === "mcp" && argv[1] === "get") process.exit(1);
+const state = process.env.WINSIM_LOG + ".state";
+if (argv[0] === "mcp" && argv[1] === "get") {
+  if (!fs.existsSync(state)) { console.error("No MCP server found"); process.exit(1); }
+  console.log(JSON.stringify({ enabled: true, transport: JSON.parse(fs.readFileSync(state, "utf8")) }));
+}
+if (argv[0] === "mcp" && argv[1] === "add") {
+  const start = argv.indexOf("--");
+  fs.writeFileSync(state, JSON.stringify({ command: argv[start + 1], args: argv.slice(start + 2) }));
+}
 process.exit(0);
 `;
 
@@ -129,10 +137,12 @@ await check("win32 registers Claude through its native claude.exe, not the shim"
 
 await check("win32 reports an un-bypassable shim instead of spawning it", async () => {
   const root = await makeHost({ withCodexEntry: false });
-  const { stderr } = await runSetup(root, ["--target", "codex"]).then(
+  const result = await runSetup(root, ["--target", "codex"]).then(
     (result) => result,
     (error) => error
   );
+  const { stderr } = result;
+  assert.equal(result.code, 1);
   assert.match(stderr, /shell shim/, stderr);
   assert.match(stderr, /CODEX_BIN/, stderr);
   assert.equal(existsSync(join(root, "calls.log")), false, "the shim must never be executed");

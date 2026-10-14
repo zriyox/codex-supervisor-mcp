@@ -134,7 +134,7 @@ await check("a client missing from PATH is still found via its global bin direct
   const home = await makeHome(["codex"]);
   const binDir = join(home, ".npm-global", "bin");
   await mkdir(binDir, { recursive: true });
-  await writeFile(join(binDir, "codex"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+  await writeFile(join(binDir, "codex"), `#!/bin/sh\nprintf '%s\\n' '${JSON.stringify({ enabled: true, transport: { command: process.execPath, args: [fileURLToPath(new URL("./mcp-server.js", import.meta.url))] } })}'\n`, { mode: 0o755 });
 
   const { stdout } = await runSetup(home, ["--mcp-only", "--target", "codex"], {
     PATH: "/usr/bin:/bin"

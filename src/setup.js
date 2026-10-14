@@ -42,7 +42,7 @@ const CLIENTS = [
   {
     ...SKILL_ROOTS.claude,
     binary: "claude",
-    binEnv: null,
+    binEnv: "CLAUDE_BIN",
     npmEntry: { pkg: "@anthropic-ai/claude-code", bin: "bin/claude.exe" }
   },
   { ...SKILL_ROOTS.agents, binary: null },
@@ -151,7 +151,9 @@ function versionManagerBinDirs() {
 // instead (see bin-resolver.js).
 function locateClient(binary) {
   if (!binary) return null;
-  const path = findBinaryPath(binary, {
+  const client = CLIENTS.find((entry) => entry.binary === binary);
+  const configured = client?.binEnv && process.env[client.binEnv]?.trim();
+  const path = findBinaryPath(configured || binary, {
     extraDirs: [...EXTRA_BIN_DIRS, ...versionManagerBinDirs()]
   });
   if (!path) return null;
@@ -167,25 +169,34 @@ function selectClients(options) {
   return CLIENTS.filter((client) => {
     if (options.targets && !options.targets.includes(client.id)) return false;
     if (client.binary && locateClient(client.binary)) return true;
-    return existsSync(client.skillRoot);
+    return existsSync(client.skillRoot) || (client.binary && existsSync(dirname(client.skillRoot)));
   });
 }
 
-async function mcpAlreadyRegistered(target, options) {
-  if (options.dryRun) return false;
+async function registeredMcp(target, client) {
   try {
-    await runClient(target, ["mcp", "get", MCP_NAME], { timeout: CLIENT_TIMEOUT_MS });
-    return true;
-  } catch {
-    return false;
+    const { stdout } = await runClient(target, ["mcp", "get", MCP_NAME, ...(client.id === "codex" ? ["--json"] : [])], { timeout: CLIENT_TIMEOUT_MS });
+    if (client.id === "codex") {
+      const value = JSON.parse(stdout);
+      const transport = value.transport ?? value;
+      return { command: transport.command, args: transport.args ?? [], env: transport.env ?? {}, cwd: transport.cwd, enabled: value.enabled !== false, userScope: true };
+    }
+    const command = stdout.match(/^\s*Command: (.+)$/m)?.[1]?.trim();
+    const args = stdout.match(/^\s*Args: (.*)$/m)?.[1]?.trim();
+    const environment = stdout.split(/\n[ \t]*Environment:[ \t]*\r?\n/)[1]?.split(/(?:^|\n)[ \t]*To remove/)[0]?.trim();
+    return { command, args: args ? [args] : [], env: environment ? { custom: true } : {}, enabled: !/Status:.*Disabled/i.test(stdout), userScope: /Scope: User config/.test(stdout) };
+  } catch (error) {
+    const message = `${error.stdout ?? ""}${error.stderr ?? ""}${error.message}`;
+    if (/not found|no mcp server|could not find|does not exist/i.test(message)) return null;
+    throw new Error(`cannot read ${client.label} MCP registration: ${error.message.split("\n")[0]}`);
   }
 }
 
 async function registerMcp(client, options, log, warn) {
   const target = locateClient(client.binary);
   if (!target) {
-    log(`mcp     ${client.label}: skipped (no ${client.binary} found)`);
-    return "skipped";
+    warn(`mcp     ${client.label}: no ${client.binary} CLI found; install it or set ${client.binEnv} to its executable, then run "codex-supervisor-setup"`);
+    return "failed";
   }
   if (target.shim) {
     warn(
@@ -193,9 +204,18 @@ async function registerMcp(client, options, log, warn) {
     );
     return "failed";
   }
-  if (await mcpAlreadyRegistered(target, options)) {
-    log(`mcp     ${client.label}: already registered`);
-    return "unchanged";
+  let previous;
+  try { previous = options.dryRun ? null : await registeredMcp(target, client); }
+  catch (error) { warn(`mcp     ${client.label}: ${error.message}`); return "failed"; }
+  if (previous) {
+    const same = previous.userScope && previous.command === process.execPath && previous.args.length === 1 && previous.args[0] === serverEntry;
+    if (same && previous.enabled) { log(`mcp     ${client.label}: already registered at this installation`); return "unchanged"; }
+    const managed = previous.userScope && previous.enabled && !previous.cwd && Object.keys(previous.env).length === 0
+      && previous.args.length === 1 && /(?:^|[\\/])codex-supervisor-mcp[\\/]src[\\/]mcp-server\.js$/.test(previous.args[0]);
+    if (!managed) {
+      warn(`mcp     ${client.label}: existing custom, disabled or project registration preserved; inspect "${client.binary} mcp get ${MCP_NAME}" before replacing it`);
+      return "failed";
+    }
   }
 
   const args =
@@ -204,14 +224,25 @@ async function registerMcp(client, options, log, warn) {
       : ["mcp", "add", MCP_NAME, "--", process.execPath, serverEntry];
 
   if (options.dryRun) {
+    if (previous) log(`mcp     ${client.label}: would repair stale package registration`);
     log(`mcp     ${client.label}: would run ${client.binary} ${args.join(" ")}`);
     return "would-register";
   }
   try {
+    if (previous) await runClient(target, client.id === "claude" ? ["mcp", "remove", "-s", "user", MCP_NAME] : ["mcp", "remove", MCP_NAME], { timeout: CLIENT_TIMEOUT_MS });
     await runClient(target, args, { timeout: CLIENT_TIMEOUT_MS });
-    log(`mcp     ${client.label}: registered`);
+    const actual = await registeredMcp(target, client);
+    if (!actual || actual.command !== process.execPath || actual.args.length !== 1 || actual.args[0] !== serverEntry || !actual.enabled) throw new Error("registration command succeeded but read-back does not match this package");
+    log(`mcp     ${client.label}: ${previous ? "repaired" : "registered"}`);
     return "registered";
   } catch (error) {
+    if (previous) {
+      try {
+        await runClient(target, client.id === "claude" ? ["mcp", "remove", "-s", "user", MCP_NAME] : ["mcp", "remove", MCP_NAME], { timeout: CLIENT_TIMEOUT_MS }).catch(() => {});
+        const restore = client.id === "claude" ? ["mcp", "add", "-s", "user", MCP_NAME, "--", previous.command, ...previous.args] : ["mcp", "add", MCP_NAME, "--", previous.command, ...previous.args];
+        await runClient(target, restore, { timeout: CLIENT_TIMEOUT_MS });
+      } catch (restoreError) { warn(`mcp     ${client.label}: restoring the original registration failed (${restoreError.message.split("\n")[0]})`); }
+    }
     warn(
       `mcp     ${client.label}: registration failed (${error.message.split("\n")[0]}) ` +
         `- run "codex-supervisor-setup" once ${client.label} is working`
@@ -240,10 +271,12 @@ async function main() {
   const log = options.quiet ? () => {} : (line) => console.log(line);
   const warn = (line) => console.error(line);
   const clients = selectClients(options);
+  const missingTargets = options.targets?.filter((id) => !clients.some((client) => client.id === id)) ?? [];
+  if (missingTargets.length) warn(`setup: requested client(s) not detected: ${missingTargets.join(", ")}; install the CLI or set CLAUDE_BIN / CODEX_BIN`);
 
   if (clients.length === 0) {
-    log("setup: no Claude Code / Codex client detected; nothing to do");
-    return 0;
+    warn("setup: no Claude Code / Codex client detected; MCP was not registered. Install a client, then run codex-supervisor-setup.");
+    return options.targets?.length && !options.auto ? 1 : 0;
   }
 
   log(`setup: ${options.dryRun ? "dry run against" : "configuring"} ${clients.map((client) => client.label).join(", ")}`);
@@ -253,14 +286,15 @@ async function main() {
       await installSkill(client, options, log);
     }
   }
+  let failures = missingTargets.length;
   if (options.mcp) {
     for (const client of clients.filter((client) => client.binary)) {
-      await registerMcp(client, options, log, warn);
+      if (await registerMcp(client, options, log, warn) === "failed") failures += 1;
     }
   }
 
-  log("setup: done");
-  return 0;
+  log(failures ? `setup: ${failures} MCP registration(s) require repair` : "setup: done");
+  return failures && !options.auto ? 1 : 0;
 }
 
 try {
