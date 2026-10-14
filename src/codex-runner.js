@@ -9,6 +9,7 @@ import {
   getTask,
   getSession,
   readActiveTasks,
+  readTasks,
   readTaskEvents,
   taskRunPath,
   upsertSession,
@@ -741,6 +742,33 @@ export async function resumeCodexWorker({ taskId, prompt, rebaseOnto = null, acc
   });
   return rebase ? { ...started.record, rebase } : started.record;
   } finally { await releaseTaskRun(taskId, claim); }
+}
+
+export async function recoverEligibleRuns() {
+  const recovered = [];
+  for (const task of await readTasks()) {
+    if ((task.run_count ?? 0) !== 1 || !task.thread_id
+      || !(task.status === "lost" || task.attention_reason === "no_work")
+      || ["blocked", "paused", "budget_limited", "usage_limited"].includes(task.goal_status)
+      || /401|403|unauthori[sz]ed|not logged|permission denied|approval|rate.?limit|429/i.test(task.error ?? "")
+      || await isPidAlive(task.pid) || await isPidAlive(task.run_host_pid)) continue;
+    const session = task.session_id ? await getSession(task.session_id) : null;
+    if (session?.approval_state === "waiting_user") continue;
+    try {
+      const result = await resumeCodexWorker({ taskId: task.id,
+        prompt: `One automatic recovery after ${task.attention_reason ?? task.status}. Original task: ${task.prompt}\nContinue from files already present; do not repeat completed edits. Make concrete progress, run declared checks, and report remaining blockers accurately. This is the only automatic retry.` });
+      const event = { type: "supervisor.recovery", automatic: true, from_run: 1, to_run: result.run_count,
+        reason: task.attention_reason ?? task.status, started_at: new Date().toISOString() };
+      await appendTaskEvent(task.id, event);
+      await appendFile(task.run_log, `${JSON.stringify(event)}\n`);
+      recovered.push({ id: task.id, run: result.run_count, reason: event.reason });
+    } catch (error) {
+      if (!["worker_active", "session_waiting_user"].includes(error.code)) {
+        await appendTaskEvent(task.id, { type: "supervisor.recovery_refused", reason: error.code ?? "resume_failed" });
+      }
+    }
+  }
+  return recovered;
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url) && process.argv[2] === "--run-host") {

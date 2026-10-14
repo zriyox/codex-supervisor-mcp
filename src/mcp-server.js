@@ -7,6 +7,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 import {
   cancelCodexWorker,
+  recoverEligibleRuns,
   createCodexWorker,
   createFollowupWorker,
   resumeCodexWorker
@@ -502,15 +503,16 @@ const observerId = process.env.CODEX_SUPERVISOR_OBSERVER_ID?.trim() || `mcp-${ra
 let observerRead = Promise.resolve();
 server.registerTool("check_workers", {
   title: "Check changed workers",
-  description: "Check for newly settled runs or actionable goal/acceptance failures. Unchanged state returns quiet. Call from a host-scheduled loop; this query does not wake a closed host. Set CODEX_SUPERVISOR_OBSERVER_ID to retain this observer's cursor across restarts, with a different ID for each main thread.",
+  description: "Check newly settled runs and actionable failures; automatically resume a dead lost/no_work first run once, except approval, authentication, permission and quota waits. Returns recovery receipts; unchanged state is quiet. Call from a host-scheduled loop; it cannot wake a closed host. Set a distinct CODEX_SUPERVISOR_OBSERVER_ID per main thread to retain its cursor across restarts.",
   inputSchema: {}
 }, async () => {
   const read = observerRead.then(async () => {
     await reconcileDetachedActiveTasks();
+    const recoveries = await recoverEligibleRuns();
     const result = collectWorkerChanges(await readTasks(), await readObserverCursor(observerId));
     await writeObserverCursor(observerId, result.cursor);
     const { cursor, ...reply } = result;
-    return textResult(reply);
+    return textResult({ ...reply, quiet: reply.quiet && recoveries.length === 0, recoveries });
   });
   observerRead = read.catch(() => {});
   return read;
