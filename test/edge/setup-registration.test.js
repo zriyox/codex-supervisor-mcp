@@ -26,6 +26,10 @@ for(const client of ["claude","codex"]){
   test(`${client}: repair obsolete package path but preserve custom registrations`,async()=>{
     const h=await host(client,{command:"/old/node",args:["/old/node_modules/codex-supervisor-mcp/src/mcp-server.js"]});assert.match((await h.setup()).stdout,/repaired/);
     const custom={command:"npx",args:["-y","codex-supervisor-mcp"],env:{CUSTOM:"keep"}};const c=await host(client,custom);await assert.rejects(c.setup(),error=>error.code===1&&/preserved/.test(error.stderr));assert.deepEqual(JSON.parse(await readFile(c.state,"utf8")),custom);
+    const checkout=join(c.root,"codex-supervisor-mcp/src/mcp-server.js");await mkdir(join(c.root,"codex-supervisor-mcp/src"),{recursive:true});await writeFile(checkout,"// user source entry");
+    const source={command:process.execPath,args:[checkout]};await writeFile(c.state,JSON.stringify(source));
+    await assert.rejects(c.setup(),error=>error.code===1&&/preserved/.test(error.stderr));
+    assert.deepEqual(JSON.parse(await readFile(c.state,"utf8")),source);
   });
   test(`${client}: unsuccessful registration or unverifiable success fails manual setup`,async()=>{
     for(const mode of ["fail","no-write"]){const h=await host(client,null,mode);await assert.rejects(h.setup(),error=>error.code===1&&/registration failed/.test(error.stderr));}

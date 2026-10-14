@@ -12,7 +12,7 @@
 import { execFile } from "node:child_process";
 import { existsSync, readdirSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { basename, dirname, isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import {
@@ -211,7 +211,10 @@ async function registerMcp(client, options, log, warn) {
     const same = previous.userScope && previous.command === process.execPath && previous.args.length === 1 && previous.args[0] === serverEntry;
     if (same && previous.enabled) { log(`mcp     ${client.label}: already registered at this installation`); return "unchanged"; }
     const managed = previous.userScope && previous.enabled && !previous.cwd && Object.keys(previous.env).length === 0
-      && previous.args.length === 1 && /(?:^|[\\/])codex-supervisor-mcp[\\/]src[\\/]mcp-server\.js$/.test(previous.args[0]);
+      && ["node", "node.exe"].includes(basename(previous.command ?? "").toLowerCase())
+      && previous.args.length === 1 && isAbsolute(previous.args[0])
+      && /(?:^|[\\/])codex-supervisor-mcp[\\/]src[\\/]mcp-server\.js$/.test(previous.args[0])
+      && (/[\\/]node_modules[\\/]/.test(previous.args[0]) || !existsSync(previous.args[0]));
     if (!managed) {
       warn(`mcp     ${client.label}: existing custom, disabled or project registration preserved; inspect "${client.binary} mcp get ${MCP_NAME}" before replacing it`);
       return "failed";
