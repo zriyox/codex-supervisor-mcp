@@ -307,6 +307,17 @@ export function rebaseWorktree(task, ontoCommit) {
     }
   }
 
+  let pending;
+  let alreadyLanded;
+  try {
+    const commits = lines(git(cwd, ["rev-list", "--reverse", `${base}..HEAD`]));
+    const newPatches = new Set(lines(git(cwd, ["cherry", ontoCommit, "HEAD", base]))
+      .filter((line) => line.startsWith("+ ")).map((line) => line.slice(2)));
+    pending = commits.filter((sha) => newPatches.has(sha));
+    alreadyLanded = commits.filter((sha) => !newPatches.has(sha));
+  } catch (error) {
+    return { error: "rebase_failed", reason: `could not prove which worker patches are already integrated: ${gitTail(error)}`, base_commit: base, head };
+  }
   const stashBefore = stashRef(cwd);
   let stashed = false;
   try {
@@ -343,14 +354,18 @@ export function rebaseWorktree(task, ontoCommit) {
   };
 
   try {
-    git(cwd, ["rebase", "--onto", ontoCommit, base], { timeout: 10 * 60 * 1000 });
+    // Rebase --onto can replay a patch previously cherry-picked to main and
+    // conflict with main's later edits. Rebuild only the proven new patches.
+    git(cwd, ["reset", "-q", "--hard", ontoCommit]);
+    if (pending.length) git(cwd, ["cherry-pick", ...pending], { timeout: 10 * 60 * 1000 });
   } catch (error) {
     const files = conflictFiles(cwd);
     try {
-      git(cwd, ["rebase", "--abort"]);
+      git(cwd, ["cherry-pick", "--abort"]);
     } catch {
       // nothing in progress to abort
     }
+    git(cwd, ["reset", "-q", "--hard", head]);
     const popError = restoreStash();
     return {
       error: files.length > 0 ? "rebase_conflict" : "rebase_failed",
@@ -395,5 +410,5 @@ export function rebaseWorktree(task, ontoCommit) {
       };
     }
   }
-  return { ok: true, base_commit: ontoCommit, head: newHead, previous_head: head, replayed, stashed };
+  return { ok: true, base_commit: ontoCommit, head: newHead, previous_head: head, replayed, already_landed: alreadyLanded, stashed };
 }

@@ -256,3 +256,31 @@ test("base_commit is recorded before the worker starts, so a launch failure cann
     assert.equal(git(created.worktree_path, ["rev-parse", "HEAD"]), mainHead);
   });
 });
+
+test("rebase after landing skips integrated patches that main has since edited", async () => {
+  const home = await tempHome("supervisor-rebase-landed-");
+  const { dir } = await makeRepo(join(home, "repo"));
+  const { rebaseWorktree } = await import("../../src/landing.js");
+  await withMcp({ SUPERVISOR_HOME: home }, async ({ call }) => {
+    const created = await call("create_codex_worker", dispatchArgs("landed then extended", dir, { ownedPaths: ["first.txt", "new.txt"] }));
+    await waitFor(call, created.id, settled);
+    await writeFile(join(created.worktree_path, "first.txt"), "worker result\n");
+    git(created.worktree_path, ["commit", "-q", "-am", "worker result"]);
+    const integrated = git(created.worktree_path, ["rev-parse", "HEAD"]);
+    const landed = await call("land_codex_worker", { task_id: created.id });
+    assert.equal(landed.landed.length, 1);
+    await advanceMain(dir, "first.txt", "main extended the landed result\n");
+    const onto = git(dir, ["rev-parse", "HEAD"]);
+    await writeFile(join(created.worktree_path, "new.txt"), "worker addition\n");
+    git(created.worktree_path, ["add", "new.txt"]);
+    git(created.worktree_path, ["commit", "-q", "-m", "worker addition"]);
+    await writeFile(join(created.worktree_path, "draft.txt"), "preserve draft\n");
+    const outcome = rebaseWorktree({ id: created.id, worktree_path: created.worktree_path, base_commit: created.base_commit }, onto);
+    assert.equal(outcome.error, undefined, JSON.stringify(outcome));
+    assert.equal(outcome.replayed, 1);
+    assert.deepEqual(outcome.already_landed, [integrated]);
+    assert.equal(await text(join(created.worktree_path, "first.txt")), "main extended the landed result\n");
+    assert.equal(await text(join(created.worktree_path, "draft.txt")), "preserve draft\n");
+    assert.equal(git(created.worktree_path, ["rev-list", "--count", `${onto}..HEAD`]), "1");
+  });
+});
