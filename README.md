@@ -190,7 +190,7 @@ land_codex_worker       核过了，落进集成分支
 | 能跑什么模型 | 只能选 Claude | `model` 透传给 Codex CLI，DeepSeek 也能挂 |
 | 干活的是谁 | Claude Code 自己 | 独立的 `codex exec` 进程 |
 | 两路写同一个文件 | 靠 worktree 隔开，没有路径声明 | 派单前查 `ownedPaths` 交集，重叠直接拒 |
-| 主线程进程挂了 | worker 一起没 | `thread_id` 在 sqlite 里，`resume_codex_worker` 接回同一个会话 |
+| 主线程进程挂了 | 主窗口无法收活 | 独立运行进程继续记录 worker 和验收；新窗口用 session_id 收回同批结果 |
 | 谁能驱动 | 只有 Claude Code | 任何 MCP 客户端 |
 | 看过程 | 只有它返回的结论 | 原始 JSONL 和网页看板 |
 
@@ -203,7 +203,7 @@ land_codex_worker       核过了，落进集成分支
 | `completed` | 成功 |
 | `failed` | 非零退出码、`turn.failed`、spawn 失败 |
 | `cancelled` | 被 `cancel_codex_worker` 中断 |
-| `lost` | 被外部信号杀掉、MCP 进程消失、或者行写了但进程从没起来。`resume_codex_worker` 接回 |
+| `lost` | worker 被外部信号杀掉、运行进程失踪、或者行写了但进程从没起来。`resume_codex_worker` 接回 |
 
 终态分两步落盘：`turn.completed` 先把 status 置成 completed，进程退出后才写 `exit_code`；`wait_codex_workers` 等到 `exit_code` 落了才返回。Windows 没有信号，外部 kill 只报 `failed` 加退出码。Codex 原生 goal 的 `paused` / `blocked` 算 `running` 并进 `needs_attention`，`usageLimited` / `budgetLimited` 算 `failed`。
 
@@ -280,7 +280,7 @@ rm -rf ~/.claude/skills/codex-supervisor ~/.agents/skills/codex-supervisor ~/.co
 | 派单报 `codex only resolved to a shell shim` | Windows 只找到 `.cmd`，背后的包入口没了 | 重装 `@openai/codex`，或 `CODEX_BIN` 指到 `codex.js` |
 | worker 一起来就 `failed`，`spawn codex ENOENT` | 进程 `PATH` 里没有 codex | 配置里设 `CODEX_BIN` |
 | `Cannot find module 'node:sqlite'` | Node 低于 22.13.0 | 升 Node |
-| worker `lost` | MCP 进程被杀，worker 跟着没了 | `resume_codex_worker` 接回 |
+| worker `lost` | worker 或独立运行进程中断 | 查事件后用 `resume_codex_worker` 接回 |
 | worker 说 `git add` 报 `index.lock: Operation not permitted` | 默认沙箱把 `.git` 设成只读 | 收活时 `land_codex_worker` 带 `commitMessage`，或派单用 `danger-full-access` |
 | `ownedPaths overlap with active worker(s)` | 两路认领了同一片路径 | 改拆法，或先取消占着的那路 |
 | 看板打开是空的 | 看板和 MCP 的 `SUPERVISOR_HOME` 不是同一个 | 在配了 `.mcp.json` 的项目目录里起，或显式传同一个 `SUPERVISOR_HOME` |
@@ -288,7 +288,7 @@ rm -rf ~/.claude/skills/codex-supervisor ~/.agents/skills/codex-supervisor ~/.co
 
 ## 已知限制
 
-- worker 是 MCP 进程的子进程。MCP 被 kill，worker 跟着没了，结算成 `lost`；worktree 和 `thread_id` 都在，`resume_codex_worker` 接回。让它不跟着死要常驻 daemon，在 Roadmap 里。
+- 每次运行由独立进程读取 worker 输出、落状态和执行验收，直到结算后退出。派单 MCP 被 kill 后这些工作继续；新窗口用 `get_session_works` 收结果。若运行进程也被杀，保留 worktree 和 thread_id，核对 lost/interrupted 后恢复。
 - 默认 `workspace-write` 沙箱里 worker 提交不了（Codex 把 `.git` 设成只读）。要么收活时 `land_codex_worker` 带 `commitMessage` 替它提交，要么派单用 `danger-full-access`。
 - worktree 从一个提交切，你工作区里没 commit 的东西不在里面。
 - 只隔离工作目录。临时目录、数据库、端口是共用的。
@@ -301,7 +301,7 @@ rm -rf ~/.claude/skills/codex-supervisor ~/.agents/skills/codex-supervisor ~/.co
 
 做完的：`CODEX_BIN` / `SUPERVISOR_HOME` / `GIT_BIN`；`status` 和 `phase` 拆开；`ownedPaths` / `goal` / `dependsOn`；`thread_id` 落库 + `resume_codex_worker`；并发和多进程写库；`session_id`、`search_works`、原生 goal；Windows；网页看板；`baseRef`；收活三件套 `get_worker_diff` / `ask_codex_worker` / `land_codex_worker`；后台自动更新。
 
-下一个：常驻 daemon，派单和进程生命周期从 MCP 进程里拿出来。
+运行生命周期已独立于 MCP；每路结算后退出，不需要常驻全局 daemon。
 
 不做的：向量检索（子串匹配在这个规模更快、零维护）、`usage_count` 排序（实测 80 个 work 里只有 2 个被回头引用过）。
 

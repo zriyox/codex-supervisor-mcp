@@ -77,8 +77,8 @@ description: 把 Codex CLI 当并行 worker 派活、盯进度、收结果。用
 
 | 情况 | 用什么 |
 |---|---|
-| 主线程自己挂了 | 先 `get_session_works({ session_id })`，一次拿回那批活 |
-| worker 变 `lost`（MCP 进程没了把它带走了，或被信号杀了） | `resume_codex_worker`。worktree 里的改动和 `thread_id` 都在，同一线程接着干；被杀时正在做的那一步可能要重做 |
+| 主线程自己挂了 | 独立运行进程继续记日志、状态和验收；新窗口 `get_session_works({ session_id })` 收回同批活 |
+| worker 变 `lost`（worker 或独立运行进程中断） | `resume_codex_worker`。worktree 里的改动和 `thread_id` 都在，同一线程接着干；被杀时正在做的那一步可能要重做 |
 | worktree 落后主线（`base_behind.behind > 0`） | `resume_codex_worker` 带 `rebaseOnto: "HEAD"`，见收活第 4 步 |
 | worker `failed` | 看 `error` 和日志，查完再 resume 或重派 |
 | 没记到 `thread_id` 的老行 | `create_codex_followup_worker`，新线程靠文本重述 |

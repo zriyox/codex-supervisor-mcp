@@ -190,7 +190,7 @@ File isolation is not the difference: a subagent can open a worktree too. The di
 | Model | Claude only | `model` passed to the Codex CLI; DeepSeek works |
 | Who does the work | Claude Code itself | A separate `codex exec` process |
 | Two writers on one file | Worktrees keep them apart, no path declaration | `ownedPaths` overlap is refused before dispatch |
-| Main-thread process dies | Workers die with it | `thread_id` is in sqlite; `resume_codex_worker` picks the same conversation up |
+| Main-thread process dies | The main window cannot collect results | An independent run process records worker output and acceptance; a new window reads the same session_id |
 | Who can drive it | Claude Code only | Any MCP client |
 | Seeing the process | Only the returned conclusion | Raw JSONL and the web board |
 
@@ -203,7 +203,7 @@ File isolation is not the difference: a subagent can open a worktree too. The di
 | `completed` | Done |
 | `failed` | Non-zero exit, `turn.failed`, spawn failure |
 | `cancelled` | Stopped by `cancel_codex_worker` |
-| `lost` | Killed by an outside signal, MCP process gone, or a row whose process never started. `resume_codex_worker` picks it up |
+| `lost` | Worker killed by an outside signal, run process disappeared, or a row whose process never started. `resume_codex_worker` picks it up |
 
 A terminal state lands in two steps: `turn.completed` sets `completed`, the process exit writes `exit_code`; `wait_codex_workers` returns only after the exit code is in. Windows has no signals, so an outside kill reports as `failed` with an exit code. Native Codex goals: `paused` / `blocked` count as `running` and go to `needs_attention`, `usageLimited` / `budgetLimited` as `failed`.
 
@@ -280,7 +280,7 @@ rm -rf ~/.claude/skills/codex-supervisor ~/.agents/skills/codex-supervisor ~/.co
 | Dispatch says `codex only resolved to a shell shim` | Windows found only the `.cmd`; the package entry behind it is gone | Reinstall `@openai/codex`, or point `CODEX_BIN` at `codex.js` |
 | Worker `failed` at once with `spawn codex ENOENT` | No codex on the process `PATH` | Set `CODEX_BIN` in the config |
 | `Cannot find module 'node:sqlite'` | Node older than 22.13.0 | Upgrade Node |
-| Worker `lost` | The MCP process was killed and took the worker with it | `resume_codex_worker` |
+| Worker `lost` | The worker or independent run process was interrupted | Inspect events, then `resume_codex_worker` |
 | Worker reports `git add` failing with `index.lock: Operation not permitted` | The default sandbox keeps `.git` read-only | `land_codex_worker` with `commitMessage`, or dispatch with `danger-full-access` |
 | `ownedPaths overlap with active worker(s)` | Two workers claimed the same paths | Split differently, or cancel the one holding them |
 | The board is empty | The board and the MCP use different `SUPERVISOR_HOME`s | Start it inside the project with the `.mcp.json`, or pass the same `SUPERVISOR_HOME` |
@@ -288,7 +288,7 @@ rm -rf ~/.claude/skills/codex-supervisor ~/.agents/skills/codex-supervisor ~/.co
 
 ## Known limitations
 
-- A worker is a child of the MCP process. Kill the MCP and the worker goes with it, settled as `lost`; its worktree and `thread_id` survive and `resume_codex_worker` picks it up. Keeping it alive across that takes a resident daemon; see the Roadmap.
+- Each run has an independent process that drains worker output, records its exit, and runs acceptance before exiting. These continue after the dispatching MCP is killed; a new window uses `get_session_works` to collect results. If the run process is also killed, inspect lost/interrupted evidence before resuming the preserved worktree and thread_id.
 - In the default `workspace-write` sandbox a worker cannot commit (Codex keeps `.git` read-only). Either `land_codex_worker` with `commitMessage` commits for it, or dispatch with `danger-full-access`.
 - The worktree is cut from a commit; uncommitted work in your checkout is not in it.
 - Only the working directory is isolated. Temp directories, databases and ports are shared.
@@ -301,7 +301,7 @@ rm -rf ~/.claude/skills/codex-supervisor ~/.agents/skills/codex-supervisor ~/.co
 
 Done: `CODEX_BIN` / `SUPERVISOR_HOME` / `GIT_BIN`; `status` and `phase` split; `ownedPaths` / `goal` / `dependsOn`; `thread_id` on disk + `resume_codex_worker`; concurrency and multi-process writes; `session_id`, `search_works`, native goals; Windows; the web board; `baseRef`; collecting work with `get_worker_diff` / `ask_codex_worker` / `land_codex_worker`; background auto-update.
 
-Next: a resident daemon, moving dispatch and process lifetime out of the MCP process.
+Run lifetime is independent of MCP; each run process exits after settlement without a global resident daemon.
 
 Not planned: vector search (substring matching is faster at this scale and costs nothing to maintain), `usage_count` ordering (2 of 80 real works were ever referenced again).
 
