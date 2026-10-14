@@ -105,7 +105,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import { repoRoot } from "./helpers.js";
 
-async function runEntry({ cwd, env, port }) {
+async function runEntry({ cwd, env, port = 0 }) {
   const child = spawn(process.execPath, [join(repoRoot, "src", "web-server.js")], {
     cwd,
     env: { ...process.env, SUPERVISOR_HOME: "", CODEX_SUPERVISOR_NO_UPDATE_CHECK: "1", ...env, SUPERVISOR_WEB_PORT: String(port) },
@@ -119,7 +119,8 @@ async function runEntry({ cwd, env, port }) {
   while (Date.now() - started < 6000 && !out.includes("web view on") && child.exitCode === null) {
     await new Promise((r) => setTimeout(r, 60));
   }
-  return { child, out: () => out, err: () => err, stop: () => child.kill("SIGTERM") };
+  const boundPort = Number(out.match(/http:\/\/127\.0\.0\.1:(\d+)/)?.[1]);
+  return { child, port: boundPort, out: () => out, err: () => err, stop: () => child.kill("SIGTERM") };
 }
 
 test("without SUPERVISOR_HOME the entry reads the nearest .mcp.json above cwd", async () => {
@@ -127,13 +128,12 @@ test("without SUPERVISOR_HOME the entry reads the nearest .mcp.json above cwd", 
   const project = join(await tempHome("supervisor-mcpjson-"), "proj");
   await mkdir(join(project, "deep", "er"), { recursive: true });
   await writeFile(join(project, ".mcp.json"), JSON.stringify({ mcpServers: { "codex-supervisor": { command: "node", env: { SUPERVISOR_HOME: projectHome } } } }));
-  const port = 17000 + Math.floor(Math.random() * 2000);
-  const run = await runEntry({ cwd: join(project, "deep", "er"), env: {}, port });
+  const run = await runEntry({ cwd: join(project, "deep", "er"), env: {} });
   try {
     assert.match(run.out(), /web view on/);
     assert.ok(run.out().includes(projectHome), `must open the store named in .mcp.json, got: ${run.out()}`);
     assert.match(run.out(), /from .*\.mcp\.json/);
-    const overview = await (await fetch(`http://127.0.0.1:${port}/api/overview`)).json();
+    const overview = await (await fetch(`http://127.0.0.1:${run.port}/api/overview`)).json();
     assert.equal(overview.store, projectHome);
   } finally {
     run.stop();
@@ -145,8 +145,7 @@ test("SUPERVISOR_HOME in the environment wins over .mcp.json", async () => {
   const project = join(await tempHome("supervisor-mcpjson-"), "proj");
   await mkdir(project, { recursive: true });
   await writeFile(join(project, ".mcp.json"), JSON.stringify({ mcpServers: { "codex-supervisor": { env: { SUPERVISOR_HOME: "/nowhere/else" } } } }));
-  const port = 17000 + Math.floor(Math.random() * 2000);
-  const run = await runEntry({ cwd: project, env: { SUPERVISOR_HOME: envHome }, port });
+  const run = await runEntry({ cwd: project, env: { SUPERVISOR_HOME: envHome } });
   try {
     assert.ok(run.out().includes(envHome), run.out());
     assert.match(run.out(), /\(SUPERVISOR_HOME\)/);
@@ -156,8 +155,8 @@ test("SUPERVISOR_HOME in the environment wins over .mcp.json", async () => {
 });
 
 test("a taken port is reported in one sentence with the way out, exit code 1", async () => {
-  const port = 17000 + Math.floor(Math.random() * 2000);
-  const first = await runEntry({ cwd: home, env: { SUPERVISOR_HOME: home }, port });
+  const first = await runEntry({ cwd: home, env: { SUPERVISOR_HOME: home } });
+  const port = first.port;
   try {
     assert.match(first.out(), /web view on/);
     const second = await runEntry({ cwd: home, env: { SUPERVISOR_HOME: home }, port });

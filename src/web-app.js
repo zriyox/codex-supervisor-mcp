@@ -418,7 +418,8 @@ export function startWebServer({ storeOrigin = "default" } = {}) {
   });
 
   server.listen(port, host, () => {
-    process.stdout.write(`codex-supervisor web view on http://${host}:${port}\n  store: ${supervisorRoot}  (${storeOrigin})\n`);
+    const boundPort = server.address().port;
+    process.stdout.write(`codex-supervisor web view on http://${host}:${boundPort}\n  store: ${supervisorRoot}  (${storeOrigin})\n`);
   });
   return server;
 }

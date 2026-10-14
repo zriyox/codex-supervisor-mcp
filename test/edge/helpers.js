@@ -142,22 +142,23 @@ export async function fakeRegistry(plan) {
 
 export async function startWebServer(env) {
   const { spawn } = await import("node:child_process");
-  const port = 17000 + Math.floor(Math.random() * 2000);
   const child = spawn(process.execPath, [join(repoRoot, "src", "web-server.js")], {
-    env: { ...process.env, CODEX_BIN: fakeCodex, CODEX_SUPERVISOR_NO_UPDATE_CHECK: "1", ...env, SUPERVISOR_WEB_PORT: String(port) },
+    env: { ...process.env, CODEX_BIN: fakeCodex, CODEX_SUPERVISOR_NO_UPDATE_CHECK: "1", ...env, SUPERVISOR_WEB_PORT: "0" },
     stdio: ["ignore", "pipe", "pipe"]
   });
-  const base = `http://127.0.0.1:${port}`;
+  let output = "";
+  let errors = "";
+  child.stdout.on("data", (chunk) => { output += chunk; });
+  child.stderr.on("data", (chunk) => { errors += chunk; });
+  let base;
   const deadline = Date.now() + 8000;
   while (Date.now() < deadline) {
-    try {
-      const response = await fetch(`${base}/api/overview`);
-      if (response.ok) break;
-    } catch {
-      // not up yet
-    }
+    base = output.match(/http:\/\/127\.0\.0\.1:\d+/)?.[0];
+    if (base) break;
+    if (child.exitCode !== null) throw new Error(`web server exited before listening: ${errors}`);
     await new Promise((resolve) => setTimeout(resolve, 80));
   }
+  if (!base) { child.kill(); throw new Error(`web server failed to announce its port: ${errors}`); }
   return {
     base,
     get: async (path, init) => {
