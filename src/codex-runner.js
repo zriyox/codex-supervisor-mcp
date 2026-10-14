@@ -825,7 +825,7 @@ export async function recoverEligibleRuns() {
   const recovered = [];
   for (const task of await readTasks()) {
     if ((task.run_count ?? 0) !== 1 || !task.thread_id
-      || task.run_evidence?.run !== 1 || !task.guard_policy
+      || !(task.run_evidence?.run === 1 || (task.run_host_pid && task.started_at)) || !task.guard_policy
       || !(task.status === "lost" || task.attention_reason === "no_work")
       || ["blocked", "paused", "budget_limited", "usage_limited"].includes(task.goal_status)
       || /401|403|unauthori[sz]ed|not logged|permission denied|approval|rate.?limit|429/i.test(task.error ?? "")
