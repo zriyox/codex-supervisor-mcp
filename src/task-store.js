@@ -442,6 +442,10 @@ export async function reconcileDetachedActiveTasks() {
 
 export async function writeTask(task) {
   await ensureFilesystem();
+  return writeTaskNow(task);
+}
+
+function writeTaskNow(task) {
   const placeholders = TASK_COLUMNS.map((name) => `@${name}`).join(", ");
   const updates = TASK_COLUMNS
     .filter((name) => name !== "id" && name !== "created_at")
@@ -476,6 +480,31 @@ export async function writeTask(task) {
   return task;
 }
 
+function checkOwnership(taskId, incoming) {
+  const normalized = (value) => process.platform === "win32" ? value.replace(/\\/g, "/").toLowerCase() : value;
+  const overlaps = (left, right) => {
+    const a=normalized(left).replace(/\/$/,""),b=normalized(right).replace(/\/$/,"");
+    return a===b || a.startsWith(`${b}/`) || b.startsWith(`${a}/`);
+  };
+  const conflicts = [];
+  for (const row of openDb().prepare("SELECT id,title,status,owned_paths FROM tasks WHERE id<>? AND (status IN ('queued','running') OR json_extract(acceptance_results,'$.status')='running' OR (status IN ('completed','failed') AND started_at IS NOT NULL AND exit_code IS NULL AND acceptance_results IS NULL))").all(taskId)) {
+    const paths=decodeJson(row.owned_paths,[]);
+    const matching=incoming.flatMap(path=>paths.filter(other=>overlaps(path,other)).map(other=>({incoming:path,existing:other})));
+    if(matching.length)conflicts.push({task_id:row.id,title:row.title,status:row.status,overlapping_paths:matching});
+  }
+  if(conflicts.length){const error=new Error("ownedPaths overlap with an active worker claimed by another dispatcher");error.code="ownership_conflict";error.conflicts=conflicts;throw error;}
+}
+
+export async function reserveTaskOwnership(task) {
+  await ensureFilesystem();
+  const connection=openDb();
+  return runWithRetry(connection,()=>{
+    connection.exec("BEGIN IMMEDIATE");
+    try { checkOwnership(task.id,task.owned_paths??[]);writeTaskNow(task);connection.exec("COMMIT");return task; }
+    catch(error){connection.exec("ROLLBACK");throw error;}
+  });
+}
+
 export async function upsertTask(task) {
   await writeTask(task);
   return task;
@@ -504,6 +533,7 @@ export async function claimTaskRun(taskId, expectedRun) {
         || (claim && isPidAlive(claim.owner_pid));
       let token = null;
       if (!busy) {
+        checkOwnership(taskId,decodeJson(row.owned_paths,[]));
         token = randomUUID();
         connection.prepare("INSERT INTO run_claims VALUES (?,?,?) ON CONFLICT(task_id) DO UPDATE SET token=excluded.token,owner_pid=excluded.owner_pid")
           .run(taskId, token, process.pid);

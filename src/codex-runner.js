@@ -16,7 +16,8 @@ import {
   upsertSession,
   upsertTask,
   claimTaskRun,
-  releaseTaskRun
+  releaseTaskRun,
+  reserveTaskOwnership
 } from "./task-store.js";
 import { applyCodexEvent } from "./event-parser.js";
 import { ACTIVE_STATUSES, TERMINAL_STATUSES } from "./status.js";
@@ -112,8 +113,9 @@ async function ensureWorktree(cwd, taskId, baseRef = null) {
     await runCommand(defaultGitBin, ["-C", taskWorktreeDir, "switch", "-c", branch]);
     return { path: taskWorktreeDir, baseCommit };
   } catch (error) {
-    if (baseRef) throw error;
-    return { path: null, baseCommit: null };
+    const failure = new Error(`could not create isolated worker checkout: ${error.message}`);
+    failure.code = "worktree_creation_failed";
+    throw failure;
   }
 }
 
@@ -684,7 +686,16 @@ export async function createCodexWorker({
     updated_at: new Date().toISOString(),
     run_log: taskRunPath(id)
   };
-  await upsertTask(record);
+  try { await reserveTaskOwnership(record); }
+  catch (error) {
+    if (worktreePath) {
+      // This checkout belongs to this not-yet-started dispatch and contains
+      // no model edits. Remove it normally; never force-remove user work.
+      await runCommand(defaultGitBin,["-C",projectRoot,"worktree","remove",worktreePath]).catch(()=>{});
+      await runCommand(defaultGitBin,["-C",projectRoot,"branch","-D",`codex/${id}`]).catch(()=>{});
+    }
+    throw error;
+  }
 
   const args = buildExecArgs({ cwd: effectiveCwd, sandbox, model, reasoningEffort, skipGitRepoCheck });
 
