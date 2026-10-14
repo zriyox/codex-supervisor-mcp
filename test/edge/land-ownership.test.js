@@ -21,3 +21,16 @@ test("landing rejects unowned commits and drafts before committing or moving eit
     assert.ok(!allowed.error, JSON.stringify(allowed));
   });
 });
+
+test("renaming an unowned source into an owned destination is refused before either branch moves", async () => {
+  const home=await tempHome("supervisor-land-rename-");const {dir}=await makeRepo(join(home,"repo"));
+  await withMcp({SUPERVISOR_HOME:home},async({call})=>{
+    const worker=await call("create_codex_worker",dispatchArgs("rename",dir,{ownedPaths:["allowed.txt"]}));
+    await waitFor(call,worker.id,row=>row.exit_code===0);
+    git(worker.worktree_path,["mv","first.txt","allowed.txt"]);
+    const before=git(worker.worktree_path,["rev-parse","HEAD"]);
+    const refused=await call("land_codex_worker",{task_id:worker.id,commitMessage:"rename"});
+    assert.equal(refused.error,"outside_owned_paths");assert.ok(refused.outside_paths.includes("first.txt"));
+    assert.equal(git(worker.worktree_path,["rev-parse","HEAD"]),before);assert.equal(git(dir,["rev-parse","HEAD"]),before);
+  });
+});

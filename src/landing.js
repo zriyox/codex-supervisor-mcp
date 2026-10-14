@@ -9,7 +9,7 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, rmSync } from "node:fs";
 import { join, relative } from "node:path";
-import { parsePorcelainLine, resolveWorktreeBase, worktreeRef, readWorktreeChanges } from "./worktree.js";
+import { parsePorcelainLine, resolveWorktreeBase, worktreeRef, readWorktreeChanges, readWorktreeDiff } from "./worktree.js";
 import { findOutsideOwnedChanges } from "./owned-changes.js";
 
 const defaultGitBin = process.env.GIT_BIN?.trim() || "git";
@@ -127,7 +127,11 @@ export function landWorker(task, { onto = null, commitMessage = null, ignoreAcce
   const base = resolveWorktreeBase(task.worktree_path, worktreeRef(task));
   if (!base) return { error: "no_base_commit", reason: "the commit this worker started from is unknown, so its commits cannot be told apart" };
   if (!allowOutsideOwned) {
-    const { outside } = findOutsideOwnedChanges(task, readWorktreeChanges(task.worktree_path, worktreeRef(task)));
+    const diff = readWorktreeDiff(task.worktree_path, worktreeRef(task), { maxChars: 0 });
+    if (diff.error) return { error: "ownership_unverified", reason: "cannot prove the complete diff before landing", diff_error: diff.error };
+    const paths = [...readWorktreeChanges(task.worktree_path, worktreeRef(task)),
+      ...diff.files.flatMap((file) => [file.path, file.from].filter(Boolean).map((path) => join(task.worktree_path, path)))];
+    const { outside } = findOutsideOwnedChanges(task, [...new Set(paths)]);
     if (outside.length) return { error: "outside_owned_paths", reason: "worker changes exceed declared ownedPaths; review them and obtain explicit authorization before allowing an exception", outside_paths: outside.map((entry) => relative(task.worktree_path, entry)) };
   }
   let commits;
