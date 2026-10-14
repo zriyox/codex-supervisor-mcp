@@ -46,6 +46,7 @@
     "src/tool-guard.js",
     "src/worker-report.js",
     "src/worker-report.schema.json",
+    "src/handoff.js",
     "src/truncate.js",
     "src/status.js",
     "src/paths.js",
