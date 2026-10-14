@@ -329,6 +329,18 @@ test("a cancelled worker runs no checks; an interrupted run is reconciled and re
   });
   // A row left mid-acceptance by a supervisor that died.
   const db = new DatabaseSync(join(home, "data", "supervisor.sqlite"));
+  db.exec("PRAGMA busy_timeout=15000");
+  // The cancel receipt precedes the owner's final exit write. Do not replace
+  // the row with the interrupted fixture until that owner actually exits.
+  const deadline = Date.now() + 15000;
+  for (;;) {
+    const { run_host_pid: owner } = db.prepare("SELECT run_host_pid FROM tasks WHERE id=?").get(id);
+    let alive = false;
+    try { process.kill(owner, 0); alive = true; } catch {}
+    if (!alive) break;
+    assert.ok(Date.now() < deadline, "the cancelled run host must exit");
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
   db.prepare("UPDATE tasks SET status = 'completed', exit_code = NULL, acceptance_results = ? WHERE id = ?")
     .run(JSON.stringify({ status: "running", passed: null, run: 1, supervisor_pid: 2 ** 22 - 1, started_at: new Date().toISOString() }), id);
   db.close();

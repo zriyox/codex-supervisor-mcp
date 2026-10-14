@@ -16,9 +16,9 @@ let legacy;
 before(async () => {
   await withMcp({ SUPERVISOR_HOME: home }, async ({ call }) => {
     const created = await call("create_codex_worker", dispatchArgs("askable", repo));
-    worker = await waitFor(call, created.id, (t) => t.status === "completed" && Boolean(t.thread_id));
+    worker = await waitFor(call, created.id, (t) => t.status === "completed" && t.exit_code === 0 && Boolean(t.thread_id));
     const second = await call("create_codex_worker", dispatchArgs("no-thread", repo));
-    legacy = await waitFor(call, second.id, (t) => t.status === "completed");
+    legacy = await waitFor(call, second.id, (t) => t.status === "completed" && t.exit_code === 0);
   });
   const { DatabaseSync } = await import("node:sqlite");
   const db = new DatabaseSync(join(home, "data", "supervisor.sqlite"));
