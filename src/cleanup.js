@@ -100,6 +100,9 @@ async function cleanupReason(task, tasks) {
     }
     if (!registered) return "worktree registration is missing";
     if (git(path, ["status", "--porcelain", "--untracked-files=all"])) return "dirty worktree contains uncommitted files";
+    if (git(path, ["ls-files", "--others", "--ignored", "--exclude-standard"])) return "ignored artifacts are preserved";
+    if (task.attention_reason) return `unresolved attention: ${task.attention_reason}`;
+    if (task.externalOutputs?.length || task.run_evidence?.external_outputs?.length) return "shared output evidence is preserved";
     if (!task.landed_at || !task.base_commit) return "unlanded work is preserved";
     // Patch equivalence covers cherry-pick landing even when ancestry differs.
     const remaining = git(path, ["cherry", task.project_root ? git(task.project_root, ["rev-parse", "HEAD"]) : "HEAD", "HEAD", task.base_commit]);
