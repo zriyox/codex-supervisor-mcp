@@ -11,9 +11,31 @@ import { tempHome } from "./helpers.js";
 const home = await tempHome("supervisor-skill-");
 process.env.HOME = home;
 process.env.USERPROFILE = home;
+delete process.env.CODEX_HOME;
+delete process.env.CLAUDE_CONFIG_DIR;
 const { installSkill, skillRoots, skillSource, syncSkills } = await import("../../src/skill-sync.js");
 const source = await readFile(skillSource, "utf8");
 const claudeSkill = join(home, ".claude", "skills", "codex-supervisor", "SKILL.md");
+
+test("skill roots follow custom client configuration homes", async () => {
+  const claude = join(home, "custom-claude");
+  const codex = join(home, "custom-codex");
+  process.env.CLAUDE_CONFIG_DIR = claude;
+  process.env.CODEX_HOME = codex;
+  try {
+    assert.equal(skillRoots().claude.skillRoot, join(claude, "skills"));
+    assert.equal(skillRoots().codex.skillRoot, join(codex, "skills"));
+    await installSkill(skillRoots().claude);
+    await installSkill(skillRoots().codex);
+    assert.equal(await readFile(join(claude, "skills/codex-supervisor/SKILL.md"), "utf8"), source);
+    assert.equal(await readFile(join(codex, "skills/codex-supervisor/SKILL.md"), "utf8"), source);
+    assert.equal(existsSync(join(home, ".claude")), false);
+    assert.equal(existsSync(join(home, ".codex")), false);
+  } finally {
+    delete process.env.CLAUDE_CONFIG_DIR;
+    delete process.env.CODEX_HOME;
+  }
+});
 
 test("only a client whose skill directory exists gets the skill", async () => {
   await mkdir(join(home, ".claude", "skills"), { recursive: true });

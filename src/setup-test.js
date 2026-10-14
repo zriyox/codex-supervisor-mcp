@@ -47,7 +47,7 @@ async function makeHome(layout = ["claude", "codex"]) {
 function runSetup(home, args = [], env = {}) {
   return run(process.execPath, [setupPath, ...args], {
     // USERPROFILE is what Windows reads; HOME covers macOS and Linux.
-    env: { ...process.env, HOME: home, USERPROFILE: home, npm_config_global: "false", ...env }
+    env: { ...process.env, HOME: home, USERPROFILE: home, CLAUDE_CONFIG_DIR: "", CODEX_HOME: "", npm_config_global: "false", ...env }
   });
 }
 

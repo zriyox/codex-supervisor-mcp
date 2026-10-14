@@ -18,9 +18,9 @@ export const skillSource = join(packageRoot, "skills", SKILL_NAME, "SKILL.md");
 export function skillRoots() {
   const home = homedir();
   return {
-    claude: { id: "claude", label: "Claude Code", skillRoot: join(home, ".claude", "skills") },
+    claude: { id: "claude", label: "Claude Code", skillRoot: join(process.env.CLAUDE_CONFIG_DIR?.trim() || join(home, ".claude"), "skills") },
     agents: { id: "agents", label: "~/.agents", skillRoot: join(home, ".agents", "skills") },
-    codex: { id: "codex", label: "Codex", skillRoot: join(home, ".codex", "skills") }
+    codex: { id: "codex", label: "Codex", skillRoot: join(process.env.CODEX_HOME?.trim() || join(home, ".codex"), "skills") }
   };
 }
 
