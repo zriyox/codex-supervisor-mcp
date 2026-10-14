@@ -1,0 +1,10 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["result", "verification", "not_done"],
+  "properties": {
+    "result": {"type": "string"},
+    "verification": {"type": "array", "items": {"type": "string"}},
+    "not_done": {"type": "array", "items": {"type": "string"}}
+  }
+}
