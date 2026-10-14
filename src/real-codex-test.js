@@ -11,6 +11,7 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 
 const here = dirname(fileURLToPath(import.meta.url));
 const projectRoot = join(here, "..");
+const serverRoot = process.env.SUPERVISOR_TEST_PACKAGE_ROOT ?? projectRoot;
 const home = await mkdtemp(join(tmpdir(), "supervisor-real-"));
 const repo = join(home, "repo");
 await mkdir(repo, { recursive: true });
@@ -30,7 +31,7 @@ const VALID_PHASES = ["starting", "thinking", "command", "editing", "reporting"]
 async function withServer(fn) {
   const transport = new StdioClientTransport({
     command: process.execPath,
-    args: [join(here, "mcp-server.js")],
+    args: [join(serverRoot, "src", "mcp-server.js")],
     cwd: projectRoot,
     env: { ...process.env, SUPERVISOR_HOME: home },
     stderr: "pipe"
