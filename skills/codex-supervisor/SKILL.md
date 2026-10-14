@@ -118,4 +118,4 @@ overview、派单回执、`wait` 返回里出现 `update` 且 `update_available:
 
 用户想用眼睛看就让他起 `codex-supervisor-web`（或 `npx -p codex-supervisor-mcp codex-supervisor-web`），开 `http://127.0.0.1:7877`。按 session 分组，每路有「旁问」tab，用户可以自己问 worker。
 
-安装后没工具：先查Claude/Codex的mcp get codex-supervisor；运行codex-supervisor-setup修复本包旧入口，手动失败非0。CLI不在PATH设CLAUDE_BIN/CODEX_BIN；skill跟随CLAUDE_CONFIG_DIR/CODEX_HOME。禁用安装脚本时不会自动注册，自定义/disabled/project配置保留并提示处理；重开会话加载新工具和skill。
+安装后没工具：先查Claude/Codex的mcp get codex-supervisor；运行codex-supervisor-setup修复本包旧入口，手动失败非0，skill写入失败仍尝试注册。CLI不在PATH设CLAUDE_BIN/CODEX_BIN；skill跟随CLAUDE_CONFIG_DIR/CODEX_HOME。禁用安装脚本时不会自动注册，自定义/disabled/project配置保留并提示处理；重开会话加载新工具和skill。

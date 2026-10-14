@@ -271,7 +271,7 @@ GUI 客户端（Claude Desktop、Cursor、Windsurf）不在本安装器的自动
 
 不用手动更。server 启动时后台查一次 registry，有新版就起独立进程 `npm i -g` 到同一个全局路径；正在跑的会话不受影响，下一个新会话就是新版。只对 `npm i -g` 装的那份生效，git 源码和 `npx` 起的不碰。skill 也一样，每次启动刷到已有的 skill 目录，改过的先备份成 `SKILL.md.bak-<时间戳>`。
 
-装失败（全局目录要 sudo）时 `update` 字段带原因，手动 `npm install -g codex-supervisor-mcp@latest`。0.6.1 及以前只提醒不自动装，手动升一次就进自动了。换 Node/安装前缀后，setup 会修复本包生成的旧入口，并读回核对 command/args；已有自定义、disabled、project配置保留并提示处理，不擅自覆盖。重跑安装：`codex-supervisor-setup`（`--skill-only` / `--mcp-only` / `--dry-run`）。手动注册失败返回非0，自动安装保持成功但打印warning；没找到CLI时可设 `CLAUDE_BIN` / `CODEX_BIN`。skill路径跟随 `CLAUDE_CONFIG_DIR` / `CODEX_HOME`。
+装失败（全局目录要 sudo）时 `update` 字段带原因，手动 `npm install -g codex-supervisor-mcp@latest`。0.6.1 及以前只提醒不自动装，手动升一次就进自动了。换 Node/安装前缀后，setup 会修复本包生成的旧入口，并读回核对 command/args；已有自定义、disabled、project配置保留并提示处理，不擅自覆盖。重跑安装：`codex-supervisor-setup`（`--skill-only` / `--mcp-only` / `--dry-run`）。手动注册失败返回非0，自动安装保持成功但打印warning；skill写入失败仍继续尝试MCP注册；没找到CLI时可设 `CLAUDE_BIN` / `CODEX_BIN`。skill路径跟随 `CLAUDE_CONFIG_DIR` / `CODEX_HOME`。
 
 卸载：
 
