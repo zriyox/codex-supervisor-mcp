@@ -49,6 +49,8 @@ check_workers可对已死的第1轮lost/no_work自动resume一次，recoveries�
 
 共享写入必须externalOutputs:[{path,sha256?}]+acceptance；绝对文件每份≤1 MB，参与归属冲突/hook。看external_outputs的前后内容、哈希与验收；外部文件已经写在共享目录，不用land，不能拿空worktree diff否认成果。
 
+远端编译/ssh在workspace-write显式networkAccess:true，默认false，resume/followup继承；不要用danger-full-access代替联网配置。需要时声明maxRunMs/maxTotalMs，超限保留partial work并提示处理，不自动恢复；wait预算与quota分开。
+
 等待的几条规矩：
 
 - 等待预算管这次调用，不管 worker。`still_running: true` 是等满了不是挂了，按 `next_step` 再调。
