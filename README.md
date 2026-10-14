@@ -179,6 +179,8 @@ land_codex_worker       核过了，落进集成分支
 
 同 session 的 `default_acceptance` 自动加到每路本地检查前；resume 会取最新策略。`describe_session` 返回 policy_revision，改目标/门禁可传 expected_revision 防旧窗口覆盖；waiting_user 拒绝派单与恢复，approved 后再继续。它不会修改宿主的旧 Stop hook，主线程须按最新用户目标同步宿主 goal。
 
+清理默认只预览：`npm run cleanup -- --dry-run`。`--apply` 只删除已合入、干净、无活跃依赖、Git注册与目录归属可证明的 completed worktree；脏、未合、lost/failed 及证据不足的目录保留并给出原因。
+
 ## 和 Claude Code 的 subagent 有什么区别
 
 文件隔离不是差别：subagent 自己也能开 worktree。差别在模型和进程。

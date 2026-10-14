@@ -97,6 +97,8 @@ overview、派单回执、`wait` 返回里出现 `update` 且 `update_available:
 - worktree 只隔离工作区，端口和数据库是共用的。
 - `resume_codex_worker` 不会再建 goal。`cancel_codex_worker` 跨进程靠 pid，要求那个 pid 的命令行里带 `codex`。
 
+收尾先 `npm run cleanup -- --dry-run` 看清理候选；只有已合入、干净、无活跃依赖的目录才可apply。脏、未合、lost/failed和证明不了的保留，禁止强删未知成果。
+
 ## 看板
 
 用户想用眼睛看就让他起 `codex-supervisor-web`（或 `npx -p codex-supervisor-mcp codex-supervisor-web`），开 `http://127.0.0.1:7877`。按 session 分组，每路有「旁问」tab，用户可以自己问 worker。

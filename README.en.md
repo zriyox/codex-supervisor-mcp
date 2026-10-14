@@ -179,6 +179,8 @@ Landing checks the real diff against ownedPaths before committing drafts; only u
 
 Session default_acceptance is prepended to local checks; resume uses the latest policy. describe_session returns policy_revision and expected_revision prevents stale edits. waiting_user blocks dispatch/resume until approved. This does not rewrite a host Stop hook; synchronize the host goal with the latest user instruction.
 
+Cleanup previews by default: `npm run cleanup -- --dry-run`. `--apply` removes only integrated, clean completed worktrees with no active dependents and verified Git registration/ownership. Dirty, unlanded, lost/failed or unproven work is preserved with a reason.
+
 ## How this differs from Claude Code subagents
 
 File isolation is not the difference: a subagent can open a worktree too. The difference is the model and the process.
