@@ -727,7 +727,7 @@ server.registerTool(
     inputSchema: {
       task_ids: z.array(z.string().min(1)).min(1),
       mode: z.enum(["any", "all"]).default("all"),
-      timeoutMinutes: z.number().int().min(1).max(360).default(2),
+      timeoutMinutes: z.number().int().min(1).max(360).default(1),
       timeoutMs: z.number().int().min(1000).max(21600000).optional(),
       pollMs: z.number().int().min(250).max(10000).default(1000),
       // Off by default. A wait is the call clients background and then replay
@@ -745,7 +745,7 @@ server.registerTool(
       // The smallest useful answer: one line per worker, for a caller that
       // only wants to know who is done. Everything else comes from
       // get_worker_result / get_worker_diff afterwards.
-      compact: z.boolean().default(false)
+      compact: z.boolean().optional()
     }
   },
   async ({
@@ -758,18 +758,30 @@ server.registerTool(
     eventLimit,
     eventMaxChars,
     eventKinds,
-    compact
-  }) => {
+    compact: requestedCompact
+  }, extra) => {
+    const compact = requestedCompact ?? !includeEvents;
     const startedAt = Date.now();
     const effectiveTimeoutMs = timeoutMs ?? timeoutMinutes * 60 * 1000;
     let tasks = [];
+    const progressToken = extra?._meta?.progressToken;
+    let lastProgressAt = -Infinity;
 
     while (Date.now() - startedAt < effectiveTimeoutMs) {
+      if (extra?.signal.aborted) break;
       await reconcileDetachedActiveTasks();
       tasks = (await getTasks(task_ids)).filter(Boolean);
       const settledCount = tasks.filter(isSettled).length;
       const isDone = mode === "any" ? settledCount > 0 : settledCount === task_ids.length;
       if (isDone) break;
+      const elapsed = Date.now() - startedAt;
+      if (progressToken != null && elapsed - lastProgressAt >= 30000) {
+        await extra.sendNotification({ method: "notifications/progress", params: {
+          progressToken, progress: elapsed, total: effectiveTimeoutMs,
+          message: `${settledCount}/${task_ids.length} workers settled; wait budget only`
+        } }).catch(() => {});
+        lastProgressAt = elapsed;
+      }
       await sleep(pollMs);
     }
 
