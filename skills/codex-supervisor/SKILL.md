@@ -23,6 +23,7 @@ description: 把 Codex CLI 当并行 worker 派活、盯进度、收结果。用
 | `task` | 这一路具体干什么。要能直接开工，别写"优化一下"。汇报格式 supervisor 已经附在 task 后面（结论 / 验证 / 没做的），别再要它列改动文件，diff 自己看 |
 | `cwd` | 项目根目录。worker 在自己的 worktree 里干活，不动你的工作区 |
 | `acceptance` | 这一步"做完了"的判据，shell 命令列表，worker 退出后 supervisor 在它的 worktree 里逐条跑，退出码 0 算过，worker 在 prompt 里看得到。任务书里的验证命令原样抄：查那个文件在不在、那个接口通不通、那个测试文件过不过。写能判这一步的，不写全仓回归；远端机器的检查包进 `ssh`。命令用 supervisor 自己的权限跑，等于你自己跑 |
+| `forbid` / `allowedCommands` | 原样声明红线与验证命令；守卫拒绝未声明Shell程序，编辑用apply_patch |
 | `ownedPaths` | 必填。这路允许写的路径，和在跑的 worker 重叠会被拒。冲突是好事，说明该改拆法 |
 | `goal.objective` | 必填。一句话说目标，worker 会建成 Codex 原生 goal |
 | `session_id` | 同一批传同一个值。第一路顺手带 `session_title`（30 字内，看板和 `get_session_works` 显示它），漏了用 `describe_session` 补 |
@@ -39,6 +40,8 @@ description: 把 Codex CLI 当并行 worker 派活、盯进度、收结果。用
 同批公共门禁用 `describe_session.default_acceptance`，自动追加本路验收；更新目标/门禁传 `expected_revision`，避免旧窗口覆盖。需要用户拍板时设 `approval_state: waiting_user`，不得自动resume；获批改approved并同步宿主goal。supervisor不改宿主Stop hook，不要拿旧目标反复唤醒。
 
 wait默认60秒和compact，带includeEvents则详细返回；客户端带progress token时每30秒收到通知。通知不能唤醒已关闭宿主，不能假定Claude会因此重置idle。
+
+派单写forbid红线、allowedCommands验证命令；runtime守卫按次注入并随resume/followup继承。apply_patch核对ownedPaths，Shell仅放简单读取和显式声明的验证命令；声明脚本可以有副作用，须先核对，不能当万能文件沙箱。no_work表示本轮write无输出变化且没跑命令；先看run_evidence，不拿上轮提交/命令当本轮完成。
 
 等待的几条规矩：
 
