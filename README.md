@@ -145,11 +145,11 @@ land_codex_worker       核过了，落进集成分支
 
 | 工具 | 入参 | 作用 |
 |---|---|---|
-| `check_workers` | 无参 | 只交付新终态、验收失败和需处理goal，未变返回quiet；用宿主定时唤醒调用，每个主线程设独立CODEX_SUPERVISOR_OBSERVER_ID可在重启后接回 |
+| `check_workers` | 无参 | 交付新终态、验收失败和需处理goal；新格式第1轮lost/no_work自动恢复一次，未变返回quiet；用宿主定时唤醒调用，每个主线程设独立CODEX_SUPERVISOR_OBSERVER_ID可在重启后接回 |
 | `check_acceptance` | `cwd`, `acceptance`, `baseRef`, `timeoutMs` | 派单前实际运行给定验收命令，不建 worker，不证明 worker 完成；数量 grep 会提示不能证明失败名单和必跑执行 |
 | `create_codex_worker` | `task`, `cwd`, **`ownedPaths`**, **`goal`**, `forbid`, `allowedCommands`, `context`, `contracts`, `externalOutputs`, `networkAccess`, `maxRunMs`, `maxTotalMs`, `acceptance`, `session_id`, `session_title`, `session_note`, `dependsOn`, `baseRef`, `sandbox`, `model`, `reasoningEffort`, `title`, `skipGitRepoCheck` | 起一个 worker。`acceptance` 是验收命令，worker 退出后 supervisor 在它的 worktree 里跑，退出码 0 算过。`baseRef` 指定 worktree 从哪个提交切，默认 `HEAD`，接另一路填它的 `codex/<id>` |
 | `create_codex_followup_worker` | `task_id`, `followup_prompt`, `session_id`, 其余同上 | 开一个新会话，把老 worker 的 prompt、状态、近期事件拼进去 |
-| `resume_codex_worker` | `task_id`, `prompt`, `rebaseOnto`, `acceptance` | 接同一个 Codex 会话继续跑，`thread_id` 不变。`rebaseOnto` 先把 worktree 挪到主线新头（stash、跳过已合入补丁、重放新增提交、放回），冲突原样退回不起 worker |
+| `resume_codex_worker` | `task_id`, `prompt`, `rebaseOnto`, `acceptance`, `context` | 接同一个 Codex 会话继续跑，`thread_id` 不变。`rebaseOnto` 先把 worktree 挪到主线新头（stash、跳过已合入补丁、重放新增提交、放回），冲突原样退回不起 worker |
 | `wait_codex_workers` | `task_ids`, `mode`(any/all), `timeoutMinutes`, `timeoutMs`, `compact`, `includeEvents`, `eventLimit`, `eventMaxChars`, `eventKinds` | 等终态。默认 2 分钟，到点带快照返回，worker 照跑；`compact` 每路只回一行，带 `idle_seconds` / `command_running`，分得清长命令和卡住 |
 | `get_orchestration_overview` | `status`, `limit` | 全部 worker 的状态表，封顶 7000 字节。带 `version` 和 `update` |
 | `get_worker_result` | `task_id`, `limit`, `maxChars`, `includeFiles` | worker 自己的汇报，默认截 6000 字节、`truncated` 提示读全。`acceptance` 是 supervisor 替你跑的验收过没过，`verification` 是它自己跑过的命令和退出码，`base_behind` 是主线走了多远 |
@@ -190,6 +190,8 @@ context用绝对文件路径与可选sha256声明材料，最多20份、与contr
 确需共享写入时声明externalOutputs:[{path,sha256?}]并配置acceptance。目标必须是绝对文件路径、每份≤1 MB；记录本轮前后哈希和有界内容，result/diff标shared_file_already_written_not_cherry_pick，不能通过land合入外部文件。外部目标参与归属冲突与hook；验证脚本的共享副作用由派单者负责。
 
 workspace-write默认networkAccess:false；需要ssh/联网验证显式true，随resume/followup继承，不以danger-full-access代替。maxRunMs限制单轮、maxTotalMs限制从派单开始的总时长；超限中止worker并保留needs_attention/partial work，不自动重试。wait预算不改变这些quota。
+
+运行前核验Codex CLI是否具备hooks/output-schema（要求0.162+）；能力不足返回start_failed，wait可正常结算。get_worker_goal.native_goal_read区分missing_goal、missing_database、locked和read_error，不能把读取失败当没建goal。原生budget/usage限制也进入needs_attention。cleanup保留ignored artifacts、共享证据和未解决attention。
 
 清理默认只预览：`npm run cleanup -- --dry-run`。`--apply` 只删除已合入、干净、无活跃依赖、Git注册与目录归属可证明的 completed worktree；脏、未合、lost/failed 及证据不足的目录保留并给出原因。
 
