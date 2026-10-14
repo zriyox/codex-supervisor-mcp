@@ -1079,6 +1079,7 @@ server.registerTool(
       goal_status: task.goal_status,
       attention_reason: task.attention_reason ?? null,
       run_evidence: task.run_evidence ?? null,
+      structured_report: task.run_evidence?.structured_report ?? { format: "legacy_text", valid: null },
       changed_file_count: changed.length,
       changed_files: listFiles ? changed : undefined,
       base_commit: task.base_commit ?? null,
@@ -1192,6 +1193,7 @@ server.registerTool(
     const task = await getTask(task_id);
     if (!task) return textResult({ error: "task_not_found", task_id });
     const session = task.session_id ? await getSession(task.session_id) : null;
+    if (task.attention_reason === "invalid_report") return textResult({ error: "invalid_report", task_id, reason: task.error });
     if (session?.approval_state === "waiting_user") return textResult({ error: "session_waiting_user", task_id, reason: "session requires user approval before landing" });
     if (session && task.session_policy_revision !== session.policy_revision && !task.landed_at) return textResult({ error: "session_policy_stale", task_id, current_revision: session.policy_revision, checked_revision: task.session_policy_revision, reason: "requirements changed; resume with the current objective and rerun acceptance before landing" });
     const outcome = landWorker(task, { onto, commitMessage: commitMessage ?? null, ignoreAcceptance, allowOutsideOwned });

@@ -68,16 +68,18 @@ export function buildReportPreamble({ resume = false, acceptance = null } = {}) 
   const acceptanceBlock = buildAcceptanceBlock(acceptance, { resume });
   const withAcceptance = (text) => (acceptanceBlock ? `${text}\n\n${acceptanceBlock}` : text);
   if (resume) {
-    return withAcceptance("Report as before: Result / Verification (every command you ran to check, with exit codes) / Not done and risks. Under 2000 characters, no list of changed files, quote raw errors verbatim.");
+    return withAcceptance("Report as before using the required JSON schema: result string, verification string[] (every command you ran to check, with exit codes), not_done string[] (remaining work and risks). Under 2000 characters, no list of changed files, quote raw errors verbatim.");
   }
   return withAcceptance([
     "Final report (your last message), under 2000 characters, in the language of the task. Quoted command output does not count toward the limit.",
+    "Return JSON with exactly result:string, verification:string[], not_done:string[]; --output-schema enforces these fields. Cover the following content in those fields.",
+    "Keep each verification entry concise: command name, exit code and key evidence; avoid embedding long quoted shell source. Ensure arrays and the object are fully closed and all strings use valid JSON escaping.",
     "1. Result: what is done, in two or three sentences. Say plainly what is not done.",
     "2. Verification: every command you ran to check the work, its exit code, and the output lines that prove the result. Write \"not verified\" if you ran none.",
     "3. Not done / risks: what you skipped, what you are unsure of, what the reviewer should look at first.",
     "Do not list the files you changed; the supervisor reads the diff.",
     "Never call a failure an environment problem without quoting the raw error verbatim.",
-    "If the task above specifies its own report format, use that format and still cover the three points."
+    "If the task specifies content or language, preserve it inside these JSON fields."
   ].join("\n"));
 }
 

@@ -27,6 +27,7 @@ import { DEFAULT_ACCEPTANCE_TIMEOUT_MS, normalizeAcceptance, runAcceptance } fro
 import { appendFile } from "node:fs/promises";
 import { defaultBinDirs, findBinaryPath, resolveCommand, shimMessage } from "./bin-resolver.js";
 import { findOutsideOwnedChanges } from "./owned-changes.js";
+import { parseWorkerReport, workerReportSchemaPath } from "./worker-report.js";
 
 const processes = new Map();
 // taskId -> control object of an acceptance run in progress ({ kill, cancelled }).
@@ -231,7 +232,7 @@ async function trackRunInHost({ record, args, prompt, logPath, spawnOptions = {}
   const guard = fileURLToPath(new URL("./tool-guard.js", import.meta.url));
   const quoteCommand = (path) => process.platform === "win32" ? `"${path.replace(/"/g, '""')}"` : `'${path.replace(/'/g, "'\\''")}'`;
   const hookCommand = `${quoteCommand(process.execPath)} ${quoteCommand(guard)}`;
-  const configArgs = ["--dangerously-bypass-hook-trust", "-c",
+  const configArgs = ["--output-schema", workerReportSchemaPath, "--dangerously-bypass-hook-trust", "-c",
     `hooks.PreToolUse=[{matcher="Bash|apply_patch",hooks=[{type="command",command=${JSON.stringify(hookCommand)}}]}]`];
   // Insert before the prompt/session positional arguments for exec/resume.
   const guardedArgs = [...args.slice(0, -1), ...configArgs, args.at(-1)];
@@ -309,6 +310,7 @@ async function trackRunInHost({ record, args, prompt, logPath, spawnOptions = {}
 
   let eventChain = Promise.resolve();
   let terminalEvent = false;
+  let rawReport = null;
   const handleLine = async (line) => {
     let event;
     try {
@@ -318,6 +320,7 @@ async function trackRunInHost({ record, args, prompt, logPath, spawnOptions = {}
       return;
     }
     logStream.write(`${JSON.stringify(event)}\n`);
+    if (event.type === "item.completed" && event.item?.type === "agent_message") rawReport = event.item.text;
     if (["turn.completed", "turn.failed"].includes(event.type)) terminalEvent = true;
     await appendTaskEvent(record.id, event);
     await persist(applyCodexEvent(live, event));
@@ -396,12 +399,18 @@ async function trackRunInHost({ record, args, prompt, logPath, spawnOptions = {}
     const outputAfter = snapshotTaskOutput(live);
     next.run_evidence = {
       run: live.run_count, commands_run: live.commands.length,
+      structured_report: parseWorkerReport(rawReport),
       output_before: outputBefore, output_after: outputAfter,
       output_changed: outputBefore && outputAfter ? outputBefore !== outputAfter : null
     };
     if (status === "completed" && code === 0 && live.sandbox !== "read-only"
       && !next.run_evidence.output_changed && next.run_evidence.output_changed !== null
       && live.commands.length === 0) next.attention_reason = "no_work";
+    if (status === "completed" && !next.run_evidence.structured_report.valid) {
+      next.status = "failed";
+      next.attention_reason = "invalid_report";
+      next.error = `Invalid final worker report: ${next.run_evidence.structured_report.error}`;
+    }
 
     // Acceptance runs after the worker is gone, in two writes. The first
     // records the terminal status with exit_code still null and the run
