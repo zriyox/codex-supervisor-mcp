@@ -147,7 +147,7 @@ land_codex_worker       核过了，落进集成分支
 |---|---|---|
 | `check_workers` | 无参 | 只交付新终态、验收失败和需处理goal，未变返回quiet；用宿主定时唤醒调用，每个主线程设独立CODEX_SUPERVISOR_OBSERVER_ID可在重启后接回 |
 | `check_acceptance` | `cwd`, `acceptance`, `baseRef`, `timeoutMs` | 派单前实际运行给定验收命令，不建 worker，不证明 worker 完成；数量 grep 会提示不能证明失败名单和必跑执行 |
-| `create_codex_worker` | `task`, `cwd`, **`ownedPaths`**, **`goal`**, `forbid`, `allowedCommands`, `context`, `contracts`, `acceptance`, `session_id`, `session_title`, `session_note`, `dependsOn`, `baseRef`, `sandbox`, `model`, `reasoningEffort`, `title`, `skipGitRepoCheck` | 起一个 worker。`acceptance` 是验收命令，worker 退出后 supervisor 在它的 worktree 里跑，退出码 0 算过。`baseRef` 指定 worktree 从哪个提交切，默认 `HEAD`，接另一路填它的 `codex/<id>` |
+| `create_codex_worker` | `task`, `cwd`, **`ownedPaths`**, **`goal`**, `forbid`, `allowedCommands`, `context`, `contracts`, `externalOutputs`, `acceptance`, `session_id`, `session_title`, `session_note`, `dependsOn`, `baseRef`, `sandbox`, `model`, `reasoningEffort`, `title`, `skipGitRepoCheck` | 起一个 worker。`acceptance` 是验收命令，worker 退出后 supervisor 在它的 worktree 里跑，退出码 0 算过。`baseRef` 指定 worktree 从哪个提交切，默认 `HEAD`，接另一路填它的 `codex/<id>` |
 | `create_codex_followup_worker` | `task_id`, `followup_prompt`, `session_id`, 其余同上 | 开一个新会话，把老 worker 的 prompt、状态、近期事件拼进去 |
 | `resume_codex_worker` | `task_id`, `prompt`, `rebaseOnto`, `acceptance` | 接同一个 Codex 会话继续跑，`thread_id` 不变。`rebaseOnto` 先把 worktree 挪到主线新头（stash、跳过已合入补丁、重放新增提交、放回），冲突原样退回不起 worker |
 | `wait_codex_workers` | `task_ids`, `mode`(any/all), `timeoutMinutes`, `timeoutMs`, `compact`, `includeEvents`, `eventLimit`, `eventMaxChars`, `eventKinds` | 等终态。默认 2 分钟，到点带快照返回，worker 照跑；`compact` 每路只回一行，带 `idle_seconds` / `command_running`，分得清长命令和卡住 |
@@ -186,6 +186,8 @@ wait 默认预算60秒、默认compact；includeEvents会选择详细结果（�
 check_workers在状态协调后，对已结束的第1轮lost/no_work原子resume一次；第2轮仍有问题则保留证据等处理。审批、认证、权限和quota等待不重试，返回recoveries记录。worker最终输出强制JSON result/verification/not_done；get_worker_result的structured_report给格式校验，独立命令与acceptance仍为实际证据。非法JSON标failed/invalid_report并拒绝land；旧历史标legacy_text。
 
 context用绝对文件路径与可选sha256声明材料，最多20份、与contracts合计6000字；文件不超过5 MB。首次派单记录实际哈希，resume校验原材料未变，需要新材料时显式传context。handoff最多1800字/16行，截断明确标记；完整约束和引用单独保留，材料不授予写权限。
+
+确需共享写入时声明externalOutputs:[{path,sha256?}]并配置acceptance。目标必须是绝对文件路径、每份≤1 MB；记录本轮前后哈希和有界内容，result/diff标shared_file_already_written_not_cherry_pick，不能通过land合入外部文件。外部目标参与归属冲突与hook；验证脚本的共享副作用由派单者负责。
 
 清理默认只预览：`npm run cleanup -- --dry-run`。`--apply` 只删除已合入、干净、无活跃依赖、Git注册与目录归属可证明的 completed worktree；脏、未合、lost/failed 及证据不足的目录保留并给出原因。
 

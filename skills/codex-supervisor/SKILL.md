@@ -47,6 +47,8 @@ check_workers可对已死的第1轮lost/no_work自动resume一次，recoveries�
 
 未提交材料用context:[{path:绝对路径,sha256:可选}]；首次记哈希，resume材料变了要显式换context。context/contracts总6000字、最多20份文件，每份≤5 MB；handoff1800字/16行可裁，完整约束和refs另传。输入路径不等于写授权。
 
+共享写入必须externalOutputs:[{path,sha256?}]+acceptance；绝对文件每份≤1 MB，参与归属冲突/hook。看external_outputs的前后内容、哈希与验收；外部文件已经写在共享目录，不用land，不能拿空worktree diff否认成果。
+
 等待的几条规矩：
 
 - 等待预算管这次调用，不管 worker。`still_running: true` 是等满了不是挂了，按 `next_step` 再调。
