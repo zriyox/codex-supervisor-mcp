@@ -93,3 +93,15 @@ test("resume receives the latest approved session objective instead of reviving 
     assert.doesNotMatch(result.reports[0], /Current session objective.*all tests must pass/);
   });
 });
+
+test("an earlier landing does not exempt later results from the current session policy", async () => {
+  const home = await tempHome("supervisor-landed-policy-");const {dir}=await makeRepo(join(home,"repo"));
+  await withMcp({SUPERVISOR_HOME:home,FAKE_CODEX_SCENARIO:"commit-in-worktree"},async({call})=>{
+    await call("describe_session",{session_id:"batch",objective:"first scope"});
+    const task=await call("create_codex_worker",dispatchArgs("landed policy",dir,{session_id:"batch",ownedPaths:["committed.txt","uncommitted.txt"]}));
+    await waitFor(call,task.id,row=>row.exit_code===0);
+    assert.ok(!(await call("land_codex_worker",{task_id:task.id,commitMessage:"land draft"})).error);
+    await call("describe_session",{session_id:"batch",objective:"revised scope"});
+    assert.equal((await call("land_codex_worker",{task_id:task.id})).error,"session_policy_stale");
+  });
+});
