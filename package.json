@@ -47,6 +47,7 @@
     "src/worker-report.js",
     "src/worker-report.schema.json",
     "src/handoff.js",
+    "src/external-output.js",
     "src/truncate.js",
     "src/status.js",
     "src/paths.js",
