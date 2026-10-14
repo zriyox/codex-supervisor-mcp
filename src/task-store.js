@@ -392,6 +392,15 @@ async function reconcileInterruptedAcceptance() {
 
 export async function reconcileDetachedActiveTasks() {
   await reconcileInterruptedAcceptance();
+  const incomplete = (await readTasks()).filter((task) =>
+    ["completed", "failed"].includes(task.status) && task.exit_code == null && task.started_at
+    && !isPidAlive(task.pid) && !task.acceptance_results
+    && Date.now() - Date.parse(task.updated_at) > 5000);
+  for (const task of incomplete) {
+    await writeTask({ ...task, status: "lost", phase: null,
+      error: "Worker ended but its supervisor did not record the process exit; recover this run before treating it as complete",
+      updated_at: new Date().toISOString() });
+  }
   const tasks = await readActiveTasks();
   const staleTasks = tasks.filter((task) => (task.pid && !isPidAlive(task.pid)) || neverStarted(task));
   for (const task of staleTasks) {

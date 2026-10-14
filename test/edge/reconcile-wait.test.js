@@ -10,6 +10,7 @@ function insertRow(home, { id, status = "running", pid = null, created, started 
   const db = new DatabaseSync(join(home, "data", "supervisor.sqlite"));
   db.prepare(`INSERT INTO tasks (id, title, worker, status, cwd, project_root, sandbox, prompt, created_at, updated_at, started_at, run_log, pid)
               VALUES (?, ?, 'codex', ?, ?, ?, 'workspace-write', 'x', ?, ?, ?, '/tmp/none', ?)`).run(id, id, status, home, home, created, created, started, pid);
+  if (status === "completed") db.prepare("UPDATE tasks SET exit_code=0 WHERE id=?").run(id);
   db.close();
 }
 
@@ -68,6 +69,26 @@ test("a worker that lingers after turn.completed is not reported until its exit 
     assert.ok(Date.now() - started >= 1000, "the wait must outlast the linger");
     assert.equal(waited.workers[0].status, "completed");
     assert.equal(waited.workers[0].exit_code, 0);
+  });
+});
+
+test("a dead worker with a live supervisor does not return a half-written terminal row", async () => {
+  const home = await tempHome("supervisor-settle-race-");
+  await withMcp({ SUPERVISOR_HOME: home }, async ({ call }) => {
+    await call("list_codex_workers", {});
+    const db = new DatabaseSync(join(home, "data", "supervisor.sqlite"));
+    const now = new Date().toISOString();
+    db.prepare(`INSERT INTO tasks (id,title,worker,status,cwd,project_root,sandbox,prompt,created_at,updated_at,run_log,pid,notices)
+      VALUES ('draining','draining','codex','completed',?,?,'read-only','test',?,?,'unused',?,'supervisor-alive')`).run(home, home, now, now, 2 ** 22 - 1);
+    // Simulate the runner's short close/write gap, without actually failing
+    // the process. The watcher must wait for the authoritative exit write.
+    const writer = setTimeout(() => {
+      db.prepare("UPDATE tasks SET exit_code=0 WHERE id='draining'").run();
+    }, 400);
+    try {
+      const reply = await call("wait_codex_workers", { task_ids: ["draining"], timeoutMs: 2000, pollMs: 250, compact: true });
+      assert.equal(reply.workers[0].exit_code, 0);
+    } finally { clearTimeout(writer); db.close(); }
   });
 });
 
