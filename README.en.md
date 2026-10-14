@@ -162,7 +162,7 @@ Twenty-one.
 | `get_worker_goal` | `task_id` | The goal recorded at dispatch plus the native Codex goal (tokens, time) |
 | `list_codex_workers` | `status`, `includeHistory`, `includeDetails` | List workers, active ones by default |
 | `get_session_works` | `session_id` | Every worker of one session. The way back after a main-thread restart |
-| `describe_session` | `session_id`, `title`, `note` | Record a title and note for a session |
+| `describe_session` | `session_id`, `title`, `note`, `objective`, `default_acceptance`, `approval_state`, `expected_revision` | Record a title and note for a session |
 | `search_works` | `query`, `limit` | Substring search over title / goal / prompt / last_message, newest first |
 | `check_for_update` | `force` | Ask the registry for a newer version |
 | `cancel_codex_worker` | `task_id` | Stop a worker. Falls back to the pid across processes, after confirming that pid runs codex |
@@ -176,6 +176,8 @@ Acceptance commands receive `CODEX_SUPERVISOR_TASK_ID`, `CODEX_SUPERVISOR_BASE_C
 Structured acceptance entries use `{command, reportPath, baseline}`. The baseline contains `identity.base_commit`, `failures` (test_id/kind/signature), and `required`; the report contains complete, identity, failures, executed, skipped, and the current `CODEX_SUPERVISOR_CHECK_ID`. Missing/skipped required tests, reused evidence, and changed failures reject acceptance while preserving the shell exit code. reportPath must remain inside the working directory; write reports to an ignored temporary directory so they are not landed.
 
 Landing checks the real diff against ownedPaths before committing drafts; only use allowOutsideOwned for an explicitly approved exception.
+
+Session default_acceptance is prepended to local checks; resume uses the latest policy. describe_session returns policy_revision and expected_revision prevents stale edits. waiting_user blocks dispatch/resume until approved. This does not rewrite a host Stop hook; synchronize the host goal with the latest user instruction.
 
 ## How this differs from Claude Code subagents
 

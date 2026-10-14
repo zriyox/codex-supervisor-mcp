@@ -162,7 +162,7 @@ land_codex_worker       核过了，落进集成分支
 | `get_worker_goal` | `task_id` | 派单时记的 goal + Codex 原生 goal（token、用时） |
 | `list_codex_workers` | `status`, `includeHistory`, `includeDetails` | 列 worker，默认只看在跑的 |
 | `get_session_works` | `session_id` | 一个 session 的全部 worker。主线程重启后靠它找回那批活 |
-| `describe_session` | `session_id`, `title`, `note` | 给 session 记标题和说明 |
+| `describe_session` | `session_id`, `title`, `note`, `objective`, `default_acceptance`, `approval_state`, `expected_revision` | 给 session 记标题和说明 |
 | `search_works` | `query`, `limit` | 在 title / goal / prompt / last_message 里找子串，从新到旧 |
 | `check_for_update` | `force` | 问 registry 有没有新版本 |
 | `cancel_codex_worker` | `task_id` | 终止 worker。跨进程按 pid 兜底，先确认那个 pid 跑的是 codex |
@@ -176,6 +176,8 @@ land_codex_worker       核过了，落进集成分支
 结构化验收项用 `{command, reportPath, baseline}`。baseline 包含 `identity.base_commit`、`failures`（test_id/kind/signature）和 `required`；报告包含 complete、identity、failures、executed、skipped，以及本次 `CODEX_SUPERVISOR_CHECK_ID`。必跑用例缺失/跳过、旧报告、失败名单变化都拒绝通过，原始退出码保留。reportPath 必须在工作目录内；测试报告可能写文件，要用忽略的临时目录，避免把报告合入。
 
 落地前按真实 diff 核对 ownedPaths，越界拒绝且不提交草稿；只有用户明确授权时才用 allowOutsideOwned。
+
+同 session 的 `default_acceptance` 自动加到每路本地检查前；resume 会取最新策略。`describe_session` 返回 policy_revision，改目标/门禁可传 expected_revision 防旧窗口覆盖；waiting_user 拒绝派单与恢复，approved 后再继续。它不会修改宿主的旧 Stop hook，主线程须按最新用户目标同步宿主 goal。
 
 ## 和 Claude Code 的 subagent 有什么区别
 
