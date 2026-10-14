@@ -30,7 +30,7 @@ import {
   upsertSession,
   upsertTask
 } from "./task-store.js";
-import { readNativeGoal } from "./goal-store.js";
+import { readNativeGoal, readNativeGoalState } from "./goal-store.js";
 import { collectWorkerChanges } from "./worker-changes.js";
 import { baseBehind, readTaskChanges, readWorktreeDiff, worktreeRef } from "./worktree.js";
 import { summarizeVerification } from "./event-parser.js";
@@ -1044,7 +1044,8 @@ server.registerTool(
       token_budget: task.goal_token_budget,
       goal_status: task.goal_status,
       needs_attention: isGoalNeedingAttention(task.goal_status),
-      native_goal: readNativeGoal(task.thread_id)
+      native_goal: readNativeGoal(task.thread_id),
+      native_goal_read: readNativeGoalState(task.thread_id)
     });
   }
 );

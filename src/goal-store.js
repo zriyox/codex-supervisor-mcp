@@ -13,8 +13,9 @@ function toCamelCase(status) {
   return String(status).replace(/_([a-z])/g, (_match, letter) => letter.toUpperCase());
 }
 
-export function readNativeGoal(threadId) {
-  if (!threadId || !existsSync(goalsDbPath)) return null;
+export function readNativeGoalState(threadId) {
+  if (!threadId) return { state: "no_thread", goal: null };
+  if (!existsSync(goalsDbPath)) return { state: "missing_database", goal: null };
   let db;
   try {
     db = new DatabaseSync(goalsDbPath, { readOnly: true });
@@ -25,8 +26,8 @@ export function readNativeGoal(threadId) {
       FROM thread_goals
       WHERE thread_id = ?
     `).get(threadId);
-    if (!row) return null;
-    return {
+    if (!row) return { state: "missing_goal", goal: null };
+    return { state: "available", goal: {
       objective: row.objective,
       status: toCamelCase(row.status),
       storage_status: row.status,
@@ -36,11 +37,11 @@ export function readNativeGoal(threadId) {
       time_used_seconds: row.time_used_seconds ?? 0,
       created_at: row.created_at_ms ? new Date(row.created_at_ms).toISOString() : null,
       updated_at: row.updated_at_ms ? new Date(row.updated_at_ms).toISOString() : null
-    };
-  } catch {
+    } };
+  } catch (error) {
     // A locked or half-migrated Codex database must never break a supervisor
     // call; the supervisor goal is still returned by the caller.
-    return null;
+    return { state: /locked|busy/i.test(error.message) ? "locked" : "read_error", goal: null, error: error.message };
   } finally {
     try {
       db?.close();
@@ -49,3 +50,5 @@ export function readNativeGoal(threadId) {
     }
   }
 }
+
+export function readNativeGoal(threadId) { return readNativeGoalState(threadId).goal; }

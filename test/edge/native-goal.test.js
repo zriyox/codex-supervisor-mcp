@@ -39,6 +39,11 @@ test("native goal updates reach overview and results without overwriting worker 
     goals.prepare("DELETE FROM thread_goals").run();
     const missing = await call("get_worker_goal", { task_id: "native-worker" });
     assert.equal(missing.native_goal, null);
+    assert.equal(missing.native_goal_read.state, "missing_goal");
+    goals.exec("DROP TABLE thread_goals");
+    const broken = await call("get_worker_goal", { task_id: "native-worker" });
+    assert.equal(broken.native_goal_read.state, "read_error");
+    assert.match(broken.native_goal_read.error, /no such table/);
   });
   goals.close();
 });
