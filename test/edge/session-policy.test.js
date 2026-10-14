@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { tempHome, withMcp, dispatchArgs, waitFor } from "./helpers.js";
+import { tempHome, withMcp, dispatchArgs, waitFor, makeRepo } from "./helpers.js";
 import { join } from "node:path";
 
 test("session policy revisions preserve omitted fields and reject stale updates", async () => {
@@ -22,6 +22,22 @@ test("session policy revisions preserve omitted fields and reject stale updates"
     assert.equal(works.policy_revision, 2);
     assert.equal(works.objective, "approved known failures");
     assert.deepEqual(works.default_acceptance, []);
+  });
+});
+
+test("an approved result from an old session policy cannot land after its requirements change", async () => {
+  const home = await tempHome("supervisor-session-land-");
+  const { dir } = await makeRepo(join(home, "repo"));
+  await withMcp({ SUPERVISOR_HOME: home, FAKE_CODEX_SCENARIO: "commit-in-worktree" }, async ({ call }) => {
+    await call("describe_session", { session_id: "batch", objective: "first goal", default_acceptance: ['node -e "process.exit(0)"'] });
+    const worker = await call("create_codex_worker", dispatchArgs("old-policy", dir, { session_id: "batch", ownedPaths: ["committed.txt", "uncommitted.txt"] }));
+    await waitFor(call, worker.id, (t) => t.exit_code != null && t.status === "completed");
+    await call("describe_session", { session_id: "batch", objective: "new goal" });
+    const refused = await call("land_codex_worker", { task_id: worker.id });
+    assert.equal(refused.error, "session_policy_stale");
+    await call("describe_session", { session_id: "batch", approval_state: "waiting_user" });
+    const waiting = await call("land_codex_worker", { task_id: worker.id });
+    assert.equal(waiting.error, "session_waiting_user");
   });
 });
 

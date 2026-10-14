@@ -1166,6 +1166,9 @@ server.registerTool(
   async ({ task_id, onto, commitMessage, ignoreAcceptance, allowOutsideOwned }) => {
     const task = await getTask(task_id);
     if (!task) return textResult({ error: "task_not_found", task_id });
+    const session = task.session_id ? await getSession(task.session_id) : null;
+    if (session?.approval_state === "waiting_user") return textResult({ error: "session_waiting_user", task_id, reason: "session requires user approval before landing" });
+    if (session && task.session_policy_revision !== session.policy_revision && !task.landed_at) return textResult({ error: "session_policy_stale", task_id, current_revision: session.policy_revision, checked_revision: task.session_policy_revision, reason: "requirements changed; resume with the current objective and rerun acceptance before landing" });
     const outcome = landWorker(task, { onto, commitMessage: commitMessage ?? null, ignoreAcceptance, allowOutsideOwned });
     if (!outcome.error) {
       // Recorded so a later read knows the work is on the branch: the
