@@ -3,6 +3,8 @@ import { readFile, lstat } from "node:fs/promises";
 import { isAbsolute } from "node:path";
 
 export async function buildHandoff({ goal, todo, peers = [], contracts = [], context = [] }, { maxLines = 16, maxChars = 1800 } = {}) {
+  if (!Array.isArray(context) || context.length > 20 || !Array.isArray(contracts)
+    || contracts.some((value) => typeof value !== "string") || JSON.stringify({ context, contracts }).length > 6000) throw new Error("context and contracts exceed the 6000 character input budget");
   const refs = [];
   for (const entry of context) {
     if (!entry || !isAbsolute(entry.path)) throw new Error("context paths must be absolute");
