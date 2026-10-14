@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { mkdtemp, writeFile, readFile } from "node:fs/promises";
+import { mkdtemp, mkdir, rm, writeFile, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { repoRoot } from "./helpers.js";
@@ -35,5 +35,19 @@ for(const client of ["claude","codex"]){
     const h=await host(client,previous,"fail-new");
     await assert.rejects(h.setup(),error=>error.code===1&&/registration failed/.test(error.stderr));
     assert.deepEqual(JSON.parse(await readFile(h.state,"utf8")),previous);
+  });
+  test(`${client}: a skill write failure does not prevent automatic MCP registration`,async()=>{
+    const h=await host(client);
+    await mkdir(join(h.root,`.${client}`,"skills"),{recursive:true});
+    await writeFile(join(h.root,`.${client}`,"skills/codex-supervisor"),"unwritable skill destination");
+    const result=await h.setup(["--skill-only","--auto"]); // Non-global automatic runs remain inert.
+    assert.equal(result.stderr,"");
+    const env={...process.env,HOME:h.root,USERPROFILE:h.root,CODEX_HOME:"",CLAUDE_CONFIG_DIR:"",REG_STATE:h.state,REG_CLIENT:client,REG_MODE:"ok",[client==='codex'?'CODEX_BIN':'CLAUDE_BIN']:join(h.root,"client.cjs")};
+    await assert.rejects(run(process.execPath,[join(repoRoot,"src/setup.js"),"--target",client],{env}),error=>error.code===1&&/MCP registration will still be attempted/.test(error.stderr));
+    const state=JSON.parse(await readFile(h.state,"utf8"));assert.equal(state.command,process.execPath);
+    await rm(h.state);
+    const automatic=await run(process.execPath,[join(repoRoot,"src/setup.js"),"--target",client,"--auto"],{env:{...env,npm_config_global:"true",CODEX_SUPERVISOR_SKIP_SETUP:""}});
+    assert.match(automatic.stderr,/MCP registration will still be attempted/);
+    assert.deepEqual(JSON.parse(await readFile(h.state,"utf8")),state);
   });
 }

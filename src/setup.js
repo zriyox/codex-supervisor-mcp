@@ -281,19 +281,20 @@ async function main() {
 
   log(`setup: ${options.dryRun ? "dry run against" : "configuring"} ${clients.map((client) => client.label).join(", ")}`);
 
+  let failures = missingTargets.length;
   if (options.skills) {
     for (const client of clients) {
-      await installSkill(client, options, log);
+      try { await installSkill(client, options, log); }
+      catch (error) { failures += 1; warn(`skill   ${client.label}: install failed (${error.message.split("\n")[0]}); MCP registration will still be attempted`); }
     }
   }
-  let failures = missingTargets.length;
   if (options.mcp) {
     for (const client of clients.filter((client) => client.binary)) {
       if (await registerMcp(client, options, log, warn) === "failed") failures += 1;
     }
   }
 
-  log(failures ? `setup: ${failures} MCP registration(s) require repair` : "setup: done");
+  log(failures ? `setup: ${failures} setup step(s) require repair` : "setup: done");
   return failures && !options.auto ? 1 : 0;
 }
 
