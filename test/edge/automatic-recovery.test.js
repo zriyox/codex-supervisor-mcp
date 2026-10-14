@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { join } from "node:path";
 import { dispatchArgs, tempHome, withMcp, waitFor, makeRepo } from "./helpers.js";
+import { DatabaseSync } from "node:sqlite";
 
 test("check_workers recovers an empty write run once and two observers cannot start duplicate retries", async () => {
   const home = await tempHome("supervisor-auto-recovery-");
@@ -38,5 +39,19 @@ test("approval waits do not auto-recover an empty write run", async () => {
     const result = await call("check_workers", {});
     assert.equal(result.recoveries.length, 0);
     assert.equal((await call("get_codex_worker_status", { task_id: worker.id })).run_count, 1);
+  });
+});
+
+test("new observers never silently replay historical lost tasks without current-run evidence", async () => {
+  const home = await tempHome("supervisor-legacy-recovery-");
+  await withMcp({ SUPERVISOR_HOME: home }, async ({ call }) => {
+    await call("list_codex_workers", {});
+    const db = new DatabaseSync(join(home, "data", "supervisor.sqlite"));
+    const now = new Date().toISOString();
+    db.prepare("INSERT INTO tasks(id,worker,status,cwd,project_root,sandbox,prompt,created_at,updated_at,run_log,run_count,thread_id) VALUES('historical','codex','lost',?,?,'read-only','old task',?,?,'unused',1,'old-thread')").run(home, home, now, now);
+    db.close();
+    const result = await call("check_workers", {});
+    assert.equal(result.recoveries.length, 0);
+    assert.equal((await call("get_codex_worker_status", { task_id: "historical" })).run_count, 1);
   });
 });

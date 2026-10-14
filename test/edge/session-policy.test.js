@@ -78,3 +78,18 @@ test("combined defaults exceeding the command limit create no worker", async () 
     assert.equal(works.count, 0);
   });
 });
+
+test("resume receives the latest approved session objective instead of reviving earlier scope", async () => {
+  const home = await tempHome("supervisor-current-scope-");
+  await withMcp({ SUPERVISOR_HOME: home, FAKE_CODEX_SCENARIO: "echo-prompt" }, async ({ call }) => {
+    await call("describe_session", { session_id: "batch", objective: "all tests must pass" });
+    const task = await call("create_codex_worker", dispatchArgs("current scope", join(home, "workspace"), { ownedPaths: [], session_id: "batch" }));
+    await waitFor(call, task.id, (row) => row.exit_code === 0);
+    await call("describe_session", { session_id: "batch", objective: "approved existing failure list and no new failures", approval_state: "approved" });
+    await call("resume_codex_worker", { task_id: task.id, prompt: "finish under current approval" });
+    await waitFor(call, task.id, (row) => row.run_count === 2 && row.exit_code === 0);
+    const result = await call("get_worker_result", { task_id: task.id, maxChars: 0 });
+    assert.match(result.reports[0], /Current session objective \(revision 2\): approved existing failure list and no new failures/);
+    assert.doesNotMatch(result.reports[0], /Current session objective.*all tests must pass/);
+  });
+});

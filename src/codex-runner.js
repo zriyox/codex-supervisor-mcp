@@ -516,6 +516,8 @@ async function trackRunInHost({ record, args, prompt, logPath, spawnOptions = {}
 // streams, exit write and acceptance until all three settle; IPC is only a
 // startup handshake and never the channel carrying worker results.
 async function startTrackedRun(job) {
+  const session = job.record.session_id ? await getSession(job.record.session_id) : null;
+  if (session) job.prompt = `Current session objective (revision ${session.policy_revision}): ${session.objective ?? "not specified"}. Follow this latest scope; do not revive earlier session requirements. Approval state: ${session.approval_state}.\n\n${job.prompt}`;
   const peers = job.record.session_id ? (await readTasksBySession(job.record.session_id)).filter((task) => task.id !== job.record.id) : [];
   const handoff = await buildHandoff({ goal: job.record.goal_objective, todo: job.record.title,
     peers, contracts: job.record.input_context?.contracts ?? [], context: job.record.input_context?.context ?? [] });
@@ -812,6 +814,7 @@ export async function recoverEligibleRuns() {
   const recovered = [];
   for (const task of await readTasks()) {
     if ((task.run_count ?? 0) !== 1 || !task.thread_id
+      || task.run_evidence?.run !== 1 || !task.guard_policy
       || !(task.status === "lost" || task.attention_reason === "no_work")
       || ["blocked", "paused", "budget_limited", "usage_limited"].includes(task.goal_status)
       || /401|403|unauthori[sz]ed|not logged|permission denied|approval|rate.?limit|429/i.test(task.error ?? "")
