@@ -45,6 +45,8 @@ wait默认60秒和compact，带includeEvents则详细返回；客户端带progre
 
 check_workers可对已死的第1轮lost/no_work自动resume一次，recoveries记动作；第2轮仍失败看证据处理，审批/认证/权限/quota不盲重试。最终报告强制JSON，structured_report仅验证格式；invalid_report拒land，resume让模型提交合法JSON，命令和acceptance另外核对。
 
+未提交材料用context:[{path:绝对路径,sha256:可选}]；首次记哈希，resume材料变了要显式换context。context/contracts总6000字、最多20份文件，每份≤5 MB；handoff1800字/16行可裁，完整约束和refs另传。输入路径不等于写授权。
+
 等待的几条规矩：
 
 - 等待预算管这次调用，不管 worker。`still_running: true` 是等满了不是挂了，按 `next_step` 再调。
