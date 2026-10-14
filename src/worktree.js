@@ -11,9 +11,10 @@
 // so the committed part is read as `git diff --name-only <base> HEAD`, where
 // base is the commit the worktree was created from.
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, lstatSync } from "node:fs";
 import { join } from "node:path";
 import { truncateMiddleChars } from "./truncate.js";
+import { createHash } from "node:crypto";
 
 const defaultGitBin = process.env.GIT_BIN?.trim() || "git";
 
@@ -210,6 +211,29 @@ export function worktreeRef(task) {
 
 export function readTaskChanges(task) {
   return mergeChangedFiles(task.changed_files, readWorktreeChanges(task.worktree_path, worktreeRef(task)));
+}
+
+// Compare output at this run's start/end, rather than treating the previous
+// run's committed or uncommitted work as fresh evidence. If the bounded read
+// cannot prove the full state, leave the fingerprint unknown.
+export function snapshotTaskOutput(task) {
+  const diff = readWorktreeDiff(task.worktree_path, worktreeRef(task), { maxChars: 2_000_000 });
+  if (diff.error || diff.truncated_files > 0 || diff.files.some((file) => file.patch == null)) return null;
+  try {
+    let remaining = 2_000_000;
+    const files = diff.files.map((file) => {
+      let content = "deleted";
+      if (file.status !== "deleted") {
+        const path = join(task.worktree_path, file.path);
+        const info = lstatSync(path);
+        if (!info.isFile() || info.size > remaining) throw new Error("unknown output");
+        remaining -= info.size;
+        content = createHash("sha256").update(readFileSync(path)).digest("hex");
+      }
+      return { path: file.path, from: file.from, status: file.status, patch: file.patch, content };
+    });
+    return createHash("sha256").update(JSON.stringify(files)).digest("hex");
+  } catch { return null; }
 }
 
 // How far the project has moved since the worktree was cut. Compared with
