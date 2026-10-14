@@ -598,6 +598,9 @@ server.registerTool(
       context: z.array(z.object({ path: z.string().min(1), sha256: z.string().regex(/^[a-f0-9]{64}$/).optional() })).max(20).optional(),
       contracts: z.array(z.string().min(1).max(2000)).max(20).optional(),
       externalOutputs: z.array(z.object({ path: z.string().min(1), sha256: z.string().regex(/^[a-f0-9]{64}$/).optional() })).max(20).optional(),
+      networkAccess: z.boolean().default(false),
+      maxRunMs: z.number().int().min(1000).max(86400000).optional(),
+      maxTotalMs: z.number().int().min(1000).max(604800000).optional(),
       goal: z.object({
         objective: z.string().min(1),
         tokenBudget: z.number().int().positive().optional()
@@ -651,6 +654,9 @@ server.registerTool(
       context: z.array(z.object({ path: z.string().min(1), sha256: z.string().regex(/^[a-f0-9]{64}$/).optional() })).max(20).optional(),
       contracts: z.array(z.string().min(1).max(2000)).max(20).optional(),
       externalOutputs: z.array(z.object({ path: z.string().min(1), sha256: z.string().regex(/^[a-f0-9]{64}$/).optional() })).max(20).optional(),
+      networkAccess: z.boolean().optional(),
+      maxRunMs: z.number().int().min(1000).max(86400000).optional(),
+      maxTotalMs: z.number().int().min(1000).max(604800000).optional(),
       goal: z
         .object({
           objective: z.string().min(1),

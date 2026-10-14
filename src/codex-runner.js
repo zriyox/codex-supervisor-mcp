@@ -238,6 +238,7 @@ async function trackRunInHost({ record, args, prompt, logPath, spawnOptions = {}
   const hookCommand = `${quoteCommand(process.execPath)} ${quoteCommand(guard)}`;
   const configArgs = ["--output-schema", workerReportSchemaPath, "--dangerously-bypass-hook-trust", "-c",
     `hooks.PreToolUse=[{matcher="Bash|apply_patch",hooks=[{type="command",command=${JSON.stringify(hookCommand)}}]}]`];
+  configArgs.push("-c", `sandbox_workspace_write.network_access=${record.guard_policy?.networkAccess === true}`);
   if (externalBefore.length) configArgs.push("-c", `sandbox_workspace_write.writable_roots=${JSON.stringify([...new Set(externalBefore.map((file) => dirname(file.path)))])}`);
   // Insert before the prompt/session positional arguments for exec/resume.
   const guardedArgs = [...args.slice(0, -1), ...configArgs, args.at(-1)];
@@ -286,6 +287,15 @@ async function trackRunInHost({ record, args, prompt, logPath, spawnOptions = {}
     updated_at: now
   };
   processes.set(record.id, child);
+  let quotaReason = null;
+  const maxRunMs = record.guard_policy?.maxRunMs;
+  const maxTotalMs = record.guard_policy?.maxTotalMs;
+  const quotaWatch = maxRunMs || maxTotalMs ? setInterval(() => {
+    if (quotaReason) return;
+    if (maxRunMs && Date.now() - Date.parse(now) >= maxRunMs) quotaReason = "run_time_limit";
+    else if (maxTotalMs && Date.now() - Date.parse(record.created_at) >= maxTotalMs) quotaReason = "total_time_limit";
+    if (quotaReason) terminateChild(child);
+  }, 250) : null;
 
   let writeChain = Promise.resolve();
   const persist = (next) => {
@@ -360,6 +370,7 @@ async function trackRunInHost({ record, args, prompt, logPath, spawnOptions = {}
   });
 
   child.on("close", async (code, signal) => {
+    if (quotaWatch) clearInterval(quotaWatch);
     processes.delete(record.id);
     if (stdoutRest.trim()) eventChain = eventChain.then(() => handleLine(stdoutRest)).catch((error) => {
       process.stderr.write(`[codex-supervisor] final event failed for ${record.id}: ${error.message}\n`);
@@ -401,6 +412,7 @@ async function trackRunInHost({ record, args, prompt, logPath, spawnOptions = {}
       next.error = signal ? `codex worker was killed by signal ${signal} before writing a terminal event` : "Codex worker exited without recording a terminal event";
     }
     if (status === "cancelled") next.error = null;
+    if (quotaReason) { next.attention_reason = quotaReason; next.error = `Supervisor time quota exceeded: ${quotaReason}; inspect partial work before changing the budget`; }
     const outputAfter = snapshotTaskOutput(live);
     let externalChanges = [];
     try { externalChanges = compareExternalOutputs(externalBefore, await captureExternalOutputs(record.guard_policy?.externalOutputs ?? [])); }
@@ -573,7 +585,10 @@ export async function createCodexWorker({
   allowedCommands = [],
   context = [],
   contracts = [],
-  externalOutputs = []
+  externalOutputs = [],
+  networkAccess = false,
+  maxRunMs = null,
+  maxTotalMs = null
 }) {
   if (!task || typeof task !== "string") throw new Error("task is required");
   const acceptanceCommands = normalizeAcceptance(acceptance);
@@ -589,6 +604,8 @@ export async function createCodexWorker({
   await captureExternalOutputs(externalOutputs, { checkBaseline: true });
   if (externalOutputs.length && !acceptanceCommands?.length) throw new Error("shared outputs require explicit acceptance commands");
   if (externalOutputs.length && sandbox === "read-only") throw new Error("a read-only worker cannot declare writable shared outputs");
+  if (networkAccess && sandbox !== "workspace-write") throw new Error("networkAccess is only configurable for workspace-write workers");
+  for (const value of [maxRunMs, maxTotalMs]) if (value !== null && (!Number.isInteger(value) || value < 1000)) throw new Error("time limits must be integer milliseconds of at least 1000");
   for (const [name, values] of Object.entries({ forbid, allowedCommands })) {
     if (!Array.isArray(values) || values.length > 100 || values.some((value) => typeof value !== "string" || !value.trim())) throw new Error(`${name} must be a list of at most 100 nonempty strings`);
   }
@@ -634,7 +651,7 @@ export async function createCodexWorker({
     session_id: sessionId ?? null,
     thread_id: null,
     owned_paths: normalizedOwnedPaths,
-    guard_policy: { forbid, allowedCommands, externalOutputs },
+    guard_policy: { forbid, allowedCommands, externalOutputs, networkAccess, maxRunMs, maxTotalMs },
     input_context: { context, contracts },
     depends_on: Array.isArray(dependsOn) ? dependsOn : [],
     goal_objective: validatedGoal.objective,
@@ -688,6 +705,9 @@ export async function resumeCodexWorker({ taskId, prompt, rebaseOnto = null, acc
   if (!prompt || typeof prompt !== "string") throw new Error("prompt is required");
   let task = await getTask(taskId);
   if (!task) throw new Error(`task not found: ${taskId}`);
+  if (task.guard_policy?.maxTotalMs && Date.now() - Date.parse(task.created_at) >= task.guard_policy.maxTotalMs) {
+    const error = new Error("total time quota exceeded; inspect partial work and explicitly dispatch a revised budget");error.code="time_quota_exceeded";throw error;
+  }
   if (context !== undefined) {
     await buildHandoff({ context });
     task = { ...task, input_context: { ...task.input_context, context } };
@@ -788,6 +808,7 @@ export async function recoverEligibleRuns() {
       || !(task.status === "lost" || task.attention_reason === "no_work")
       || ["blocked", "paused", "budget_limited", "usage_limited"].includes(task.goal_status)
       || /401|403|unauthori[sz]ed|not logged|permission denied|approval|rate.?limit|429/i.test(task.error ?? "")
+      || /time_limit|quota/.test(`${task.attention_reason ?? ""} ${task.error ?? ""}`)
       || await isPidAlive(task.pid) || await isPidAlive(task.run_host_pid)) continue;
     const session = task.session_id ? await getSession(task.session_id) : null;
     if (session?.approval_state === "waiting_user") continue;
@@ -970,7 +991,10 @@ export async function createFollowupWorker({
   allowedCommands,
   context,
   contracts,
-  externalOutputs
+  externalOutputs,
+  networkAccess,
+  maxRunMs,
+  maxTotalMs
 }) {
   const parent = await getTask(taskId);
   if (!parent) throw new Error(`task not found: ${taskId}`);
@@ -1015,6 +1039,9 @@ export async function createFollowupWorker({
     context: context ?? parent.input_context?.context ?? [],
     contracts: contracts ?? parent.input_context?.contracts ?? [],
     externalOutputs: externalOutputs ?? parent.guard_policy?.externalOutputs ?? [],
+    networkAccess: networkAccess ?? parent.guard_policy?.networkAccess ?? false,
+    maxRunMs: maxRunMs ?? parent.guard_policy?.maxRunMs ?? null,
+    maxTotalMs: maxTotalMs ?? parent.guard_policy?.maxTotalMs ?? null,
     goal: goal ?? { objective: parent.goal_objective ?? `Follow-up for ${parent.id}`, tokenBudget: parent.goal_token_budget ?? undefined },
     dependsOn: [parent.id],
     followupOf: parent.id,
