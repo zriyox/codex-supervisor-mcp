@@ -14,6 +14,20 @@ test("check_workers recovers an empty write run once and two observers cannot st
     await waitFor(call, id, (row) => row.exit_code === 0);
   });
   const env = { SUPERVISOR_HOME: home, FAKE_CODEX_SCENARIO: "echo-prompt" };
+  // The result precedes independent owner teardown; Windows can keep that
+  // process alive longer. Recovery correctly refuses to overlap a live owner.
+  const db = new DatabaseSync(join(home, "data", "supervisor.sqlite"));
+  const deadline = Date.now() + 20000;
+  try {
+    for (;;) {
+      const { run_host_pid: pid } = db.prepare("SELECT run_host_pid FROM tasks WHERE id=?").get(id);
+      let alive = false;
+      try { process.kill(pid, 0); alive = true; } catch {}
+      if (!alive) break;
+      assert.ok(Date.now() < deadline, "the completed owner must exit before recovery");
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+  } finally { db.close(); }
   await withMcp(env, async ({ call: first }) => withMcp(env, async ({ call: second }) => {
     const replies = await Promise.all([first("check_workers", {}), second("check_workers", {})]);
     assert.equal(replies.flatMap((reply) => reply.recoveries).length, 1);
