@@ -193,6 +193,7 @@ function failedStart(record, reason) {
       phase: null,
       pid: null,
       error: reason,
+      attention_reason: "start_failed",
       completed_at: now,
       updated_at: now
     }
@@ -228,6 +229,12 @@ async function spawnAndAwaitStart(target, args, options) {
 async function trackRunInHost({ record, args, prompt, logPath, spawnOptions = {} }) {
   const target = codexTarget();
   if (target.error) return failedStart(record, target.error);
+  try {
+    const help = execFileSync(target.cmd, [...target.prefixArgs, "exec", "--help"], { encoding: "utf8", timeout: 15000, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
+    if (!help.includes("--dangerously-bypass-hook-trust") || !help.includes("--output-schema")) return failedStart(record, "Codex CLI lacks required per-run hooks/output-schema; install Codex 0.162 or newer before dispatch");
+  } catch (error) { return failedStart(record, error.code === "ENOENT"
+    ? `failed to spawn ${target.cmd} for Codex capability preflight: ${error.message}`
+    : `Codex capability preflight failed: ${error.message}`); }
   const outputBefore = snapshotTaskOutput(record);
   const externalBefore = await captureExternalOutputs(record.guard_policy?.externalOutputs ?? [], { checkBaseline: (record.run_count ?? 0) === 0 });
   const owned = [...findOutsideOwnedChanges(record, []).mapping.map((entry) => entry.worker), ...externalBefore.map((entry) => entry.path)];

@@ -45,6 +45,10 @@ process.stdin.on("end", () => {
 });
 
 async function main() {
+  if (args.includes("--help")) {
+    process.stdout.write(process.env.FAKE_CODEX_OLD_CAPABILITIES ? "Usage: codex exec\n" : "Usage: codex exec --output-schema --dangerously-bypass-hook-trust\n");
+    return;
+  }
   if (args[0] === "delete") {
     if (process.env.FAKE_CODEX_DELETE_LOG) {
       const { appendFileSync } = await import("node:fs");
