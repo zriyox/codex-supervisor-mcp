@@ -25,6 +25,7 @@ import { rebaseWorktree } from "./landing.js";
 import { DEFAULT_ACCEPTANCE_TIMEOUT_MS, normalizeAcceptance, runAcceptance } from "./acceptance.js";
 import { appendFile } from "node:fs/promises";
 import { defaultBinDirs, findBinaryPath, resolveCommand, shimMessage } from "./bin-resolver.js";
+import { findOutsideOwnedChanges } from "./owned-changes.js";
 
 const processes = new Map();
 // taskId -> control object of an acceptance run in progress ({ kill, cancelled }).
@@ -223,10 +224,22 @@ async function trackRunInHost({ record, args, prompt, logPath, spawnOptions = {}
   const target = codexTarget();
   if (target.error) return failedStart(record, target.error);
   const outputBefore = snapshotTaskOutput(record);
+  const owned = findOutsideOwnedChanges(record, []).mapping.map((entry) => entry.worker);
+  const guardPolicy = { cwd: record.cwd, ownedPaths: owned, ...(record.guard_policy ?? {}),
+    allowedCommands: [...(record.guard_policy?.allowedCommands ?? []), ...(record.acceptance ?? []).map((check) => typeof check === "string" ? check : check.command)] };
+  const guard = fileURLToPath(new URL("./tool-guard.js", import.meta.url));
+  const quoteCommand = (path) => process.platform === "win32" ? `"${path.replace(/"/g, '""')}"` : `'${path.replace(/'/g, "'\\''")}'`;
+  const hookCommand = `${quoteCommand(process.execPath)} ${quoteCommand(guard)}`;
+  const configArgs = ["--dangerously-bypass-hook-trust", "-c",
+    `hooks.PreToolUse=[{matcher="Bash|apply_patch",hooks=[{type="command",command=${JSON.stringify(hookCommand)}}]}]`];
+  // Insert before the prompt/session positional arguments for exec/resume.
+  const guardedArgs = [...args.slice(0, -1), ...configArgs, args.at(-1)];
+  prompt = `Runtime supervisor guard: edits must use apply_patch within ${JSON.stringify(owned)}. Shell verification must exactly match declared commands ${JSON.stringify(guardPolicy.allowedCommands)}. Forbidden: ${JSON.stringify(guardPolicy.forbid ?? [])}. Undeclared shell programs are denied; report a needed validation command instead of bypassing the guard.\n\n${prompt}`;
 
-  const { child, spawnError } = await spawnAndAwaitStart(target, args, {
+  const { child, spawnError } = await spawnAndAwaitStart(target, guardedArgs, {
     stdio: ["pipe", "pipe", "pipe"],
-    env: { ...process.env, NO_COLOR: "1" },
+    env: { ...process.env, NO_COLOR: "1", CODEX_SUPERVISOR_TASK_ID: record.id,
+      CODEX_SUPERVISOR_RUN: String((record.run_count ?? 0) + 1), CODEX_SUPERVISOR_GUARD_POLICY: JSON.stringify(guardPolicy) },
     windowsHide: true,
     ...spawnOptions
   });
@@ -529,7 +542,9 @@ export async function createCodexWorker({
   useWorktree = true,
   baseRef = null,
   acceptance = null,
-  acceptanceTimeoutMs = null
+  acceptanceTimeoutMs = null,
+  forbid = [],
+  allowedCommands = []
 }) {
   if (!task || typeof task !== "string") throw new Error("task is required");
   const acceptanceCommands = normalizeAcceptance(acceptance);
@@ -541,6 +556,9 @@ export async function createCodexWorker({
     throw new Error("ownedPaths is required and must list at least one path this worker is allowed to write (an empty list is allowed only for a read-only worker)");
   }
   const validatedGoal = validateGoal(goal);
+  for (const [name, values] of Object.entries({ forbid, allowedCommands })) {
+    if (!Array.isArray(values) || values.length > 100 || values.some((value) => typeof value !== "string" || !value.trim())) throw new Error(`${name} must be a list of at most 100 nonempty strings`);
+  }
 
   const projectRoot = cwd;
   const normalizedOwnedPaths = normalizeOwnedPaths(ownedPaths, projectRoot);
@@ -583,6 +601,7 @@ export async function createCodexWorker({
     session_id: sessionId ?? null,
     thread_id: null,
     owned_paths: normalizedOwnedPaths,
+    guard_policy: { forbid, allowedCommands },
     depends_on: Array.isArray(dependsOn) ? dependsOn : [],
     goal_objective: validatedGoal.objective,
     goal_token_budget: validatedGoal.tokenBudget,
@@ -881,7 +900,9 @@ export async function createFollowupWorker({
   goal,
   baseRef,
   acceptance,
-  acceptanceTimeoutMs
+  acceptanceTimeoutMs,
+  forbid,
+  allowedCommands
 }) {
   const parent = await getTask(taskId);
   if (!parent) throw new Error(`task not found: ${taskId}`);
@@ -921,6 +942,8 @@ export async function createFollowupWorker({
     reasoningEffort: reasoningEffort ?? parent.reasoning_effort ?? "high",
     skipGitRepoCheck: parent.skip_git_repo_check,
     ownedPaths: ownedPaths ?? parent.owned_paths,
+    forbid: forbid ?? parent.guard_policy?.forbid ?? [],
+    allowedCommands: allowedCommands ?? parent.guard_policy?.allowedCommands ?? [],
     goal: goal ?? { objective: parent.goal_objective ?? `Follow-up for ${parent.id}`, tokenBudget: parent.goal_token_budget ?? undefined },
     dependsOn: [parent.id],
     followupOf: parent.id,

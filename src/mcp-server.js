@@ -567,6 +567,8 @@ server.registerTool(
       // Empty only for a read-only worker (a verifier): it writes nothing,
       // so it owns nothing.
       ownedPaths: z.array(z.string().min(1)),
+      forbid: z.array(z.string().min(1)).max(100).optional(),
+      allowedCommands: z.array(z.string().min(1)).max(100).optional(),
       goal: z.object({
         objective: z.string().min(1),
         tokenBudget: z.number().int().positive().optional()
@@ -615,6 +617,8 @@ server.registerTool(
       model: z.string().optional(),
       reasoningEffort: z.enum(["minimal", "low", "medium", "high"]).default("high"),
       ownedPaths: z.array(z.string().min(1)).optional(),
+      forbid: z.array(z.string().min(1)).max(100).optional(),
+      allowedCommands: z.array(z.string().min(1)).max(100).optional(),
       goal: z
         .object({
           objective: z.string().min(1),
