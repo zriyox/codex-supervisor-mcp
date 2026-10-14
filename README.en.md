@@ -183,6 +183,8 @@ Wait defaults to 60 seconds and compact rows; includeEvents selects details unle
 
 Each run injects the shipped PreToolUse guard: apply_patch checks every target including renames and symlinks; forbid rejects red lines. Shell allows simple reads and explicitly declared allowedCommands/acceptance. Declared validation scripts run with dispatcher privileges and may have side effects; this is not a filesystem sandbox for arbitrary programs. Resume/follow-up inherit the policy without changing global hooks. Empty write runs use current output and command evidence and surface no_work; read-only tasks are not empty merely for having no diff.
 
+After reconciliation, check_workers atomically resumes a dead first lost/no_work run once and returns recovery receipts. A second failure remains actionable; approval, authentication, permission and quota waits are not retried. Final reports use JSON result/verification/not_done; structured_report exposes validation independently of command history and acceptance. Invalid JSON is failed/invalid_report and cannot land. Existing history is labelled legacy_text.
+
 Cleanup previews by default: `npm run cleanup -- --dry-run`. `--apply` removes only integrated, clean completed worktrees with no active dependents and verified Git registration/ownership. Dirty, unlanded, lost/failed or unproven work is preserved with a reason.
 
 ## How this differs from Claude Code subagents

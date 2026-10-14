@@ -183,6 +183,8 @@ wait 默认预算60秒、默认compact；includeEvents会选择详细结果（�
 
 每路临时注入随包PreToolUse守卫：apply_patch核对全部目标路径（含rename和symlink），forbid拒绝红线；Shell仅允许简单读取和派单显式allowedCommands/acceptance。声明的验证脚本以派单者权限执行，可有副作用，不能当作任意程序的文件沙箱。guard策略随resume/followup继承，不写全局hooks。空跑write run按本轮输出前后内容和命令判断，no_work进入needs_attention；只读任务不因没改文件判空跑。
 
+check_workers在状态协调后，对已结束的第1轮lost/no_work原子resume一次；第2轮仍有问题则保留证据等处理。审批、认证、权限和quota等待不重试，返回recoveries记录。worker最终输出强制JSON result/verification/not_done；get_worker_result的structured_report给格式校验，独立命令与acceptance仍为实际证据。非法JSON标failed/invalid_report并拒绝land；旧历史标legacy_text。
+
 清理默认只预览：`npm run cleanup -- --dry-run`。`--apply` 只删除已合入、干净、无活跃依赖、Git注册与目录归属可证明的 completed worktree；脏、未合、lost/failed 及证据不足的目录保留并给出原因。
 
 ## 和 Claude Code 的 subagent 有什么区别
