@@ -70,7 +70,7 @@ const first = await withServer(async (client) => {
     sandbox: "read-only",
     reasoningEffort: "low",
     ownedPaths: ["README.md"],
-    goal: { objective: "Have the real codex CLI answer PONG without touching files" }
+    goal: { objective: "Respond with PONG without touching files; the supervisor validates your response" }
   });
   assert.ok(["queued", "running"].includes(created.status), `unexpected dispatch status ${created.status}`);
   assert.ok(created.worktree_path, "a dispatch receipt must carry the worktree path");
@@ -124,13 +124,13 @@ const first = await withServer(async (client) => {
   console.log(`  report: ${JSON.stringify(result.reports.at(-1))}`);
 
   const goal = await call(client, "get_worker_goal", { task_id: created.id });
-  assert.equal(goal.objective, "Have the real codex CLI answer PONG without touching files");
+  assert.equal(goal.objective, "Respond with PONG without touching files; the supervisor validates your response");
   assert.equal(goal.needs_attention, false);
   console.log(`  native goal: ${goal.native_goal ? JSON.stringify(goal.native_goal) : "none for this thread"}`);
   // The dispatch preamble tells the worker to call create_goal first, so the
   // Codex thread must own a real goal. If this fails the framing regressed.
   assert.ok(goal.native_goal, "expected a native Codex goal created by the worker");
-  assert.equal(goal.native_goal.objective, "Have the real codex CLI answer PONG without touching files");
+  assert.equal(goal.native_goal.objective, "Respond with PONG without touching files; the supervisor validates your response");
 
   return { task: current, id: created.id };
 });
@@ -157,7 +157,7 @@ assert.ok(await stat(finished.worktree_path).then(() => true, () => false), "wor
 await withServer(async (client) => {
   const listed = await call(client, "list_codex_workers", { includeHistory: true });
   assert.equal(listed.length, 1);
-  assert.equal(listed[0].goal_objective, "Have the real codex CLI answer PONG without touching files");
+  assert.equal(listed[0].goal_objective, "Respond with PONG without touching files; the supervisor validates your response");
 });
 
 // Resume the SAME Codex session from a brand new MCP server process.
@@ -200,7 +200,7 @@ const writeRun = await withServer(async (client) => {
     reasoningEffort: "low",
     ownedPaths: ["NOTES.md"],
     acceptance: ['node -e "const fs=require(\'fs\');if(fs.readFileSync(\'NOTES.md\',\'utf8\').trim()!==\'hello from worker\')process.exit(1);console.log(\'real output verified\')"'],
-    goal: { objective: "Prove a real worker writes only inside its own worktree" }
+    goal: { objective: "Create NOTES.md with hello from worker using apply_patch; run the declared acceptance command" }
   });
   const seenPhases = new Set();
   // Wait for the process exit, not just turn.completed: the exit handler is
