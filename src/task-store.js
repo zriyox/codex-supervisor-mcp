@@ -28,6 +28,8 @@ const POST_V1_COLUMNS = [
   ["session_id", "TEXT"],
   ["base_commit", "TEXT"],
   ["acceptance", "TEXT"],
+  ["acceptance_local", "TEXT"],
+  ["session_policy_revision", "INTEGER"],
   ["acceptance_timeout_ms", "INTEGER"],
   ["acceptance_results", "TEXT"],
   ["landed_at", "TEXT"],
@@ -82,6 +84,8 @@ const TASKS_DDL = `
       worktree_path TEXT,
       base_commit TEXT,
       acceptance TEXT,
+      acceptance_local TEXT,
+      session_policy_revision INTEGER,
       acceptance_timeout_ms INTEGER,
       acceptance_results TEXT,
       landed_at TEXT,
@@ -98,7 +102,7 @@ const TASK_COLUMNS = [
   "current_command", "error", "followup_of", "resumed_from", "session_id", "thread_id", "owned_paths",
   "depends_on", "goal_objective", "goal_token_budget", "goal_status", "goal_tokens_used",
   "goal_time_used_seconds", "goal_updated_at", "run_count", "cancel_requested_at",
-  "notices", "worktree_path", "base_commit", "acceptance", "acceptance_timeout_ms", "acceptance_results", "landed_at", "landed_head", "run_log"
+  "notices", "worktree_path", "base_commit", "acceptance", "acceptance_local", "session_policy_revision", "acceptance_timeout_ms", "acceptance_results", "landed_at", "landed_head", "run_log"
 ];
 
 function tableColumns(dbInstance, tableName) {
@@ -314,6 +318,7 @@ function rowToTask(row) {
     owned_paths: decodeJson(row.owned_paths, []),
     depends_on: decodeJson(row.depends_on, []),
     acceptance: decodeJson(row.acceptance, null),
+    acceptance_local: decodeJson(row.acceptance_local, null),
     acceptance_results: decodeJson(row.acceptance_results, null),
     pid: row.pid ?? null,
     exit_code: row.exit_code ?? null,
@@ -434,6 +439,7 @@ export async function writeTask(task) {
   // JSON columns: node:sqlite refuses to bind an array or object, and a
   // refused bind drops the whole row update.
   params.acceptance = task.acceptance ? JSON.stringify(task.acceptance) : null;
+  params.acceptance_local = task.acceptance_local ? JSON.stringify(task.acceptance_local) : null;
   params.acceptance_results = task.acceptance_results ? JSON.stringify(task.acceptance_results) : null;
   params.run_count = task.run_count ?? 0;
   params.phase = task.phase ?? null;

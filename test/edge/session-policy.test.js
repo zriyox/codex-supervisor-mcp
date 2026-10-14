@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { tempHome, withMcp } from "./helpers.js";
+import { tempHome, withMcp, dispatchArgs, waitFor } from "./helpers.js";
+import { join } from "node:path";
 
 test("session policy revisions preserve omitted fields and reject stale updates", async () => {
   const home = await tempHome("supervisor-session-policy-");
@@ -21,5 +22,43 @@ test("session policy revisions preserve omitted fields and reject stale updates"
     assert.equal(works.policy_revision, 2);
     assert.equal(works.objective, "approved known failures");
     assert.deepEqual(works.default_acceptance, []);
+  });
+});
+
+test("session defaults are added to each worker and waiting approval blocks dispatch and resume", async () => {
+  const home = await tempHome("supervisor-session-defaults-");
+  await withMcp({ SUPERVISOR_HOME: home }, async ({ call }) => {
+    await call("describe_session", { session_id: "batch", default_acceptance: ['node -e "console.log(\'common check\')"'] });
+    const worker = await call("create_codex_worker", dispatchArgs("default-checks", join(home, "workspace"), {
+      session_id: "batch", acceptance: ['node -e "console.log(\'local check\')"']
+    }));
+    await waitFor(call, worker.id, (t) => t.exit_code != null && t.status === "completed");
+    const result = await call("get_worker_result", { task_id: worker.id });
+    assert.equal(result.acceptance.checks.length, 2);
+    assert.equal(result.acceptance.checks[0].output_tail, "common check");
+    assert.equal(result.acceptance.checks[1].output_tail, "local check");
+    await call("describe_session", { session_id: "batch", approval_state: "waiting_user" });
+    const refused = await call("create_codex_worker", dispatchArgs("not-approved", join(home, "workspace"), { session_id: "batch" }));
+    assert.equal(refused.error, "session_waiting_user");
+    const resume = await call("resume_codex_worker", { task_id: worker.id, prompt: "continue" });
+    assert.equal(resume.error, "session_waiting_user");
+    await call("describe_session", { session_id: "batch", approval_state: "approved", default_acceptance: ['node -e "console.log(\'revised common check\')"'] });
+    const resumed = await call("resume_codex_worker", { task_id: worker.id, prompt: "approved revision" });
+    assert.ok(resumed.id, JSON.stringify(resumed));
+    await waitFor(call, worker.id, (t) => t.run_count === 2 && t.exit_code != null);
+    const revised = await call("get_worker_result", { task_id: worker.id });
+    assert.equal(revised.acceptance.checks[0].output_tail, "revised common check");
+    assert.equal(revised.acceptance.checks[1].output_tail, "local check");
+  });
+});
+
+test("combined defaults exceeding the command limit create no worker", async () => {
+  const home = await tempHome("supervisor-session-limit-");
+  await withMcp({ SUPERVISOR_HOME: home }, async ({ call }) => {
+    await call("describe_session", { session_id: "batch", default_acceptance: Array(10).fill('node -e "process.exit(0)"') });
+    const worker = await call("create_codex_worker", dispatchArgs("too-many", join(home, "workspace"), { session_id: "batch", acceptance: ['node -e "process.exit(0)"'] }));
+    assert.equal(worker.error, "too_many_acceptance_commands");
+    const works = await call("get_session_works", { session_id: "batch" });
+    assert.equal(works.count, 0);
   });
 });

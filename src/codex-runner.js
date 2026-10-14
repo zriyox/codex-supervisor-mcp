@@ -6,6 +6,7 @@ import { join, resolve, sep } from "node:path";
 import {
   appendTaskEvent,
   getTask,
+  getSession,
   readActiveTasks,
   readTaskEvents,
   taskRunPath,
@@ -488,6 +489,14 @@ export async function createCodexWorker({
     await upsertSession({ id: sessionId, title: sessionTitle, note: sessionNote });
   }
 
+  const session = sessionId ? await getSession(sessionId) : null;
+  if (session?.approval_state === "waiting_user") {
+    const error = new Error("session is waiting for user approval; do not dispatch or auto-resume");
+    error.code = "session_waiting_user";
+    throw error;
+  }
+  const combinedAcceptance = normalizeAcceptance([...(session?.default_acceptance ?? []), ...(acceptanceCommands ?? [])]);
+
   const id = `codex-${Date.now()}-${randomUUID().slice(0, 8)}`;
   const worktree = useWorktree
     ? await ensureWorktree(projectRoot, id, baseRef)
@@ -522,8 +531,10 @@ export async function createCodexWorker({
     run_count: 0,
     worktree_path: worktreePath,
     base_commit: worktree.baseCommit,
-    acceptance: acceptanceCommands,
-    acceptance_timeout_ms: acceptanceCommands ? (acceptanceTimeoutMs ?? DEFAULT_ACCEPTANCE_TIMEOUT_MS) : null,
+    acceptance: combinedAcceptance,
+    acceptance_local: acceptanceCommands,
+    session_policy_revision: session?.policy_revision ?? null,
+    acceptance_timeout_ms: combinedAcceptance ? (acceptanceTimeoutMs ?? DEFAULT_ACCEPTANCE_TIMEOUT_MS) : null,
     acceptance_results: null,
     prompt: task,
     changed_files: [],
@@ -542,7 +553,7 @@ export async function createCodexWorker({
     prompt: frameWorkerPrompt(task, {
       objective: validatedGoal.objective,
       tokenBudget: validatedGoal.tokenBudget
-    }, { acceptance: acceptanceCommands }),
+    }, { acceptance: combinedAcceptance }),
     logPath: record.run_log
   });
   await upsertTask(started.record);
@@ -563,13 +574,22 @@ export async function resumeCodexWorker({ taskId, prompt, rebaseOnto = null, acc
   if (!prompt || typeof prompt !== "string") throw new Error("prompt is required");
   let task = await getTask(taskId);
   if (!task) throw new Error(`task not found: ${taskId}`);
+  const session = task.session_id ? await getSession(task.session_id) : null;
+  if (session?.approval_state === "waiting_user") {
+    const error = new Error("session is waiting for user approval; do not resume");
+    error.code = "session_waiting_user";
+    throw error;
+  }
+  const localAcceptance = acceptance === undefined ? (task.session_policy_revision == null ? task.acceptance : task.acceptance_local) : normalizeAcceptance(acceptance);
   // `acceptance` replaces the stored commands when given; an empty list
   // clears them. Left out, the stored commands stay.
-  if (acceptance !== undefined) {
-    const commands = normalizeAcceptance(acceptance);
+  if (acceptance !== undefined || session) {
+    const commands = normalizeAcceptance([...(session?.default_acceptance ?? []), ...(localAcceptance ?? [])]);
     task = {
       ...task,
       acceptance: commands,
+      acceptance_local: localAcceptance,
+      session_policy_revision: session?.policy_revision ?? null,
       acceptance_timeout_ms: commands ? (task.acceptance_timeout_ms ?? DEFAULT_ACCEPTANCE_TIMEOUT_MS) : null,
       updated_at: new Date().toISOString()
     };
@@ -821,7 +841,7 @@ export async function createFollowupWorker({
     // Inherited unless given; the follow-up runs in a fresh worktree cut
     // from the project HEAD, so the parent's checks only pass there once
     // the parent's work has landed.
-    acceptance: acceptance === undefined ? parent.acceptance : acceptance,
+    acceptance: acceptance === undefined ? (parent.session_policy_revision == null ? parent.acceptance : parent.acceptance_local) : acceptance,
     acceptanceTimeoutMs: acceptanceTimeoutMs ?? parent.acceptance_timeout_ms ?? null
   });
 }
