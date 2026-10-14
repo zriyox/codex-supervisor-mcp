@@ -177,9 +177,9 @@ Structured acceptance entries use `{command, reportPath, baseline}`. The baselin
 
 Landing checks the real diff against ownedPaths before committing drafts; only use allowOutsideOwned for an explicitly approved exception.
 
-Session default_acceptance is prepended to local checks; resume uses the latest policy. describe_session returns policy_revision and expected_revision prevents stale edits. waiting_user blocks dispatch/resume until approved. This does not rewrite a host Stop hook; synchronize the host goal with the latest user instruction.
+Session default_acceptance is prepended to local checks; resume uses the latest policy. describe_session returns policy_revision and expected_revision prevents stale edits. waiting_user blocks dispatch/resume until approved. host_goal_sync returns a current-policy /goal command. Replace an active native goal through /goal, or propose the same condition through ProposeGoal for host approval when available. The condition reads the latest session revision and approved scope; MCP does not silently modify or disable the host Stop hook.
 
-Wait defaults to 60 seconds and compact rows; includeEvents selects details unless compact is explicit. Clients supplying a progress token receive notifications every 30 seconds. MCP SDK timeout renewal is verified; Claude host idle renewal still needs a separate test.
+Wait defaults to 60 seconds and compact rows; includeEvents selects details unless compact is explicit. Clients supplying a progress token receive notifications every 30 seconds. MCP SDK and real Claude 2.1.299 are verified: a 65-second wait succeeds with a 35-second idle timeout after three progress notifications. Native /loop scheduling is also verified.
 
 Each run injects the shipped PreToolUse guard: apply_patch checks every target including renames and symlinks; forbid rejects red lines. Shell allows simple reads and explicitly declared allowedCommands/acceptance. Declared validation scripts run with dispatcher privileges and may have side effects; this is not a filesystem sandbox for arbitrary programs. Resume/follow-up inherit the policy without changing global hooks. Empty write runs use current output and command evidence and surface no_work; read-only tasks are not empty merely for having no diff.
 

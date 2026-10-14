@@ -177,9 +177,9 @@ land_codex_worker       核过了，落进集成分支
 
 落地前按真实 diff 核对 ownedPaths，越界拒绝且不提交草稿；只有用户明确授权时才用 allowOutsideOwned。
 
-同 session 的 `default_acceptance` 自动加到每路本地检查前；resume 会取最新策略。`describe_session` 返回 policy_revision，改目标/门禁可传 expected_revision 防旧窗口覆盖；waiting_user 拒绝派单与恢复，approved 后再继续。它不会修改宿主的旧 Stop hook，主线程须按最新用户目标同步宿主 goal。
+同 session 的 `default_acceptance` 自动加到每路本地检查前；resume 会取最新策略。`describe_session` 返回 policy_revision，改目标/门禁可传 expected_revision 防旧窗口覆盖；waiting_user 拒绝派单与恢复，approved 后再继续。回执host_goal_sync包含按当前策略生成的/goal命令；宿主已有原生goal时用/goal替换条件，支持ProposeGoal时可提议同一条件并走宿主批准。条件要求读取最新session revision及批准范围；MCP不会偷偷修改或禁用宿主Stop hook。
 
-wait 默认预算60秒、默认compact；includeEvents会选择详细结果（显式compact优先）。带progress token的客户端每30秒收到通知；已验证MCP SDK超时续期，Claude宿主idle续期仍须实测。
+wait 默认预算60秒、默认compact；includeEvents会选择详细结果（显式compact优先）。带progress token的客户端每30秒收到通知；已验证MCP SDK及真实Claude2.1.299：idle35秒、wait65秒，三次progress后正常返回；原生/loop定时调用也已实测。
 
 每路临时注入随包PreToolUse守卫：apply_patch核对全部目标路径（含rename和symlink），forbid拒绝红线；Shell仅允许简单读取和派单显式allowedCommands/acceptance。声明的验证脚本以派单者权限执行，可有副作用，不能当作任意程序的文件沙箱。guard策略随resume/followup继承，不写全局hooks。空跑write run按本轮输出前后内容和命令判断，no_work进入needs_attention；只读任务不因没改文件判空跑。
 
