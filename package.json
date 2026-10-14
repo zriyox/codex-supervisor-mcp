@@ -44,6 +44,8 @@
     "src/worker-changes.js",
     "src/owned-changes.js",
     "src/tool-guard.js",
+    "src/worker-report.js",
+    "src/worker-report.schema.json",
     "src/truncate.js",
     "src/status.js",
     "src/paths.js",

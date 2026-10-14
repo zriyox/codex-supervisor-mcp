@@ -3,6 +3,7 @@
 // Invariant: status is the lifecycle and is only ever assigned queued /
 // running / completed / failed / cancelled / lost. Progress details go to
 // phase, which is only meaningful while the work is running.
+import { parseWorkerReport } from "./worker-report.js";
 
 function getEventType(event) {
   return event.type ?? event.event ?? event.msg?.type ?? "unknown";
@@ -17,7 +18,9 @@ function inferCommand(item) {
 }
 
 function inferAgentMessage(item) {
-  return item?.text ?? item?.message ?? item?.content ?? item?.output_text ?? null;
+  const raw = item?.text ?? item?.message ?? item?.content ?? item?.output_text ?? null;
+  const parsed = parseWorkerReport(raw);
+  return parsed.valid ? parsed.report.result : raw;
 }
 
 // The stored event stream is raw Codex JSONL, so reading a worker's own report

@@ -13,7 +13,12 @@ const commandLen = Number(process.env.FAKE_CODEX_COMMAND_LEN ?? "0");
 const commandText = commandLen > 0 ? `cat <<'EOF' > file.txt\n${"c".repeat(commandLen)}\nEOF` : "ls -la";
 
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-const emit = (event) => process.stdout.write(`${JSON.stringify(event)}\n`);
+const emit = (event) => {
+  if (args.includes("--output-schema") && event.item?.type === "agent_message") {
+    event = { ...event, item: { ...event.item, text: JSON.stringify({ result: event.item.text, verification: [], not_done: [] }) } };
+  }
+  process.stdout.write(`${JSON.stringify(event)}\n`);
+};
 // The worktree the supervisor handed this worker, same flag the real CLI gets.
 const cdIndex = args.indexOf("--cd");
 const workDir = cdIndex === -1 ? process.cwd() : args[cdIndex + 1];
