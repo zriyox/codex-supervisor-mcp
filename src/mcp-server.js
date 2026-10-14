@@ -32,6 +32,7 @@ import {
 } from "./task-store.js";
 import { readNativeGoal, readNativeGoalState } from "./goal-store.js";
 import { collectWorkerChanges } from "./worker-changes.js";
+import { buildHostGoalSync } from "./prompt.js";
 import { baseBehind, readTaskChanges, readWorktreeDiff, worktreeRef } from "./worktree.js";
 import { summarizeVerification } from "./event-parser.js";
 import { acceptanceVerdict, runAcceptance } from "./acceptance.js";
@@ -951,7 +952,7 @@ server.registerTool(
   async ({ session_id, title, note, objective, default_acceptance, approval_state, expected_revision }) => {
     try {
       const row = await upsertSession({ id: session_id, title: title ?? null, note: note ?? null, objective, defaultAcceptance: default_acceptance, approvalState: approval_state, expectedRevision: expected_revision });
-      return textResult({ ...row, session_id });
+      return textResult({ ...row, session_id, host_goal_sync: buildHostGoalSync(row) });
     } catch (error) { return errorResult(error); }
   }
 );

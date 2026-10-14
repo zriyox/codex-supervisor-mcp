@@ -92,3 +92,21 @@ export function withGoalPreamble(prompt, goalOptions) {
 export function frameWorkerPrompt(prompt, goalOptions, { acceptance = null } = {}) {
   return `${withGoalPreamble(prompt, goalOptions)}\n\n${buildReportPreamble({ resume: Boolean(goalOptions?.resume), acceptance })}`;
 }
+
+// Claude's native /goal owns its Stop condition. MCP cannot silently replace
+// it, so return a concrete current-policy condition for the host's goal UI.
+// The condition references the current revision instead of copying long or
+// soon-stale commands into the host's independently stored Stop hook.
+export function buildHostGoalSync(session) {
+  const id = JSON.stringify(String(session.id));
+  const condition = [
+    `For supervisor session ${id}, read get_session_works and use its current objective, default_acceptance, approval_state and policy_revision (at least ${session.policy_revision ?? 0}).`,
+    "Use the latest explicit human instruction and approved failure baseline; superseded goals and checks must not be revived.",
+    "Stop when the current approved objective is verified and all required worker results are collected, checked and integrated as requested.",
+    "If approval_state is waiting_user, stop after clearly reporting the blocker, attempted checks, options and recommendation and asking for the required decision; do not auto-resume or repeat unchanged waiting reports.",
+    "Report the policy revision and actual evidence. A worker exit, acceptance green, push or publish alone is not proof that the whole objective is done."
+  ].join(" ");
+  return { revision: session.policy_revision ?? 0, approval_state: session.approval_state ?? "approved", condition,
+    claude_command: `/goal ${condition}`, requires_host_action: true,
+    instruction: "If a native Claude goal is active, replace its condition through /goal with this current-policy condition; ProposeGoal may propose it for host approval where available. MCP has not modified or disabled the host Stop hook." };
+}
