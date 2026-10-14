@@ -20,7 +20,7 @@ import { applyCodexEvent } from "./event-parser.js";
 import { ACTIVE_STATUSES, TERMINAL_STATUSES } from "./status.js";
 import { worktreesDir } from "./paths.js";
 import { frameWorkerPrompt } from "./prompt.js";
-import { readTaskChanges } from "./worktree.js";
+import { readTaskChanges, snapshotTaskOutput } from "./worktree.js";
 import { rebaseWorktree } from "./landing.js";
 import { DEFAULT_ACCEPTANCE_TIMEOUT_MS, normalizeAcceptance, runAcceptance } from "./acceptance.js";
 import { appendFile } from "node:fs/promises";
@@ -222,6 +222,7 @@ async function spawnAndAwaitStart(target, args, options) {
 async function trackRunInHost({ record, args, prompt, logPath, spawnOptions = {} }) {
   const target = codexTarget();
   if (target.error) return failedStart(record, target.error);
+  const outputBefore = snapshotTaskOutput(record);
 
   const { child, spawnError } = await spawnAndAwaitStart(target, args, {
     stdio: ["pipe", "pipe", "pipe"],
@@ -251,6 +252,10 @@ async function trackRunInHost({ record, args, prompt, logPath, spawnOptions = {}
     error: null,
     cancel_requested_at: null,
     acceptance_results: null,
+    attention_reason: null,
+    run_evidence: null,
+    commands: [],
+    last_message: null,
     current_action: null,
     current_command: null,
     // A resumed row still carries the last event of the run that ended;
@@ -374,6 +379,15 @@ async function trackRunInHost({ record, args, prompt, logPath, spawnOptions = {}
       next.error = signal ? `codex worker was killed by signal ${signal} before writing a terminal event` : "Codex worker exited without recording a terminal event";
     }
     if (status === "cancelled") next.error = null;
+    const outputAfter = snapshotTaskOutput(live);
+    next.run_evidence = {
+      run: live.run_count, commands_run: live.commands.length,
+      output_before: outputBefore, output_after: outputAfter,
+      output_changed: outputBefore && outputAfter ? outputBefore !== outputAfter : null
+    };
+    if (status === "completed" && code === 0 && live.sandbox !== "read-only"
+      && !next.run_evidence.output_changed && next.run_evidence.output_changed !== null
+      && live.commands.length === 0) next.attention_reason = "no_work";
 
     // Acceptance runs after the worker is gone, in two writes. The first
     // records the terminal status with exit_code still null and the run

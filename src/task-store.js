@@ -14,6 +14,8 @@ let db;
 // fresh CREATE TABLE cannot drift apart.
 const POST_V1_COLUMNS = [
   ["run_host_pid", "INTEGER"],
+  ["attention_reason", "TEXT"],
+  ["run_evidence", "TEXT"],
   ["resumed_from", "TEXT"],
   ["thread_id", "TEXT"],
   ["owned_paths", "TEXT NOT NULL DEFAULT '[]'"],
@@ -60,6 +62,8 @@ const TASKS_DDL = `
       completed_at TEXT,
       pid INTEGER,
       run_host_pid INTEGER,
+      attention_reason TEXT,
+      run_evidence TEXT,
       exit_code INTEGER,
       signal TEXT,
       stderr_tail TEXT,
@@ -100,7 +104,7 @@ const TASKS_DDL = `
 const TASK_COLUMNS = [
   "id", "title", "worker", "status", "phase", "cwd", "project_root", "sandbox", "model",
   "reasoning_effort", "skip_git_repo_check", "prompt", "changed_files", "commands",
-  "created_at", "updated_at", "started_at", "completed_at", "pid", "run_host_pid", "exit_code", "signal",
+  "created_at", "updated_at", "started_at", "completed_at", "pid", "run_host_pid", "attention_reason", "run_evidence", "exit_code", "signal",
   "stderr_tail", "last_event_at", "last_event_type", "last_message", "current_action",
   "current_command", "error", "followup_of", "resumed_from", "session_id", "thread_id", "owned_paths",
   "depends_on", "goal_objective", "goal_token_budget", "goal_status", "goal_tokens_used",
@@ -324,6 +328,7 @@ function rowToTask(row) {
     acceptance: decodeJson(row.acceptance, null),
     acceptance_local: decodeJson(row.acceptance_local, null),
     acceptance_results: decodeJson(row.acceptance_results, null),
+    run_evidence: decodeJson(row.run_evidence, null),
     pid: row.pid ?? null,
     exit_code: row.exit_code ?? null,
     phase: row.phase ?? null,
@@ -455,6 +460,7 @@ export async function writeTask(task) {
   params.acceptance = task.acceptance ? JSON.stringify(task.acceptance) : null;
   params.acceptance_local = task.acceptance_local ? JSON.stringify(task.acceptance_local) : null;
   params.acceptance_results = task.acceptance_results ? JSON.stringify(task.acceptance_results) : null;
+  params.run_evidence = task.run_evidence ? JSON.stringify(task.run_evidence) : null;
   params.run_count = task.run_count ?? 0;
   params.phase = task.phase ?? null;
 
