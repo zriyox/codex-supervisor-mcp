@@ -38,7 +38,7 @@ async function withServer(fn) {
   const client = new Client({ name: "supervisor-real-codex", version: "1.0.0" });
   await client.connect(transport);
   try {
-    return await fn(client);
+    return await fn(client, transport);
   } finally {
     await client.close();
   }
@@ -191,7 +191,7 @@ console.log(`  last_message=${JSON.stringify(resumed.last_message.slice(0, 120))
 // A real write run: the edit must land in the worker's own worktree and the
 // changed files must be reported, while the target repository stays untouched.
 console.log("running a real write worker ...");
-const writeRun = await withServer(async (client) => {
+const writeWorker = await withServer(async (client, transport) => {
   const created = await call(client, "create_codex_worker", {
     title: "real codex write",
     task: "Create a file named NOTES.md in the repository root containing exactly the line: hello from worker",
@@ -202,6 +202,13 @@ const writeRun = await withServer(async (client) => {
     acceptance: ['node -e "const fs=require(\'fs\');if(fs.readFileSync(\'NOTES.md\',\'utf8\').trim()!==\'hello from worker\')process.exit(1);console.log(\'real output verified\')"'],
     goal: { objective: "Create NOTES.md with hello from worker using apply_patch; run the declared acceptance command" }
   });
+  assert.ok(created.id, JSON.stringify(created));
+  process.kill(transport.pid, "SIGKILL");
+  console.log("  dispatching MCP killed while the real model worker is active");
+  return created;
+});
+const writeRun = await withServer(async (client) => {
+  const created = writeWorker;
   const seenPhases = new Set();
   // Wait for the process exit, not just turn.completed: the exit handler is
   // what reconciles changed_files against the worktree.
