@@ -571,6 +571,8 @@ server.registerTool(
       ownedPaths: z.array(z.string().min(1)),
       forbid: z.array(z.string().min(1)).max(100).optional(),
       allowedCommands: z.array(z.string().min(1)).max(100).optional(),
+      context: z.array(z.object({ path: z.string().min(1), sha256: z.string().regex(/^[a-f0-9]{64}$/).optional() })).max(20).optional(),
+      contracts: z.array(z.string().min(1).max(2000)).max(20).optional(),
       goal: z.object({
         objective: z.string().min(1),
         tokenBudget: z.number().int().positive().optional()
@@ -621,6 +623,8 @@ server.registerTool(
       ownedPaths: z.array(z.string().min(1)).optional(),
       forbid: z.array(z.string().min(1)).max(100).optional(),
       allowedCommands: z.array(z.string().min(1)).max(100).optional(),
+      context: z.array(z.object({ path: z.string().min(1), sha256: z.string().regex(/^[a-f0-9]{64}$/).optional() })).max(20).optional(),
+      contracts: z.array(z.string().min(1).max(2000)).max(20).optional(),
       goal: z
         .object({
           objective: z.string().min(1),
@@ -661,14 +665,15 @@ server.registerTool(
       task_id: z.string().min(1),
       prompt: z.string().min(1),
       rebaseOnto: z.string().min(1).optional(),
+      context: z.array(z.object({ path: z.string().min(1), sha256: z.string().regex(/^[a-f0-9]{64}$/).optional() })).max(20).optional(),
       // Replaces the stored acceptance commands for this and later runs; an
       // empty list clears them. Left out, the stored commands stay.
       acceptance: acceptanceInput.optional()
     }
   },
-  async ({ task_id, prompt, rebaseOnto, acceptance }) => {
+  async ({ task_id, prompt, rebaseOnto, acceptance, context }) => {
     try {
-      const record = await resumeCodexWorker({ taskId: task_id, prompt, rebaseOnto: rebaseOnto ?? null, acceptance });
+      const record = await resumeCodexWorker({ taskId: task_id, prompt, rebaseOnto: rebaseOnto ?? null, acceptance, context });
       return textResult({ ...receipt(record), rebase: record.rebase ?? null, base_behind: baseBehind(record.project_root, record.base_commit) });
     } catch (error) {
       return errorResult(error);
@@ -1080,6 +1085,7 @@ server.registerTool(
       attention_reason: task.attention_reason ?? null,
       run_evidence: task.run_evidence ?? null,
       structured_report: task.run_evidence?.structured_report ?? { format: "legacy_text", valid: null },
+      input_context: task.input_context ?? null,
       changed_file_count: changed.length,
       changed_files: listFiles ? changed : undefined,
       base_commit: task.base_commit ?? null,

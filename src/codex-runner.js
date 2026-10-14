@@ -10,6 +10,7 @@ import {
   getSession,
   readActiveTasks,
   readTasks,
+  readTasksBySession,
   readTaskEvents,
   taskRunPath,
   upsertSession,
@@ -28,6 +29,7 @@ import { appendFile } from "node:fs/promises";
 import { defaultBinDirs, findBinaryPath, resolveCommand, shimMessage } from "./bin-resolver.js";
 import { findOutsideOwnedChanges } from "./owned-changes.js";
 import { parseWorkerReport, workerReportSchemaPath } from "./worker-report.js";
+import { buildHandoff } from "./handoff.js";
 
 const processes = new Map();
 // taskId -> control object of an acceptance run in progress ({ kill, cancelled }).
@@ -486,6 +488,11 @@ async function trackRunInHost({ record, args, prompt, logPath, spawnOptions = {}
 // streams, exit write and acceptance until all three settle; IPC is only a
 // startup handshake and never the channel carrying worker results.
 async function startTrackedRun(job) {
+  const peers = job.record.session_id ? (await readTasksBySession(job.record.session_id)).filter((task) => task.id !== job.record.id) : [];
+  const handoff = await buildHandoff({ goal: job.record.goal_objective, todo: job.record.title,
+    peers, contracts: job.record.input_context?.contracts ?? [], context: job.record.input_context?.context ?? [] });
+  job.record = { ...job.record, input_context: { ...job.record.input_context, context: handoff.source_refs, source_refs: handoff.source_refs } };
+  job.prompt = `${handoff.text}\n\n${job.prompt}\n\nRequired input refs (read-only): ${JSON.stringify(handoff.source_refs)}\nRequired contracts: ${JSON.stringify(job.record.input_context.contracts ?? [])}`;
   const host = spawn(process.execPath, [fileURLToPath(import.meta.url), "--run-host"], {
     detached: true, stdio: ["ignore", "ignore", "ignore", "ipc"],
     env: process.env, windowsHide: true
@@ -554,7 +561,9 @@ export async function createCodexWorker({
   acceptance = null,
   acceptanceTimeoutMs = null,
   forbid = [],
-  allowedCommands = []
+  allowedCommands = [],
+  context = [],
+  contracts = []
 }) {
   if (!task || typeof task !== "string") throw new Error("task is required");
   const acceptanceCommands = normalizeAcceptance(acceptance);
@@ -566,6 +575,7 @@ export async function createCodexWorker({
     throw new Error("ownedPaths is required and must list at least one path this worker is allowed to write (an empty list is allowed only for a read-only worker)");
   }
   const validatedGoal = validateGoal(goal);
+  await buildHandoff({ context, contracts });
   for (const [name, values] of Object.entries({ forbid, allowedCommands })) {
     if (!Array.isArray(values) || values.length > 100 || values.some((value) => typeof value !== "string" || !value.trim())) throw new Error(`${name} must be a list of at most 100 nonempty strings`);
   }
@@ -612,6 +622,7 @@ export async function createCodexWorker({
     thread_id: null,
     owned_paths: normalizedOwnedPaths,
     guard_policy: { forbid, allowedCommands },
+    input_context: { context, contracts },
     depends_on: Array.isArray(dependsOn) ? dependsOn : [],
     goal_objective: validatedGoal.objective,
     goal_token_budget: validatedGoal.tokenBudget,
@@ -660,10 +671,14 @@ export async function createCodexWorker({
 // spawn failure cannot leave the row describing the old base. A rebase that
 // does not go through puts the worktree back and throws with the file list;
 // the worker is not started. Refused while the worker is still running.
-export async function resumeCodexWorker({ taskId, prompt, rebaseOnto = null, acceptance = undefined }) {
+export async function resumeCodexWorker({ taskId, prompt, rebaseOnto = null, acceptance = undefined, context = undefined }) {
   if (!prompt || typeof prompt !== "string") throw new Error("prompt is required");
   let task = await getTask(taskId);
   if (!task) throw new Error(`task not found: ${taskId}`);
+  if (context !== undefined) {
+    await buildHandoff({ context });
+    task = { ...task, input_context: { ...task.input_context, context } };
+  }
   const claim = await claimTaskRun(taskId, task.run_count ?? 0);
   if (!claim) {
     const error = new Error(`task ${taskId} is active or already claimed by another dispatcher; wait for it to settle`);
@@ -939,7 +954,9 @@ export async function createFollowupWorker({
   acceptance,
   acceptanceTimeoutMs,
   forbid,
-  allowedCommands
+  allowedCommands,
+  context,
+  contracts
 }) {
   const parent = await getTask(taskId);
   if (!parent) throw new Error(`task not found: ${taskId}`);
@@ -981,6 +998,8 @@ export async function createFollowupWorker({
     ownedPaths: ownedPaths ?? parent.owned_paths,
     forbid: forbid ?? parent.guard_policy?.forbid ?? [],
     allowedCommands: allowedCommands ?? parent.guard_policy?.allowedCommands ?? [],
+    context: context ?? parent.input_context?.context ?? [],
+    contracts: contracts ?? parent.input_context?.contracts ?? [],
     goal: goal ?? { objective: parent.goal_objective ?? `Follow-up for ${parent.id}`, tokenBudget: parent.goal_token_budget ?? undefined },
     dependsOn: [parent.id],
     followupOf: parent.id,
