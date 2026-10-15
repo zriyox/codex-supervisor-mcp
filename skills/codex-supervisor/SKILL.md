@@ -91,6 +91,21 @@ Codex需0.162+支持hooks/output-schema，能力不够派单start_failed先修CL
 
 高风险的步（迁移、改公共接口、"做完了"写不成命令的）再派一路 verifier：`sandbox: "read-only"`、`ownedPaths: []`，task 只给这一步的目标和原 worker 的 `worktree_path`，不给它的汇报，不说你怀疑什么，让它答"目标达成没有，证据是哪几行"。它不改东西，只读只跑。两路说法对不上，两边都别信，自己看 diff。
 
+
+## 收工口径：活儿必须落地
+
+**"文件写好了"不等于交付。** 本地 worktree / 未提交改动 / 未 push 的 commit，线上都看不到 —— 部署会因为缺类、缺文件、缺 bean 直接挂。派单和主线程自己的改动都按这四条走：
+
+1. **worker 的产出默认要合并**：每个终态 worker 走 `get_worker_result` → `get_worker_diff`，过了就 `land_codex_worker`（sandbox 是 workspace-write 的 worker 没提交，带 `commitMessage` 一起提交再落）。不合并必须在报告里写清原因（验收失败 / 越界 / 等审批），不能默认留在 codex/<id> 分支上。
+2. **主线程自己的改动必须 add + commit + push**：`git add <paths> && git commit -m ... && git push`。跳过任何一步都要显式说明，不允许说"改好了"然后留在工作区。
+3. **上线前核对远端，不认本地**：部署或重启服务前先 `git fetch`，再确认目标提交里真有那些改动 —— `git log --oneline origin/<branch> -1`、`git ls-tree -r --name-only origin/<branch> | rg <新文件>`、必要时 `git show origin/<branch>:<path>`。线上报 `NoSuchBeanDefinition`、找不到类/模块、404，先查这一条，再查代码逻辑。
+4. **交付报告三件套**：本地改动 → commit SHA → push 后的远端 SHA（以及部署状态）。缺远端 SHA 就不算完成。
+
+典型事故：两个实现类只存在于主线程的 worktree 里，没 add / 没 commit / 没 push，线上跑的还是上一个提交，Spring 找不到 bean 启动失败 —— 不是代码错，是没上线。
+
+多 worktree 场景同理：worker 的分支、主线程的改动、集成 worktree 的合并，三者都要各自 push 到远端；只在自己 worktree 里"跑通了"不算。
+
+
 ## 读结果别把上下文撑爆
 
 | 想干什么 | 用哪个 |
