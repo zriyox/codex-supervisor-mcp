@@ -73,6 +73,7 @@ export function buildReportPreamble({ resume = false, acceptance = null } = {}) 
   return withAcceptance([
     "Final report (your last message), under 2000 characters, in the language of the task. Quoted command output does not count toward the limit.",
     "Return JSON with exactly result:string, verification:string[], not_done:string[]; --output-schema enforces these fields. Cover the following content in those fields.",
+    "Write that JSON value on its own: no markdown code fences and nothing before or after it.",
     "Keep each verification entry concise: command name, exit code and key evidence; avoid embedding long quoted shell source. Ensure arrays and the object are fully closed and all strings use valid JSON escaping.",
     "1. Result: what is done, in two or three sentences. Say plainly what is not done.",
     "2. Verification: every command you ran to check the work, its exit code, and the output lines that prove the result. Write \"not verified\" if you ran none.",
