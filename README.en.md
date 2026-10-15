@@ -191,6 +191,8 @@ Declare externalOutputs:[{path,sha256?}] and acceptance for shared writes. Targe
 
 workspace-write defaults to networkAccess:false; explicitly enable it for ssh/network checks. Resume/follow-up inherit the setting. maxRunMs bounds one run and maxTotalMs bounds wall time since dispatch; exceeding either stops the worker and preserves actionable partial results without automatic retry. A wait budget does not change these quotas.
 
+Besides the worktree and the temp directory the sandbox writes the OS cache directory only (macOS `~/Library/Caches`, Linux `~/.cache`, Windows `%LOCALAPPDATA%`). Toolchains that cache there, Go's build cache among them, need no per-language variable and no patch when a new language shows up. A toolchain that caches elsewhere (`~/.m2`, `~/.gradle`) is fine read-only; if it must write, use another sandbox or put the directory in `externalOutputs`.
+
 Dispatch checks required hooks/output-schema support (Codex 0.162+); unsupported capability returns settled start_failed. get_worker_goal.native_goal_read distinguishes missing_goal, missing_database, locked and read_error; a read failure is not evidence that no goal exists. Native budget/usage limits need attention. Cleanup preserves ignored artifacts, shared evidence and unresolved attention.
 
 Ownership reservation and task insertion are atomic across MCP dispatch/resume processes; ownership remains reserved during acceptance or exit settlement. Failure to create an isolated Git checkout is explicit and never falls back to executing in the project directory.

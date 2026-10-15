@@ -56,6 +56,12 @@ async function main() {
     }
     process.exit(0);
   }
+  // What the supervisor actually handed Codex: the sandbox and hook flags are
+  // invisible in the event stream, so a test reads them from here.
+  if (process.env.FAKE_CODEX_ARGS_LOG) {
+    const { appendFileSync } = await import("node:fs");
+    appendFileSync(process.env.FAKE_CODEX_ARGS_LOG, `${JSON.stringify({ args })}\n`);
+  }
   if (scenario === "exit-immediately") process.exit(3);
   // Output is driven by the stdin "end" handler above.
   if (scenario === "echo-prompt") return;

@@ -46,6 +46,7 @@
     "src/tool-guard.js",
     "src/worker-report.js",
     "src/worker-report.schema.json",
+    "src/sandbox-roots.js",
     "src/handoff.js",
     "src/external-output.js",
     "src/truncate.js",

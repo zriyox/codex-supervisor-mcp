@@ -191,6 +191,8 @@ context用绝对文件路径与可选sha256声明材料，最多20份、与contr
 
 workspace-write默认networkAccess:false；需要ssh/联网验证显式true，随resume/followup继承，不以danger-full-access代替。maxRunMs限制单轮、maxTotalMs限制从派单开始的总时长；超限中止worker并保留needs_attention/partial work，不自动重试。wait预算不改变这些quota。
 
+沙箱除工作区和临时目录外，只再放开 OS cache 目录（macOS `~/Library/Caches`、Linux `~/.cache`、Windows `%LOCALAPPDATA%`）：Go 的 build cache 这类默认落在 cache 目录的工具链直接可用，换语言也不用改 supervisor。cache 放在别处（`~/.m2`、`~/.gradle`）的工具链能只读复用就不用管，要写就换 sandbox 或把目录放进 `externalOutputs`。
+
 运行前核验Codex CLI是否具备hooks/output-schema（要求0.162+）；能力不足返回start_failed，wait可正常结算。get_worker_goal.native_goal_read区分missing_goal、missing_database、locked和read_error，不能把读取失败当没建goal。原生budget/usage限制也进入needs_attention。cleanup保留ignored artifacts、共享证据和未解决attention。
 
 ownedPaths预留和任务入库在同一事务内，跨MCP并发派单/恢复不能抢同一输出；验收或退出尚未结算时仍保留归属。Git工作区隔离创建失败明确报错，不退回主目录执行。

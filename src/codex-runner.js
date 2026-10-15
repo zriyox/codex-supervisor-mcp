@@ -23,6 +23,7 @@ import { applyCodexEvent } from "./event-parser.js";
 import { ACTIVE_STATUSES, TERMINAL_STATUSES } from "./status.js";
 import { worktreesDir } from "./paths.js";
 import { frameWorkerPrompt } from "./prompt.js";
+import { cacheRoots } from "./sandbox-roots.js";
 import { readTaskChanges, snapshotTaskOutput } from "./worktree.js";
 import { rebaseWorktree } from "./landing.js";
 import { DEFAULT_ACCEPTANCE_TIMEOUT_MS, normalizeAcceptance, runAcceptance } from "./acceptance.js";
@@ -248,7 +249,8 @@ async function trackRunInHost({ record, args, prompt, logPath, spawnOptions = {}
   const configArgs = ["--output-schema", workerReportSchemaPath, "--dangerously-bypass-hook-trust", "-c",
     `hooks.PreToolUse=[{matcher="Bash|apply_patch",hooks=[{type="command",command=${JSON.stringify(hookCommand)}}]}]`];
   configArgs.push("-c", `sandbox_workspace_write.network_access=${record.guard_policy?.networkAccess === true}`);
-  if (externalBefore.length) configArgs.push("-c", `sandbox_workspace_write.writable_roots=${JSON.stringify([...new Set(externalBefore.map((file) => dirname(file.path)))])}`);
+  const writableRoots = [...new Set([...externalBefore.map((file) => dirname(file.path)), ...cacheRoots()])];
+  if (writableRoots.length) configArgs.push("-c", `sandbox_workspace_write.writable_roots=${JSON.stringify(writableRoots)}`);
   // Insert before the prompt/session positional arguments for exec/resume.
   const guardedArgs = [...args.slice(0, -1), ...configArgs, args.at(-1)];
   prompt = `Runtime supervisor guard: edits must use apply_patch within ${JSON.stringify(owned)}. Shell verification must exactly match declared commands ${JSON.stringify(guardPolicy.allowedCommands)}. Forbidden: ${JSON.stringify(guardPolicy.forbid ?? [])}. Undeclared shell programs are denied; report a needed validation command instead of bypassing the guard.\n\n${prompt}`;
