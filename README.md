@@ -198,7 +198,7 @@ context用绝对文件路径与可选sha256声明材料，最多20份、与contr
 
 workspace-write默认networkAccess:false；需要ssh/联网验证显式true，随resume/followup继承，不以danger-full-access代替。maxRunMs限制单轮、maxTotalMs限制从派单开始的总时长；超限中止worker并保留needs_attention/partial work，不自动重试。wait预算不改变这些quota。
 
-沙箱除工作区和临时目录外，只再放开 OS cache 目录（macOS `~/Library/Caches`、Linux `~/.cache`、Windows `%LOCALAPPDATA%`）：Go 的 build cache 这类默认落在 cache 目录的工具链直接可用，换语言也不用改 supervisor。Codex 拒绝带软链的可写根（这种根会让 worker 所有命令都失败），所以 cache 目录和 `writableRoots` 都先按 realpath 解析，解析不出无软链路径的根直接不带。cache 放在别处（`~/.m2`、`~/.gradle`、vendor 镜像）就传 `writableRoots:[绝对路径]`，要求是已存在目录、最多 20 个、只对 workspace-write 生效、随 resume/followup 继承；只读复用就不用传。
+沙箱除工作区和临时目录外，自动放开 OS cache 目录（macOS `~/Library/Caches`、Linux `~/.cache`、Windows `%LOCALAPPDATA%`）、home 下已存在的工具链缓存目录（`.cargo`/`.npm`/`.yarn`/`.pnpm-store`/`.bun`/`.m2`/`.gradle`/`.nuget`/`.ivy2`/`.bundle`/`.composer`/`.pub-cache`/`.mix`/`.hex`/`.stack`/`.cpanm`/`.deno`/`.conda`、`go/pkg`）：Go 的 build cache 这类默认落在 cache 目录的工具链直接可用，换语言也不用改 supervisor；**凭据目录一律不自动放开**（`.ssh`/`.gnupg`/`.config`/`.aws`/`.docker`/`.kube`/`.netrc`/`.git-credentials`/`~/Library/Keychains`）：ssh 连服务器要写 known_hosts、kubectl、推私有镜像、签名提交这类需求，派单时显式传 `writableRoots`，只在这一路生效。`SUPERVISOR_NO_AUTO_CACHE_ROOTS=1` 关掉全部自动缓存根，显式声明的照常生效。Codex 拒绝带软链的可写根（这种根会让 worker 所有命令都失败），所以 cache 目录和 `writableRoots` 都先按 realpath 解析，解析不出无软链路径的根直接不带。cache 放在别处（`~/.m2`、`~/.gradle`、vendor 镜像）就传 `writableRoots:[绝对路径]`，要求是已存在目录、最多 20 个、只对 workspace-write 生效、随 resume/followup 继承；只读复用就不用传。
 
 运行前核验Codex CLI是否具备hooks/output-schema（要求0.162+）；能力不足返回start_failed，wait可正常结算。get_worker_goal.native_goal_read区分missing_goal、missing_database、locked和read_error，不能把读取失败当没建goal。原生budget/usage限制也进入needs_attention。cleanup保留ignored artifacts、共享证据和未解决attention。
 

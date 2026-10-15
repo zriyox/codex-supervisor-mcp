@@ -2,8 +2,8 @@ import { lstatSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 
-// Codex 0.162 refuses a writable root that contains a symlink component: the
-// worker does not merely lose that directory, every command in it fails with
+// Codex refuses a writable root that contains a symlink component: the worker
+// does not merely lose that directory, every command in it fails with
 // UnsupportedOperation("writable root ... contains symlink component ...").
 // ~/.cache is a symlink on the machine this was found on, so every candidate is
 // resolved to a symlink-free absolute path before the sandbox sees it, and a
@@ -34,14 +34,50 @@ export function resolveWritableRoot(candidate) {
   return { path: resolved };
 }
 
-// The OS cache directory is where default build caches live on every platform:
-// macOS ~/Library/Caches, Linux/XDG ~/.cache, Windows %LOCALAPPDATA%. It is
-// offered to the sandbox as one generic root, so a new language needs no new
-// environment variable and no patch.
-export function cacheRoots({ env = process.env, platform = process.platform, home = homedir(), resolveRoot = resolveWritableRoot } = {}) {
-  const candidates = platform === "win32"
-    ? [env.LOCALAPPDATA]
-    : [env.XDG_CACHE_HOME, platform === "darwin" ? join(home, "Library", "Caches") : null, join(home, ".cache")];
+// Cache locations a build writes to outside the worktree. The OS cache
+// directory covers everything that follows XDG or the platform convention
+// (Go build cache, pip, uv, huggingface, gh, ...). Toolchains that keep their
+// own store under the home directory are listed by directory instead, because
+// naming one environment variable per language stops working the moment a new
+// language shows up: a directory that exists is granted, one that does not is
+// not, and a new toolchain only adds a line here at most.
+export const TOOLCHAIN_CACHE_DIRS = [
+  ".cargo", // Rust: registry, git checkouts, .package-cache
+  ".npm", // Node: _cacache, _logs
+  ".yarn",
+  ".pnpm-store",
+  ".bun",
+  ".m2", // Maven local repository
+  ".gradle", // Gradle user home
+  ".nuget", // NuGet global packages
+  ".ivy2", // sbt / Ivy
+  ".bundle", // Ruby Bundler
+  ".composer", // PHP Composer
+  ".pub-cache", // Dart / Flutter
+  ".mix", // Elixir
+  ".hex",
+  ".stack", // Haskell
+  ".cpanm", // Perl
+  ".deno",
+  ".conda", // conda package cache
+  "go/pkg" // Go module cache
+];
+
+// Credentials are never granted automatically. A dispatcher that needs them
+// names the directory in writableRoots for that one dispatch: an ssh test wants
+// ~/.ssh (known_hosts, ControlMaster sockets), a kubectl test ~/.kube, a registry
+// push ~/.docker, an aws test ~/.aws, a signed commit ~/.gnupg. Everything here is
+// granted automatically only when it holds build state, not secrets, so a worker
+// steered by injected text cannot persist a key or swap a trust anchor.
+export const EXPLICIT_ONLY_DIRS = [".ssh", ".gnupg", ".config", ".aws", ".docker", ".kube", ".netrc", ".git-credentials", "Library/Keychains"];
+function osCacheCandidates({ env, platform, home }) {
+  if (platform === "win32") return [env.LOCALAPPDATA];
+  return [env.XDG_CACHE_HOME, platform === "darwin" ? join(home, "Library", "Caches") : null, join(home, ".cache")];
+}
+
+export function cacheRoots({ env = process.env, platform = process.platform, home = homedir(), resolveRoot = resolveWritableRoot, includeToolchain = true } = {}) {
+  if (/^(1|true|yes)$/i.test((env.SUPERVISOR_NO_AUTO_CACHE_ROOTS ?? "").trim())) return [];
+  const candidates = [...osCacheCandidates({ env, platform, home }), ...(includeToolchain ? TOOLCHAIN_CACHE_DIRS.map((dir) => join(home, dir)) : [])];
   const roots = [];
   for (const candidate of candidates) {
     if (!candidate?.trim()) continue;

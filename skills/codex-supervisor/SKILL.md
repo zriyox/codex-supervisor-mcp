@@ -24,6 +24,7 @@ description: 把 Codex CLI 当并行 worker 派活、盯进度、收结果。用
 | `cwd` | 项目根目录。worker 在自己的 worktree 里干活，不动你的工作区 |
 | `acceptance` | 这一步"做完了"的判据，shell 命令列表，worker 退出后 supervisor 在它的 worktree 里逐条跑，退出码 0 算过，worker 在 prompt 里看得到。任务书里的验证命令原样抄：查那个文件在不在、那个接口通不通、那个测试文件过不过。写能判这一步的，不写全仓回归；远端机器的检查包进 `ssh`。命令用 supervisor 自己的权限跑，等于你自己跑 |
 | `forbid` / `allowedCommands` | 原样声明红线与验证命令；守卫拒绝未声明Shell程序，编辑用apply_patch |
+| `writableRoots` | 只有需要凭据目录时才传（绝对路径、已存在、自动解析软链、只对 workspace-write 生效）：ssh/远程测试 → `["~/.ssh"]`；kubectl → `["~/.kube"]`；推私有镜像 → `["~/.docker"]`；aws cli → `["~/.aws"]`；签名提交 → `["~/.gnupg"]`。缓存目录不用写，已经自动加 |
 | `ownedPaths` | 必填。这路允许写的路径，和在跑的 worker 重叠会被拒（**读不排他**，多路读同一份共享文件合法）。冲突是好事，说明该改拆法。传 `[]` 表示这路不落地：只读验证或研究 |
 | `goal.objective` | 必填。一句话说目标，worker 会建成 Codex 原生 goal |
 | `session_id` | 同一批传同一个值。第一路顺手带 `session_title`（30 字内，看板和 `get_session_works` 显示它），漏了用 `describe_session` 补 |
@@ -65,7 +66,7 @@ check_workers可对已死的第1轮lost/no_work/invalid_report自动resume一次
 
 远端编译/ssh在workspace-write显式networkAccess:true，默认false，resume/followup继承；不要用danger-full-access代替联网配置。需要时声明maxRunMs/maxTotalMs，超限保留partial work并提示处理，不自动恢复；wait预算与quota分开。
 
-沙箱只放工作区、临时目录和OS cache目录（macOS ~/Library/Caches、Linux ~/.cache、Windows %LOCALAPPDATA%）：Go 这类默认把build cache写那儿的工具链不用再单独设 GOCACHE，加语言也不用改supervisor。Codex 拒绝含软链的可写根（给了这种根worker连命令都起不来），所以cache目录和writableRoots都会被realpath解析后再交给沙箱；解析不到无软链路径就直接不带这个根。cache在别处（如 ~/.m2、~/.gradle、vendor镜像）就传 `writableRoots:[绝对路径]`（已存在目录、最多20个、只对workspace-write生效、随resume/followup继承）；能只读复用就不用传。
+沙箱只放工作区、临时目录、OS cache目录（macOS ~/Library/Caches、Linux ~/.cache、Windows %LOCALAPPDATA%）以及home下已存在的工具链缓存目录（.cargo/.npm/.yarn/.pnpm-store/.bun/.m2/.gradle/.nuget/.ivy2/.bundle/.composer/.pub-cache/.mix/.hex/.stack/.cpanm/.deno/.conda、go/pkg）：Go 这类默认把build cache写那儿的工具链不用再单独设 GOCACHE，加语言也不用改supervisor；**凭据目录一律不自动放开**（.ssh/.gnupg/.config/.aws/.docker/.kube/.netrc/.git-credentials/~/Library/Keychains）：ssh 连服务器要写 known_hosts、kubectl、推私有镜像、签名提交这类需求，派单时按参数表显式传 writableRoots，只在这一路生效、随 resume/followup 继承。SUPERVISOR_NO_AUTO_CACHE_ROOTS=1 关掉全部自动缓存根，显式声明的照常生效。Codex 拒绝含软链的可写根（给了这种根worker连命令都起不来），所以cache目录和writableRoots都会被realpath解析后再交给沙箱；解析不到无软链路径就直接不带这个根。cache在别处（如 ~/.m2、~/.gradle、vendor镜像）就传 `writableRoots:[绝对路径]`（已存在目录、最多20个、只对workspace-write生效、随resume/followup继承）；能只读复用就不用传。
 
 Codex需0.162+支持hooks/output-schema，能力不够派单start_failed先修CLI。goal查询看native_goal_read，missing与locked/read_error分开；budget/usage限制也要处理。cleanup保留ignored成果、共享证据及未解决attention。
 
