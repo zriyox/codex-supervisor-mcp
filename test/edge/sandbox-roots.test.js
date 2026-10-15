@@ -30,7 +30,10 @@ test("a dispatched worker's sandbox is told to write that cache directory", asyn
   await mkdir(cache, { recursive: true });
   const argsLog = join(home, "codex-args.jsonl");
   const { dir: repo } = await makeRepo(join(home, "repo"));
-  await withMcp({ SUPERVISOR_HOME: home, XDG_CACHE_HOME: cache, FAKE_CODEX_ARGS_LOG: argsLog }, async ({ call }) => {
+  // The platform picks its own variable: XDG_CACHE_HOME on unix, LOCALAPPDATA
+  // on Windows.
+  const cacheEnv = process.platform === "win32" ? { LOCALAPPDATA: cache } : { XDG_CACHE_HOME: cache };
+  await withMcp({ SUPERVISOR_HOME: home, ...cacheEnv, FAKE_CODEX_ARGS_LOG: argsLog }, async ({ call }) => {
     const worker = await call("create_codex_worker", dispatchArgs("cache-roots", repo, {}));
     await waitFor(call, worker.id, (task) => task.status === "completed");
   });
