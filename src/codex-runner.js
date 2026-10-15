@@ -837,7 +837,7 @@ export async function recoverEligibleRuns() {
   for (const task of await readTasks()) {
     if ((task.run_count ?? 0) !== 1 || !task.thread_id
       || !(task.run_evidence?.run === 1 || (task.run_host_pid && task.started_at)) || !task.guard_policy
-      || !(task.status === "lost" || task.attention_reason === "no_work")
+      || !(task.status === "lost" || task.attention_reason === "no_work" || task.attention_reason === "invalid_report")
       || ["blocked", "paused", "budget_limited", "usage_limited"].includes(task.goal_status)
       || /401|403|unauthori[sz]ed|not logged|permission denied|approval|rate.?limit|429/i.test(task.error ?? "")
       || /time_limit|quota/.test(`${task.attention_reason ?? ""} ${task.error ?? ""}`)
@@ -846,7 +846,9 @@ export async function recoverEligibleRuns() {
     if (session?.approval_state === "waiting_user") continue;
     try {
       const result = await resumeCodexWorker({ taskId: task.id,
-        prompt: `One automatic recovery after ${task.attention_reason ?? task.status}. Original task: ${task.prompt}\nContinue from files already present; do not repeat completed edits. Make concrete progress, run declared checks, and report remaining blockers accurately. This is the only automatic retry.` });
+        prompt: task.attention_reason === "invalid_report"
+          ? "Your run finished, but the final message was not the required bare JSON report. Do not redo the work and do not edit files: reply with ONLY the JSON object with result (string), verification (string[]) and not_done (string[]), describing what you already did. No code fences, nothing before or after it."
+          : `One automatic recovery after ${task.attention_reason ?? task.status}. Original task: ${task.prompt}\nContinue from files already present; do not repeat completed edits. Make concrete progress, run declared checks, and report remaining blockers accurately. This is the only automatic retry.` });
       const event = { type: "supervisor.recovery", automatic: true, from_run: 1, to_run: result.run_count,
         reason: task.attention_reason ?? task.status, started_at: new Date().toISOString() };
       await appendTaskEvent(task.id, event);

@@ -13,8 +13,13 @@ const commandLen = Number(process.env.FAKE_CODEX_COMMAND_LEN ?? "0");
 const commandText = commandLen > 0 ? `cat <<'EOF' > file.txt\n${"c".repeat(commandLen)}\nEOF` : "ls -la";
 
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+// Runs listed here answer with bare prose instead of the report JSON, the way a
+// model that ignores --output-schema does. Used to exercise the invalid_report
+// path and its automatic retry end to end.
+const badReportRuns = (process.env.FAKE_CODEX_BAD_REPORT_ON_RUN ?? "").split(",").filter(Boolean);
+const skipReportWrapping = badReportRuns.includes(process.env.CODEX_SUPERVISOR_RUN ?? "");
 const emit = (event) => {
-  if (args.includes("--output-schema") && event.item?.type === "agent_message") {
+  if (args.includes("--output-schema") && event.item?.type === "agent_message" && !skipReportWrapping) {
     event = { ...event, item: { ...event.item, text: JSON.stringify({ result: event.item.text, verification: [], not_done: [] }) } };
   }
   process.stdout.write(`${JSON.stringify(event)}\n`);
