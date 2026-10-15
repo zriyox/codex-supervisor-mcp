@@ -355,16 +355,21 @@ test("a cancelled worker runs no checks; an interrupted run is reconciled and re
   });
 });
 
-test("a read-only verifier may own nothing; a writing worker may not", async () => {
+test("a verifier and a no-land research worker may own nothing; land still refuses their output", async () => {
   const home = await tempHome("supervisor-acceptance-");
   const { dir } = await makeRepo(join(home, "repo"));
   await withMcp({ SUPERVISOR_HOME: home }, async ({ call }) => {
     const verifier = await call("create_codex_worker", { ...dispatchArgs("verifier", dir), ownedPaths: [], sandbox: "read-only" });
     assert.ok(!verifier.error, JSON.stringify(verifier).slice(0, 300));
     await waitFor(call, verifier.id, settled);
-    const writer = await call("create_codex_worker", { ...dispatchArgs("writer", dir), ownedPaths: [], sandbox: "workspace-write" });
-    assert.equal(writer.error, "error");
-    assert.match(writer.message, /ownedPaths/);
+    // An empty list is the explicit promise that nothing lands: a research
+    // worker that fetches and reports is dispatched this way, and land is what
+    // refuses whatever it left behind.
+    const research = await call("create_codex_worker", { ...dispatchArgs("research", dir), ownedPaths: [], sandbox: "workspace-write", networkAccess: true });
+    assert.ok(!research.error, JSON.stringify(research).slice(0, 300));
+    await waitFor(call, research.id, settled);
+    const landed = await call("land_codex_worker", { task_id: research.id });
+    assert.ok(["outside_owned_paths", "nothing_to_land"].includes(landed.error), JSON.stringify(landed).slice(0, 300));
   });
 });
 

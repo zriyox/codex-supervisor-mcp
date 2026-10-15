@@ -22,6 +22,17 @@ function inside(path, owner) {
 export function evaluateToolUse(event, policy) {
   const deny = (reason) => ({ allow: false, reason });
   if (!policy || !Array.isArray(policy.ownedPaths) || !policy.cwd) return deny("missing supervisor guard policy");
+  // Who needs the shell allowlist? It exists to stop a writing worker from
+  // going around ownedPaths. Two shapes have no landable write boundary left:
+  // the read-only sandbox denies every file write, temp directory included, and
+  // a workspace-write worker with no ownedPaths can only write its own
+  // throwaway worktree, its temp dir and the OS cache dir while land refuses
+  // everything it produced. Both are what a research worker looks like, and
+  // the allowlist would only stop it from running curl, gh or python.
+  // danger-full-access keeps the allowlist: there the sandbox is gone.
+  const landsNothing = policy.sandbox === "read-only"
+    || (policy.sandbox === "workspace-write" && policy.ownedPaths.length === 0);
+  const readOnly = policy.sandbox === "read-only";
   const tool = event.tool_name;
   const input = event.tool_input;
   const command = typeof input === "string" ? input : input?.command;
@@ -31,6 +42,11 @@ export function evaluateToolUse(event, policy) {
     for (const forbidden of policy.forbid ?? []) {
       if (normalized.toLowerCase().includes(forbidden.toLowerCase())) return deny(`forbidden command: ${forbidden}`);
     }
+    // Reading is never exclusive: no branch below looks at another worker's
+    // ownedPaths, so two workers may read the same file at the same time.
+    if (landsNothing) return { allow: true, reason: readOnly
+      ? "read-only sandbox: every write is denied by the OS, so shell commands need no allowlist"
+      : "no landable path: writes stay in this worker's own worktree" };
     // Validation lines are a dispatcher's explicit executable contract, just
     // like acceptance. They can have side effects and are never inferred from
     // the model's own report. Arbitrary shell programs are not path sandboxes.
@@ -43,14 +59,19 @@ export function evaluateToolUse(event, policy) {
     if (typeof command !== "string" || !command.startsWith("*** Begin Patch")) return deny("invalid patch input");
     const paths = [...command.matchAll(/^\*\*\* (?:Add File|Update File|Delete File|Move to): (.+)$/gm)].map((match) => match[1]);
     if (!paths.length) return deny("patch has no recognized file paths");
+    if (readOnly) return deny("read-only worker: the sandbox denies every write, including the temp directory; report the change instead of editing");
     try {
-      const owners = policy.ownedPaths.map(canonical);
+      // With no ownedPaths the worker may still keep scratch notes, but only
+      // inside its own worktree, which is never landed.
+      const owners = policy.ownedPaths.length ? policy.ownedPaths.map(canonical) : [canonical(policy.worktree ?? policy.cwd)];
       for (const path of paths) {
         const target = canonical(resolve(event.cwd ?? policy.cwd, path));
-        if (!owners.some((owner) => inside(target, owner))) return deny(`outside ownedPaths: ${path}`);
+        if (!owners.some((owner) => inside(target, owner))) return deny(policy.ownedPaths.length
+          ? `outside ownedPaths: ${path}`
+          : `outside this worker's own worktree: ${path}`);
       }
     } catch (error) { return deny(`cannot prove patch ownership: ${error.message}`); }
-    return { allow: true, reason: "owned patch" };
+    return { allow: true, reason: policy.ownedPaths.length ? "owned patch" : "scratch patch in the worker's own worktree" };
   }
   return { allow: true, reason: "tool is outside the Bash/apply_patch policy" };
 }

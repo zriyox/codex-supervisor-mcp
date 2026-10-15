@@ -22,7 +22,7 @@ import {
 import { applyCodexEvent } from "./event-parser.js";
 import { ACTIVE_STATUSES, TERMINAL_STATUSES } from "./status.js";
 import { worktreesDir } from "./paths.js";
-import { frameWorkerPrompt } from "./prompt.js";
+import { buildGuardPreamble, frameWorkerPrompt } from "./prompt.js";
 import { cacheRoots } from "./sandbox-roots.js";
 import { readTaskChanges, snapshotTaskOutput } from "./worktree.js";
 import { rebaseWorktree } from "./landing.js";
@@ -241,7 +241,7 @@ async function trackRunInHost({ record, args, prompt, logPath, spawnOptions = {}
   const outputBefore = snapshotTaskOutput(record);
   const externalBefore = await captureExternalOutputs(record.guard_policy?.externalOutputs ?? [], { checkBaseline: (record.run_count ?? 0) === 0 });
   const owned = [...findOutsideOwnedChanges(record, []).mapping.map((entry) => entry.worker), ...externalBefore.map((entry) => entry.path)];
-  const guardPolicy = { cwd: record.cwd, ownedPaths: owned, ...(record.guard_policy ?? {}),
+  const guardPolicy = { cwd: record.cwd, worktree: record.cwd, sandbox: record.sandbox, ownedPaths: owned, ...(record.guard_policy ?? {}),
     allowedCommands: [...(record.guard_policy?.allowedCommands ?? []), ...(record.acceptance ?? []).map((check) => typeof check === "string" ? check : check.command)] };
   const guard = fileURLToPath(new URL("./tool-guard.js", import.meta.url));
   const quoteCommand = (path) => process.platform === "win32" ? `"${path.replace(/"/g, '""')}"` : `'${path.replace(/'/g, "'\\''")}'`;
@@ -253,7 +253,7 @@ async function trackRunInHost({ record, args, prompt, logPath, spawnOptions = {}
   if (sandboxWritableRoots.length) configArgs.push("-c", `sandbox_workspace_write.writable_roots=${JSON.stringify(sandboxWritableRoots)}`);
   // Insert before the prompt/session positional arguments for exec/resume.
   const guardedArgs = [...args.slice(0, -1), ...configArgs, args.at(-1)];
-  prompt = `Runtime supervisor guard: edits must use apply_patch within ${JSON.stringify(owned)}. Shell verification must exactly match declared commands ${JSON.stringify(guardPolicy.allowedCommands)}. Forbidden: ${JSON.stringify(guardPolicy.forbid ?? [])}. Undeclared shell programs are denied; report a needed validation command instead of bypassing the guard.\n\n${prompt}`;
+  prompt = `${buildGuardPreamble(guardPolicy)}\n\n${prompt}`;
 
   const { child, spawnError } = await spawnAndAwaitStart(target, guardedArgs, {
     stdio: ["pipe", "pipe", "pipe"],
@@ -610,15 +610,16 @@ export async function createCodexWorker({
   if (!allowedReasoningEfforts.has(reasoningEffort)) {
     throw new Error(`unsupported reasoningEffort: ${reasoningEffort}`);
   }
-  if (!Array.isArray(ownedPaths) || (ownedPaths.length === 0 && sandbox !== "read-only")) {
-    throw new Error("ownedPaths is required and must list at least one path this worker is allowed to write (an empty list is allowed only for a read-only worker)");
+  if (!Array.isArray(ownedPaths)) {
+    throw new Error("ownedPaths is required; pass an empty list only for a worker that must never land a change (a read-only verifier, or a research worker that reads and reports)");
   }
   const validatedGoal = validateGoal(goal);
   await buildHandoff({ context, contracts });
   await captureExternalOutputs(externalOutputs, { checkBaseline: true });
   if (externalOutputs.length && !acceptanceCommands?.length) throw new Error("shared outputs require explicit acceptance commands");
   if (externalOutputs.length && sandbox === "read-only") throw new Error("a read-only worker cannot declare writable shared outputs");
-  if (networkAccess && sandbox !== "workspace-write") throw new Error("networkAccess is only configurable for workspace-write workers");
+  if (networkAccess && sandbox === "danger-full-access") throw new Error("networkAccess is only for the sandboxed workers");
+  if (networkAccess && sandbox === "read-only") throw new Error("the read-only sandbox has no network (a fetch there fails on DNS even with network_access); for a worker that must fetch, use sandbox \"workspace-write\" with networkAccess: true and ownedPaths: []");
   if (!Array.isArray(writableRoots) || writableRoots.length > 20 || writableRoots.some((root) => typeof root !== "string" || !isAbsolute(root))) {
     throw new Error("writableRoots must be a list of at most 20 absolute paths");
   }

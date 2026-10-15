@@ -60,7 +60,12 @@ async function main() {
   // invisible in the event stream, so a test reads them from here.
   if (process.env.FAKE_CODEX_ARGS_LOG) {
     const { appendFileSync } = await import("node:fs");
-    appendFileSync(process.env.FAKE_CODEX_ARGS_LOG, `${JSON.stringify({ args })}\n`);
+    let guard = null;
+    try {
+      const policy = JSON.parse(process.env.CODEX_SUPERVISOR_GUARD_POLICY ?? "null");
+      if (policy) guard = { sandbox: policy.sandbox ?? null, ownedPaths: policy.ownedPaths ?? [], worktree: policy.worktree ?? null };
+    } catch { guard = null; }
+    appendFileSync(process.env.FAKE_CODEX_ARGS_LOG, `${JSON.stringify({ args, guard })}\n`);
   }
   if (scenario === "exit-immediately") process.exit(3);
   // Output is driven by the stdin "end" handler above.

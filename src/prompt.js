@@ -46,6 +46,32 @@ export function buildGoalPreamble({ objective, tokenBudget = null, resume = fals
 
 export const REPORT_SECTIONS = ["Result", "Verification", "Not done / risks"];
 
+// The first thing a worker reads, and the only place the run's write boundary
+// is stated. A worker is not always an editor: a read-only one can only read,
+// and one with no ownedPaths lands nothing, so both are told what their shell
+// may do instead of being told to use apply_patch they cannot use.
+export function buildGuardPreamble({ sandbox, ownedPaths = [], allowedCommands = [], forbid = [], networkAccess = false } = {}) {
+  const forbidden = JSON.stringify(forbid);
+  if (sandbox === "read-only") {
+    return [
+      "Runtime supervisor guard: this is a read-only task.",
+      "The sandbox denies every file write, the temp directory included, and it has no network, so do not try to write files, fetch URLs or install anything: they fail and waste the turn.",
+      "Run the read commands you need (rg, cat, git, jq, the project's own read-only tools) and put the findings in the final report.",
+      `Forbidden: ${forbidden}.`
+    ].join(" ");
+  }
+  if (Array.isArray(ownedPaths) && ownedPaths.length === 0) {
+    return [
+      "Runtime supervisor guard: this worker lands nothing: no ownedPaths means nothing it writes is ever merged into the project.",
+      "Its worktree is a scratch copy, so the shell is unrestricted apart from the red lines; keep notes and downloads inside it.",
+      networkAccess ? "Network is available." : "There is no network in this sandbox; ask for it instead of retrying a failing fetch.",
+      `Forbidden: ${forbidden}.`,
+      "Report what you found and name the files a writer would have to change."
+    ].join(" ");
+  }
+  return `Runtime supervisor guard: edits must use apply_patch within ${JSON.stringify(ownedPaths)}. Shell verification must exactly match declared commands ${JSON.stringify(allowedCommands)}. Forbidden: ${forbidden}. Undeclared shell programs are denied; report a needed validation command instead of bypassing the guard.`;
+}
+
 // The acceptance commands are shown to the worker. Hiding them would not
 // stop a worker from gaming a check (it can see the tests in the tree
 // anyway) and would stop it from running them before it reports, which is

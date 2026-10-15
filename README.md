@@ -23,6 +23,7 @@
 | 问题 | 做法 |
 |---|---|
 | 几个 worker 互相踩文件 | 一个 worker 一个 Git worktree，`ownedPaths` 在派单前查冲突 |
+| worker 不是只会改代码 | 三种形状：编辑（`ownedPaths` 非空）、只读验证（`read-only` + `ownedPaths: []`，无写入无网络）、研究检索（`workspace-write` + `networkAccess: true` + `ownedPaths: []`，能联网、能写草稿、永不 land）；读共享文件不排他，只有写排他 |
 | worker 的过程塞爆主线程上下文 | 事件写 `data/runs/<taskId>.jsonl`，读的时候有 `limit` / `maxChars` / `kinds` 三道闸 |
 | 主线程读一次状态就顶满 | `get_orchestration_overview` 把全部 worker 压进 7000 字节 |
 | 进程重启后不知道谁还在跑 | `supervisor.sqlite` 一行一个 work，带 `thread_id` |
@@ -182,6 +183,8 @@ land_codex_worker       核过了，落进集成分支
 wait 默认预算60秒、默认compact；includeEvents会选择详细结果（显式compact优先）。带progress token的客户端每30秒收到通知；已验证MCP SDK及真实Claude2.1.299：idle35秒、wait65秒，三次progress后正常返回；原生/loop定时调用也已实测。
 
 每路临时注入随包PreToolUse守卫：apply_patch核对全部目标路径（含rename和symlink），forbid拒绝红线；Shell仅允许简单读取和派单显式allowedCommands/acceptance。声明的验证脚本以派单者权限执行，可有副作用，不能当作任意程序的文件沙箱。guard策略随resume/followup继承，不写全局hooks。空跑write run按本轮输出前后内容和命令判断，no_work进入needs_attention；只读任务不因没改文件判空跑。
+
+守卫按 worker 形状放权：`ownedPaths` 非空的编辑 worker 只放声明过的命令和简单读取；`read-only` 或 `ownedPaths: []` 的 worker 没有可 land 的写边界，Shell 不再逐条限制（forbid 红线照旧），所以检索、审查、跑 `curl`/`gh`/`python` 都能干活。实测 read-only 沙箱连 `/tmp` 都写不了、也不通 DNS，所以联网检索要用 `workspace-write` + `networkAccess: true` + `ownedPaths: []`，产物永不进主分支。
 
 check_workers在状态协调后，对已结束的第1轮lost/no_work原子resume一次；第2轮仍有问题则保留证据等处理。审批、认证、权限和quota等待不重试，返回recoveries记录。worker最终输出强制JSON result/verification/not_done；get_worker_result的structured_report给格式校验，独立命令与acceptance仍为实际证据。非法JSON标failed/invalid_report并拒绝land；旧历史标legacy_text。
 

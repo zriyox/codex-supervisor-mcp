@@ -11,7 +11,9 @@ test("worker time quota stops the run independently of waits and never triggers 
     assert.match(final.error,/time quota/);assert.ok(["lost","failed"].includes(final.status));
     const changes=await call("check_workers",{});assert.equal(changes.recoveries.length,0);
     assert.ok(changes.attention.some(entry=>entry.reason==="run_time_limit"));
-    const readonly=await call("create_codex_worker",dispatchArgs("read network",join(home,"workspace"),{networkAccess:true}));
-    assert.match(readonly.message,/only configurable/);
+    const readonly=await call("create_codex_worker",dispatchArgs("read network",join(home,"workspace"),{sandbox:"read-only",ownedPaths:[],networkAccess:true}));
+    assert.match(readonly.message,/read-only sandbox has no network/);
+    const unsandboxed=await call("create_codex_worker",dispatchArgs("no sandbox network",join(home,"workspace"),{sandbox:"danger-full-access",networkAccess:true}));
+    assert.match(unsandboxed.message,/only for the sandboxed workers/);
   });
 });

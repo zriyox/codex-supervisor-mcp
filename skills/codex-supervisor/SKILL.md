@@ -24,7 +24,7 @@ description: 把 Codex CLI 当并行 worker 派活、盯进度、收结果。用
 | `cwd` | 项目根目录。worker 在自己的 worktree 里干活，不动你的工作区 |
 | `acceptance` | 这一步"做完了"的判据，shell 命令列表，worker 退出后 supervisor 在它的 worktree 里逐条跑，退出码 0 算过，worker 在 prompt 里看得到。任务书里的验证命令原样抄：查那个文件在不在、那个接口通不通、那个测试文件过不过。写能判这一步的，不写全仓回归；远端机器的检查包进 `ssh`。命令用 supervisor 自己的权限跑，等于你自己跑 |
 | `forbid` / `allowedCommands` | 原样声明红线与验证命令；守卫拒绝未声明Shell程序，编辑用apply_patch |
-| `ownedPaths` | 必填。这路允许写的路径，和在跑的 worker 重叠会被拒。冲突是好事，说明该改拆法 |
+| `ownedPaths` | 必填。这路允许写的路径，和在跑的 worker 重叠会被拒（**读不排他**，多路读同一份共享文件合法）。冲突是好事，说明该改拆法。传 `[]` 表示这路不落地：只读验证或研究 |
 | `goal.objective` | 必填。一句话说目标，worker 会建成 Codex 原生 goal |
 | `session_id` | 同一批传同一个值。第一路顺手带 `session_title`（30 字内，看板和 `get_session_works` 显示它），漏了用 `describe_session` 补 |
 | `dependsOn` | 有先后依赖填上游的 `task_id` |
@@ -42,6 +42,16 @@ description: 把 Codex CLI 当并行 worker 派活、盯进度、收结果。用
 wait默认60秒和compact，带includeEvents则详细返回；客户端带progress token时每30秒收到通知。已实测Claude2.1.299在35秒idle下收到三次progress，65秒wait正常返回；通知不能唤醒关闭的宿主。/loop实测可定时调用，主窗口须保持运行。
 
 派单写forbid红线、allowedCommands验证命令；runtime守卫按次注入并随resume/followup继承。apply_patch核对ownedPaths，Shell仅放简单读取和显式声明的验证命令；声明脚本可以有副作用，须先核对，不能当万能文件沙箱。no_work表示本轮write无输出变化且没跑命令；先看run_evidence，不拿上轮提交/命令当本轮完成。
+
+worker不止改代码，按这路要什么选形状：
+
+| 形状 | 参数 | 能干什么 |
+|---|---|---|
+| 编辑 worker | `ownedPaths` 非空（默认） | apply_patch 只能落在 ownedPaths，shell 只放声明过的命令和简单读取 |
+| 只读验证 worker | `sandbox: "read-only"` + `ownedPaths: []` | 随便跑读命令（rg/cat/git/jq），**沙箱没有任何写入（连 /tmp 都不行）、也没有网络**；结论写在最终报告 |
+| 研究/检索 worker | `sandbox: "workspace-write"` + `networkAccess: true` + `ownedPaths: []` | 能联网 curl/gh、能往自己的 worktree 写草稿；没有任何东西会 land，只出报告 |
+
+read-only 下 `networkAccess: true` 会被拒（实测该沙箱连 DNS 都不通，配了也没用）；要联网就按研究 worker 派。研究 worker 的 shell 不受 allowedCommands 限制，forbid 红线照旧。读共享文件永远不排他，只有写按 ownedPaths 排他。
 
 check_workers可对已死的第1轮lost/no_work自动resume一次，recoveries记动作；第2轮仍失败看证据处理，审批/认证/权限/quota不盲重试。最终报告强制JSON，structured_report仅验证格式；invalid_report拒land，resume让模型提交合法JSON，命令和acceptance另外核对。
 

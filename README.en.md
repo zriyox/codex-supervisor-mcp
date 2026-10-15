@@ -23,6 +23,7 @@ Point several agents at one repository and they overwrite each other, nobody can
 | Problem | What it does |
 |---|---|
 | Workers trample each other's files | One Git worktree per worker, `ownedPaths` checked for overlap before dispatch |
+| A worker is not only an editor | Three shapes: edit (`ownedPaths` non-empty), read-only verify (`read-only` + `ownedPaths: []`: no writes, no network), research/retrieval (`workspace-write` + `networkAccess: true` + `ownedPaths: []`: fetches, keeps scratch notes, never lands). Reading shared files is never exclusive; writing is |
 | A worker says it is done and it is not | Dispatch with `acceptance` commands; the supervisor runs them in the worktree after the worker exits, and `land` refuses while they fail |
 | Worker output floods the main thread | Events go to `data/runs/<taskId>.jsonl`; reads are gated by `limit` / `maxChars` / `kinds` |
 | One status read fills the context | `get_orchestration_overview` fits every worker into 7000 bytes |
@@ -182,6 +183,8 @@ Session default_acceptance is prepended to local checks; resume uses the latest 
 Wait defaults to 60 seconds and compact rows; includeEvents selects details unless compact is explicit. Clients supplying a progress token receive notifications every 30 seconds. MCP SDK and real Claude 2.1.299 are verified: a 65-second wait succeeds with a 35-second idle timeout after three progress notifications. Native /loop scheduling is also verified.
 
 Each run injects the shipped PreToolUse guard: apply_patch checks every target including renames and symlinks; forbid rejects red lines. Shell allows simple reads and explicitly declared allowedCommands/acceptance. Declared validation scripts run with dispatcher privileges and may have side effects; this is not a filesystem sandbox for arbitrary programs. Resume/follow-up inherit the policy without changing global hooks. Empty write runs use current output and command evidence and surface no_work; read-only tasks are not empty merely for having no diff.
+
+The guard relaxes by worker shape: an editor with non-empty `ownedPaths` gets only declared commands and simple reads; a `read-only` worker, or one with `ownedPaths: []`, has no landable write boundary left, so the shell is no longer restricted command by command (forbid red lines still apply) and retrieval, review, `curl`, `gh` and `python` work. Measured with Codex 0.162: the read-only sandbox cannot write even `/tmp` and has no DNS, so a fetching worker runs `workspace-write` + `networkAccess: true` + `ownedPaths: []` and its output never merges.
 
 After reconciliation, check_workers atomically resumes a dead first lost/no_work run once and returns recovery receipts. A second failure remains actionable; approval, authentication, permission and quota waits are not retried. Final reports use JSON result/verification/not_done; structured_report exposes validation independently of command history and acceptance. Invalid JSON is failed/invalid_report and cannot land. Existing history is labelled legacy_text.
 

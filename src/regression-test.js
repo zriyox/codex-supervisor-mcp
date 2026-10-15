@@ -262,10 +262,11 @@ await test("R2-3 ownedPaths and goal are required", async () => {
       name: "create_codex_worker",
       arguments: { task: "x", cwd: workspace, ownedPaths: [], goal: { objective: "y" } }
     });
-    // Empty is allowed only for a read-only worker (a verifier); a writing
-    // worker is refused by the runner, not the schema.
+    // Empty is a deliberate promise that nothing lands: allowed for a
+    // read-only verifier and for a research worker that only reads and
+    // reports. The worker still runs; land is what refuses its output.
     const emptyText = JSON.parse(emptyPaths.content?.[0]?.text ?? "{}");
-    assert.match(emptyText.message ?? "", /ownedPaths/, "empty ownedPaths must be rejected for a writing worker");
+    assert.equal(emptyText.error ?? null, null, `empty ownedPaths must be accepted as a no-land worker: ${JSON.stringify(emptyText)}`);
   });
 });
 

@@ -577,7 +577,7 @@ server.registerTool(
   {
     title: "Create Codex worker",
     description:
-      "Launch a Codex CLI worker with codex exec --json and track its events. ownedPaths and goal are required: ownedPaths reserves the files this worker may write (empty only for a read-only verifier), goal records what the worker is for. acceptance is the list of shell commands that decide whether the work is done: the supervisor runs them in the worker's worktree after codex exits, each must exit 0, and the worker sees them in its prompt so it can run them first. Write the check for this step (a test file, a file that must exist, an endpoint that must answer), not the whole suite; a check on another machine goes through ssh. They run with the supervisor's own privileges, as if you ran them yourself. The verdict shows as acceptance on wait, the overview and get_worker_result, and land_codex_worker refuses while it is failed. The worker's sandbox may write the worktree, the temp directory and the OS cache directory; a toolchain whose cache lives elsewhere needs writableRoots, a list of existing absolute directories.",
+      "Launch a Codex CLI worker with codex exec --json and track its events. ownedPaths and goal are required: ownedPaths reserves the files this worker may write, and an empty list is the deliberate promise that nothing lands, which is how a read-only verifier or a research worker is dispatched. The worker is not only an editor: a read-only worker gets no network and may run any read command, and a research worker runs with sandbox \"workspace-write\", networkAccess: true and ownedPaths: [] so it can fetch, keep notes in its own throwaway worktree and never merge anything. Reading is never exclusive; only writes conflict. acceptance is the list of shell commands that decide whether the work is done: the supervisor runs them in the worker's worktree after codex exits, each must exit 0, and the worker sees them in its prompt so it can run them first. Write the check for this step (a test file, a file that must exist, an endpoint that must answer), not the whole suite; a check on another machine goes through ssh. They run with the supervisor's own privileges, as if you ran them yourself. The verdict shows as acceptance on wait, the overview and get_worker_result, and land_codex_worker refuses while it is failed. The worker's sandbox may write the worktree, the temp directory and the OS cache directory; a toolchain whose cache lives elsewhere needs writableRoots, a list of existing absolute directories.",
     inputSchema: {
       title: z.string().optional(),
       task: z.string().min(1),
@@ -592,8 +592,8 @@ server.registerTool(
       model: z.string().optional(),
       reasoningEffort: z.enum(["minimal", "low", "medium", "high"]).default("high"),
       skipGitRepoCheck: z.boolean().default(true),
-      // Empty only for a read-only worker (a verifier): it writes nothing,
-      // so it owns nothing.
+      // Empty is the promise that nothing lands: a read-only verifier, or a
+      // research worker that reads, fetches and reports but merges nothing.
       ownedPaths: z.array(z.string().min(1)),
       forbid: z.array(z.string().min(1)).max(100).optional(),
       allowedCommands: z.array(z.string().min(1)).max(100).optional(),
