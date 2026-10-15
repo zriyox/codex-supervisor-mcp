@@ -32,6 +32,7 @@ Point several agents at one repository and they overwrite each other, nobody can
 | "Failed" and "process gone" look alike | The state machine keeps `failed` and `lost` apart |
 | No view of where a batch is | `codex-supervisor-web`, a board that shows every worker by session |
 | Work sits uncommitted or unpushed | Collecting a worker means `land_codex_worker` by default; the main thread commits and pushes its own edits; before deploying, check the remote SHA really contains the files |
+| Worktrees and branches pile up | Clean up as you merge: `npm run cleanup -- --days 0 --dry-run` lists the candidates (merged and clean only), then `--apply`; `check_workers` returns a `cleanup` hint with both commands once the store passes the threshold |
 
 Workers run `codex exec` with `model` passed through: the main thread stays on Claude, workers can run DeepSeek or any model Codex has a provider for, and the bills stay separate.
 

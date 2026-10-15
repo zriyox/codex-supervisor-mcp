@@ -100,6 +100,7 @@ Codex需0.162+支持hooks/output-schema，能力不够派单start_failed先修CL
 2. **主线程自己的改动必须 add + commit + push**：`git add <paths> && git commit -m ... && git push`。跳过任何一步都要显式说明，不允许说"改好了"然后留在工作区。
 3. **上线前核对远端，不认本地**：部署或重启服务前先 `git fetch`，再确认目标提交里真有那些改动 —— `git log --oneline origin/<branch> -1`、`git ls-tree -r --name-only origin/<branch> | rg <新文件>`、必要时 `git show origin/<branch>:<path>`。线上报 `NoSuchBeanDefinition`、找不到类/模块、404，先查这一条，再查代码逻辑。
 4. **交付报告三件套**：本地改动 → commit SHA → push 后的远端 SHA（以及部署状态）。缺远端 SHA 就不算完成。
+5. **合并即清理**：`land_codex_worker` 落地后，那路 worker 的 worktree 和 `codex/<id>` 分支就没用了 —— 清掉，别攒着。先 `SUPERVISOR_HOME=<store> npm run cleanup -- --days 0 --dry-run` 看候选（默认 14 天窗口会把最近两周的全都漏掉，所以必须带 `--days 0`），确认只删「已合并 + 干净 + 无活跃依赖」的，再 `--apply`。脏、未合、lost、failed 一律保留，并在报告里写清还剩什么、为什么。`check_workers` 在 worktree 数超过阈值（默认 50，`SUPERVISOR_CLEANUP_HINT` 可调，0 关闭）时会带回 `cleanup` 字段和两条命令。
 
 典型事故：两个实现类只存在于主线程的 worktree 里，没 add / 没 commit / 没 push，线上跑的还是上一个提交，Spring 找不到 bean 启动失败 —— 不是代码错，是没上线。
 

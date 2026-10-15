@@ -43,6 +43,7 @@ import { syncSkills } from "./skill-sync.js";
 import { maybeAutoUpdate } from "./auto-update.js";
 import { askWorker, endSideSession, latestSideTurn } from "./side-chat.js";
 import { landWorker } from "./landing.js";
+import { cleanupHint } from "./cleanup-hint.js";
 
 // Report the real package version. This string had drifted to 0.4.0 while the
 // package shipped 0.5.x, so the handshake named a version nobody was running.
@@ -538,7 +539,10 @@ server.registerTool("check_workers", {
     const result = collectWorkerChanges(await readTasks(), await readObserverCursor(observerId));
     await writeObserverCursor(observerId, result.cursor);
     const { cursor, ...reply } = result;
-    return textResult({ ...reply, quiet: reply.quiet && recoveries.length === 0, recoveries });
+    // The cleanup hint rides along without touching quiet: it is a standing fact
+    // about the store, not a new worker event.
+    const cleanup = await cleanupHint();
+    return textResult({ ...reply, quiet: reply.quiet && recoveries.length === 0, recoveries, ...(cleanup ? { cleanup } : {}) });
   });
   observerRead = read.catch(() => {});
   return read;

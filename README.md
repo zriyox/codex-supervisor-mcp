@@ -32,6 +32,7 @@
 | worker 说做完了其实没有 | 派单给 `acceptance` 验收命令，worker 退出后 supervisor 在它的 worktree 里跑，失败 `land` 拒绝 |
 | 看不见一批活现在到哪了 | `codex-supervisor-web` 开一个看板，按 session 看每路 worker 在干什么 |
 | 改动留在本地没上线 | 收活默认 `land_codex_worker` 合回主分支；主线程自己的改动必须 commit + push；部署前用远端 SHA 核对文件真的在线上 |
+| worktree / 分支越堆越多 | 合并即清理：`npm run cleanup -- --days 0 --dry-run` 看候选（只删已合并+干净的），确认后 `--apply`；`check_workers` 超过阈值会带回 `cleanup` 提示和命令 |
 
 worker 跑的是 `codex exec`，`model` 透传：主线程留在 Claude，worker 可以挂 DeepSeek 或任何 Codex 配了 provider 的模型，账单分开算。
 
