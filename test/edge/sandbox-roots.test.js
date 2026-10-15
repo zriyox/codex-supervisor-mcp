@@ -24,7 +24,8 @@ test("the platform cache directory is offered to the sandbox on every platform",
 test("a candidate that cannot be resolved to a symlink-free path is dropped", () => {
   // This is the bug 0.9.2 shipped: a symlinked ~/.cache was handed to Codex,
   // which refuses such a writable root and then fails every worker command.
-  const dropLink = (candidate) => candidate.endsWith("/.cache") ? { error: "resolved path still contains a symlink component" } : { path: candidate };
+  // The separator is platform-specific: the win32 runner builds \\Users\\...\\\.cache.
+  const dropLink = (candidate) => /(^|[\\/])\.cache$/.test(candidate) ? { error: "resolved path still contains a symlink component" } : { path: candidate };
   assert.deepEqual(cacheRoots({ platform: "darwin", home: "/Users/example", env: {}, resolveRoot: dropLink }),
     [join("/Users/example", "Library", "Caches")]);
   assert.deepEqual(cacheRoots({ platform: "linux", home: "/home/example", env: {}, resolveRoot: () => ({ error: "does not exist" }) }), []);
