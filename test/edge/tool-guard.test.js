@@ -64,6 +64,60 @@ test("the allowlist is not lifted when the sandbox is gone", () => {
   assert.equal(shell("curl -s https://example.com").allow, false, "without a sandbox only declared commands run");
 });
 
+// Codex 0.162 with a model that has no separate apply_patch tool sends the
+// patch as a shell call: apply_patch <<"EOF" ... EOF. That used to be refused
+// as an undeclared command, so such a worker could never edit anything.
+test("a patch through the shell heredoc is judged exactly like the patch tool", async () => {
+  const root = await mkdtemp(join(tmpdir(), "supervisor-heredoc-"));
+  const owned = join(root, "owned");
+  await mkdir(owned);
+  const policy = { cwd: root, worktree: root, sandbox: "workspace-write", ownedPaths: [owned], allowedCommands: [] };
+  const shell = (command) => evaluateToolUse({ tool_name: "Bash", cwd: root, tool_input: { command } }, policy);
+  const heredoc = (path, { quote = "\u0027", tail = "" } = {}) => [
+    `apply_patch <<${quote}EOF${quote}`,
+    "*** Begin Patch",
+    `*** Add File: ${path}`,
+    "+alpha",
+    "*** End Patch",
+    "EOF" + tail
+  ].join("\n");
+  assert.equal(shell(heredoc("owned/notes.md")).allow, true, "a patch inside ownedPaths is an edit, not an undeclared command");
+  assert.match(shell(heredoc("outside/notes.md")).reason, /outside ownedPaths/);
+  assert.equal(shell(heredoc("owned/notes.md", { quote: "" })).allow, false, "an unquoted heredoc would expand $() in the body");
+  assert.equal(shell(heredoc("owned/notes.md", { tail: " && rm -rf /" })).allow, false, "nothing may follow the closing delimiter");
+  assert.equal(shell(heredoc("owned/notes.md", { tail: "; rm -rf /" })).allow, false);
+  const readOnlyPolicy = { cwd: root, worktree: root, sandbox: "read-only", ownedPaths: [], allowedCommands: [] };
+  const readOnly = evaluateToolUse({ tool_name: "Bash", cwd: root, tool_input: { command: heredoc("owned/notes.md") } }, readOnlyPolicy);
+  assert.equal(readOnly.allow, false);
+  assert.match(readOnly.reason, /read-only/);
+  const noLand = { cwd: root, worktree: root, sandbox: "workspace-write", ownedPaths: [], allowedCommands: [] };
+  assert.equal(evaluateToolUse({ tool_name: "Bash", cwd: root, tool_input: { command: heredoc("scratch.md") } }, noLand).allow, true, "a no-land worker may keep scratch notes in its worktree");
+  assert.match(evaluateToolUse({ tool_name: "Bash", cwd: root, tool_input: { command: heredoc("../escape.md") } }, noLand).reason, /own worktree/);
+});
+
+test("the read whitelist covers real inspection without opening a write path", () => {
+  const policy = { cwd: tmpdir(), sandbox: "workspace-write", ownedPaths: [tmpdir()], allowedCommands: [] };
+  const shell = (command) => evaluateToolUse({ tool_name: "Bash", tool_input: { command } }, policy);
+  for (const line of ["grep -n TODO src", "sed -n \u00271,5p\u0027 file.txt", "find . -name \u0027*.ts\u0027", "jq \u0027.a\u0027 file.json",
+    "rg -n error . | head -20", "cat a.txt | wc -l", "git grep -n foo", "git branch --show-current", "go version", "mvn -v", "go env GOCACHE", "awk \u0027{print $1}\u0027 f"]) {
+    assert.equal(shell(line).allow, true, line);
+  }
+  for (const line of ["sed -i \u0027s/a/b/\u0027 file", "find . -delete", "find . -exec rm {} +", "jq -i \u0027.a=1\u0027 file.json", "cat f | tee out.txt", "rg x | sh", "env", "echo x > f"]) {
+    assert.equal(shell(line).allow, false, line);
+  }
+});
+
+test("a declared command prefix covers one command and cannot smuggle another", () => {
+  const policy = { cwd: tmpdir(), sandbox: "workspace-write", ownedPaths: [tmpdir()], allowedCommands: ["go test ./internal/*", "npm test"] };
+  const shell = (command) => evaluateToolUse({ tool_name: "Bash", tool_input: { command } }, policy);
+  assert.equal(shell("go test ./internal/service -run TestX").allow, true);
+  assert.equal(shell("go test ./other -run TestX").allow, false, "the prefix is a prefix, not a wildcard anywhere");
+  assert.equal(shell("go test ./internal/service; rm -rf /").allow, false, "no metacharacters inside a prefix match");
+  assert.equal(shell("go test ./internal/service && rm -rf /").allow, false);
+  assert.equal(shell("npm test").allow, true, "exact declarations still work");
+});
+
+
 test("reading a file another worker owns is never a conflict", async () => {
   const root = await mkdtemp(join(tmpdir(), "supervisor-shared-read-"));
   const shared = join(root, "shared");

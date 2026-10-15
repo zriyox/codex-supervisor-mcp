@@ -69,7 +69,11 @@ export function buildGuardPreamble({ sandbox, ownedPaths = [], allowedCommands =
       "Report what you found and name the files a writer would have to change."
     ].join(" ");
   }
-  return `Runtime supervisor guard: edits must use apply_patch within ${JSON.stringify(ownedPaths)}. Shell verification must exactly match declared commands ${JSON.stringify(allowedCommands)}. Forbidden: ${forbidden}. Undeclared shell programs are denied; report a needed validation command instead of bypassing the guard.`;
+  // A model whose toolset has no apply_patch tool sends the patch through the
+  // shell as a heredoc; the guard accepts that shape too, so the worker is told
+  // about it instead of stalling on a tool it does not have.
+  const shellEdit = "If your toolset has no apply_patch tool, run it through the shell as apply_patch <<'EOF' ... EOF; the guard checks the file paths the same way. A declared command ending in * is a prefix, so go test ./internal/* covers go test ./internal/service -run TestX.";
+  return `Runtime supervisor guard: edits must use apply_patch within ${JSON.stringify(ownedPaths)}. ${shellEdit} Shell verification must exactly match declared commands ${JSON.stringify(allowedCommands)}. Forbidden: ${forbidden}. Undeclared shell programs are denied; report a needed validation command instead of bypassing the guard.`;
 }
 
 // The acceptance commands are shown to the worker. Hiding them would not

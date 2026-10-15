@@ -43,6 +43,10 @@ wait默认60秒和compact，带includeEvents则详细返回；客户端带progre
 
 派单写forbid红线、allowedCommands验证命令；runtime守卫按次注入并随resume/followup继承。apply_patch核对ownedPaths，Shell仅放简单读取和显式声明的验证命令；声明脚本可以有副作用，须先核对，不能当万能文件沙箱。no_work表示本轮write无输出变化且没跑命令；先看run_evidence，不拿上轮提交/命令当本轮完成。
 
+没有独立 `apply_patch` 工具的模型会把补丁当 shell 命令发过来（`apply_patch <<'EOF' ... EOF`）：守卫认这个形状，按同一套 ownedPaths 判路径、同样拒越界，所以模型不需要有那个工具也能改文件。Quoted heredoc 才认；后面跟 `&&`/`;` 的、未加引号的都不算。
+
+`allowedCommands` 里以 `*` 结尾的条目是**前缀**：声明 `go test ./internal/*` 就覆盖 `go test ./internal/service -run TestX`，但只对没有 shell 元字符的单条命令生效（`; rm -rf /` 不会通过）。守卫的只读白名单包含 grep/sed/find/jq/awk/go env、git 的只读子命令和 `cmd | head|tail|wc|sort|uniq` 这类纯读管道；`sed -i`、`find -delete/-exec`、`jq -i`、`tee`、重定向仍被拒。
+
 worker不止改代码，按这路要什么选形状：
 
 | 形状 | 参数 | 能干什么 |

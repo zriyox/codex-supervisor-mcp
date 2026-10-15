@@ -184,6 +184,10 @@ wait 默认预算60秒、默认compact；includeEvents会选择详细结果（�
 
 每路临时注入随包PreToolUse守卫：apply_patch核对全部目标路径（含rename和symlink），forbid拒绝红线；Shell仅允许简单读取和派单显式allowedCommands/acceptance。声明的验证脚本以派单者权限执行，可有副作用，不能当作任意程序的文件沙箱。guard策略随resume/followup继承，不写全局hooks。空跑write run按本轮输出前后内容和命令判断，no_work进入needs_attention；只读任务不因没改文件判空跑。
 
+没有独立 `apply_patch` 工具的模型（实测 Codex 0.162 + DeepSeek/cc-switch）把补丁当 shell 命令发过来：`apply_patch <<'EOF' ... EOF`。守卫认这个形状，用同一套 ownedPaths 规则判每个目标路径，所以这种模型也能改文件；未加引号的 heredoc、后面还接 `&&`/`;` 的都拒绝。
+
+`allowedCommands` 里以 `*` 结尾的条目是前缀匹配（如 `go test ./internal/*` 覆盖 `go test ./internal/service -run TestX`），只对没有 shell 元字符的单条命令生效。编辑器 worker 的只读白名单覆盖 grep/sed（无 `-i`）/find（无 `-exec`/`-delete`）/jq（无 `-i`）/awk、git 只读子命令和 `cmd | head|tail|wc|sort|uniq` 纯读管道；`tee`、重定向、`env` 仍拒。守卫不是文件沙箱，漏网的写入只会落在 worker 自己的 worktree，land 会拒。
+
 守卫按 worker 形状放权：`ownedPaths` 非空的编辑 worker 只放声明过的命令和简单读取；`read-only` 或 `ownedPaths: []` 的 worker 没有可 land 的写边界，Shell 不再逐条限制（forbid 红线照旧），所以检索、审查、跑 `curl`/`gh`/`python` 都能干活。实测 read-only 沙箱连 `/tmp` 都写不了、也不通 DNS，所以联网检索要用 `workspace-write` + `networkAccess: true` + `ownedPaths: []`，产物永不进主分支。
 
 check_workers在状态协调后，对已结束的第1轮lost/no_work原子resume一次；第2轮仍有问题则保留证据等处理。审批、认证、权限和quota等待不重试，返回recoveries记录。worker最终输出强制JSON result/verification/not_done；get_worker_result的structured_report给格式校验，独立命令与acceptance仍为实际证据。非法JSON标failed/invalid_report并拒绝land；旧历史标legacy_text。
