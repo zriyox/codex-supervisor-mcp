@@ -11,6 +11,7 @@ function parseArgs(argv) {
     days: 14,
     dryRun: true,
     includeFailed: true,
+    keepRecords: false,
     vacuum: false
   };
 
@@ -25,6 +26,10 @@ function parseArgs(argv) {
       options.dryRun = true;
     } else if (arg === "--keep-failed") {
       options.includeFailed = false;
+    } else if (arg === "--keep-records") {
+      // Remove the directory and the branch, keep the task row and its run log:
+      // the work is merged, but the ledger of what ran stays.
+      options.keepRecords = true;
     } else if (arg === "--vacuum") {
       options.vacuum = true;
     } else if (arg === "--help" || arg === "-h") {
@@ -48,6 +53,7 @@ Options:
   --apply            Actually delete matching rows, JSONL logs, and worktrees.
   --days <n>         Keep tasks newer than n days. Default: 14.
   --keep-failed      Preserve failed/cancelled tasks even when older than --days.
+  --keep-records     Remove the worktree and branch but keep the task row and run log.
   --vacuum           Vacuum SQLite after deleting rows.
   -h, --help         Show help.
 `);
@@ -152,11 +158,13 @@ for (const task of candidates) {
   }
   deleted.worktrees += 1;
   const logPath = task.run_log ?? join(runsDir, `${task.id}.jsonl`);
-  if (await safeDeleteFile(logPath, options.dryRun)) deleted.jsonl += 1;
-  removedIds.push(task.id);
+  if (!options.keepRecords) {
+    if (await safeDeleteFile(logPath, options.dryRun)) deleted.jsonl += 1;
+    removedIds.push(task.id);
+  }
 }
 
-if (!options.dryRun && taskIds.length > 0) {
+if (!options.dryRun && !options.keepRecords && removedIds.length > 0) {
   await deleteTasks(removedIds);
 }
 deleted.tasks = removedIds.length;
@@ -168,6 +176,7 @@ if (!options.dryRun && options.vacuum) {
 console.log(JSON.stringify({
   dry_run: options.dryRun,
   keep_days: options.days,
+  records_kept: options.keepRecords,
   cutoff: new Date(cutoffMs).toISOString(),
   candidates: taskIds,
   skipped,
