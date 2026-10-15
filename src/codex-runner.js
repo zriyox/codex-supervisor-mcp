@@ -1,4 +1,4 @@
-import { createWriteStream, existsSync, statSync } from "node:fs";
+import { createWriteStream, existsSync } from "node:fs";
 import { mkdir, rm, stat } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { execFileSync, spawn } from "node:child_process";
@@ -23,7 +23,7 @@ import { applyCodexEvent } from "./event-parser.js";
 import { ACTIVE_STATUSES, TERMINAL_STATUSES } from "./status.js";
 import { worktreesDir } from "./paths.js";
 import { buildGuardPreamble, frameWorkerPrompt } from "./prompt.js";
-import { cacheRoots } from "./sandbox-roots.js";
+import { cacheRoots, resolveWritableRoot } from "./sandbox-roots.js";
 import { readTaskChanges, snapshotTaskOutput } from "./worktree.js";
 import { rebaseWorktree } from "./landing.js";
 import { DEFAULT_ACCEPTANCE_TIMEOUT_MS, normalizeAcceptance, runAcceptance } from "./acceptance.js";
@@ -624,8 +624,14 @@ export async function createCodexWorker({
     throw new Error("writableRoots must be a list of at most 20 absolute paths");
   }
   if (writableRoots.length && sandbox !== "workspace-write") throw new Error("writableRoots is only configurable for workspace-write workers");
+  // Codex refuses a writable root with a symlink component and then fails every
+  // command in the worker, so a declared root is stored resolved. Passing the
+  // alias would look fine in the receipt and break the run.
+  const resolvedWritableRoots = [];
   for (const root of writableRoots) {
-    if (!existsSync(root) || !statSync(root).isDirectory()) throw new Error(`writableRoots entry must be an existing directory: ${root}`);
+    const resolved = resolveWritableRoot(root);
+    if (resolved.error) throw new Error(`writableRoots entry is unusable: ${root} (${resolved.error}); pass an existing directory whose path has no symlink component`);
+    resolvedWritableRoots.push(resolved.path);
   }
   for (const value of [maxRunMs, maxTotalMs]) if (value !== null && (!Number.isInteger(value) || value < 1000)) throw new Error("time limits must be integer milliseconds of at least 1000");
   for (const [name, values] of Object.entries({ forbid, allowedCommands })) {
@@ -673,7 +679,7 @@ export async function createCodexWorker({
     session_id: sessionId ?? null,
     thread_id: null,
     owned_paths: normalizedOwnedPaths,
-    guard_policy: { forbid, allowedCommands, externalOutputs, networkAccess, writableRoots, maxRunMs, maxTotalMs },
+    guard_policy: { forbid, allowedCommands, externalOutputs, networkAccess, writableRoots: [...new Set(resolvedWritableRoots)], maxRunMs, maxTotalMs },
     input_context: { context, contracts },
     depends_on: Array.isArray(dependsOn) ? dependsOn : [],
     goal_objective: validatedGoal.objective,

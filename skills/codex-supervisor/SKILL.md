@@ -65,7 +65,7 @@ check_workers可对已死的第1轮lost/no_work/invalid_report自动resume一次
 
 远端编译/ssh在workspace-write显式networkAccess:true，默认false，resume/followup继承；不要用danger-full-access代替联网配置。需要时声明maxRunMs/maxTotalMs，超限保留partial work并提示处理，不自动恢复；wait预算与quota分开。
 
-沙箱只放工作区、临时目录和OS cache目录（macOS ~/Library/Caches、Linux ~/.cache、Windows %LOCALAPPDATA%）：Go 这类默认把build cache写那儿的工具链不用再单独设 GOCACHE，加语言也不用改supervisor。cache在别处（如 ~/.m2、~/.gradle、vendor镜像）就传 `writableRoots:[绝对路径]`（已存在目录、最多20个、只对workspace-write生效、随resume/followup继承）；能只读复用就不用传。
+沙箱只放工作区、临时目录和OS cache目录（macOS ~/Library/Caches、Linux ~/.cache、Windows %LOCALAPPDATA%）：Go 这类默认把build cache写那儿的工具链不用再单独设 GOCACHE，加语言也不用改supervisor。Codex 拒绝含软链的可写根（给了这种根worker连命令都起不来），所以cache目录和writableRoots都会被realpath解析后再交给沙箱；解析不到无软链路径就直接不带这个根。cache在别处（如 ~/.m2、~/.gradle、vendor镜像）就传 `writableRoots:[绝对路径]`（已存在目录、最多20个、只对workspace-write生效、随resume/followup继承）；能只读复用就不用传。
 
 Codex需0.162+支持hooks/output-schema，能力不够派单start_failed先修CLI。goal查询看native_goal_read，missing与locked/read_error分开；budget/usage限制也要处理。cleanup保留ignored成果、共享证据及未解决attention。
 
