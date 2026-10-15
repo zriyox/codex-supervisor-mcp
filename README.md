@@ -153,7 +153,7 @@ land_codex_worker       核过了，落进集成分支
 | `resume_codex_worker` | `task_id`, `prompt`, `rebaseOnto`, `acceptance`, `context` | 接同一个 Codex 会话继续跑，`thread_id` 不变。`rebaseOnto` 先把 worktree 挪到主线新头（stash、跳过已合入补丁、重放新增提交、放回），冲突原样退回不起 worker |
 | `wait_codex_workers` | `task_ids`, `mode`(any/all), `timeoutMinutes`, `timeoutMs`, `compact`, `includeEvents`, `eventLimit`, `eventMaxChars`, `eventKinds` | 等终态。默认 60 秒，到点带快照返回，worker 照跑；`compact` 每路只回一行，带 `idle_seconds` / `command_running`，分得清长命令和卡住 |
 | `get_orchestration_overview` | `status`, `limit` | 全部 worker 的状态表，封顶 7000 字节。带 `version` 和 `update` |
-| `get_worker_result` | `task_id`, `limit`, `maxChars`, `includeFiles` | worker 自己的汇报，默认截 6000 字节、`truncated` 提示读全。`acceptance` 是 supervisor 替你跑的验收过没过，`verification` 是它自己跑过的命令和退出码，`base_behind` 是主线走了多远 |
+| `get_worker_result` | `task_id`, `limit`, `maxChars`, `includeFiles` | worker 自己的汇报，默认截 6000 字节、`truncated` 提示读全。`acceptance` 是 supervisor 替你跑的验收过没过，`verification` 是它自己跑过的命令和退出码，`base_behind` 是主线走了多远（`contains_base: false` 时 `behind` 为 `null`，那是换了线） |
 | `get_worker_diff` | `task_id`, `maxChars`, `paths` | worker 实际改了什么：从 worktree 起点到工作区的 patch，提交没提交都算。`maxChars` 管总量，超了的文件只列名 |
 | `ask_codex_worker` | `task_id`, `question`, `timeoutMs`, `maxChars`, `fresh`, `end` | 旁路问 worker 一句。线程 fork 成只读侧会话，没网络、没 MCP 工具，worker 本身不动。worker 被 resume 过会自动换新 fork，`fresh` 强制换，`end` 删 |
 | `land_codex_worker` | `task_id`, `onto`, `commitMessage`, `ignoreAcceptance`, `allowOutsideOwned` | 把 worker 在 `codex/<id>` 上的提交 cherry-pick 到派单目录的当前分支。目标要干净，冲突回滚，验收 `failed` 拒绝。`commitMessage` 先替它把未提交的改动提交成一笔，`ignoreAcceptance` 放行 |
@@ -190,7 +190,7 @@ wait 默认预算60秒、默认compact；includeEvents会选择详细结果（�
 
 守卫按 worker 形状放权：`ownedPaths` 非空的编辑 worker 只放声明过的命令和简单读取；`read-only` 或 `ownedPaths: []` 的 worker 没有可 land 的写边界，Shell 不再逐条限制（forbid 红线照旧），所以检索、审查、跑 `curl`/`gh`/`python` 都能干活。实测 read-only 沙箱连 `/tmp` 都写不了、也不通 DNS，所以联网检索要用 `workspace-write` + `networkAccess: true` + `ownedPaths: []`，产物永不进主分支。
 
-check_workers在状态协调后，对已结束的第1轮lost/no_work原子resume一次；第2轮仍有问题则保留证据等处理。审批、认证、权限和quota等待不重试，返回recoveries记录。worker最终输出强制JSON result/verification/not_done；get_worker_result的structured_report给格式校验，独立命令与acceptance仍为实际证据。非法JSON标failed/invalid_report并拒绝land；旧历史标legacy_text。
+check_workers在状态协调后，对已结束的第1轮lost/no_work/invalid_report原子resume一次（invalid_report只要求重发裸JSON，不重做活）；第2轮仍有问题则保留证据等处理。审批、认证、权限和quota等待不重试，返回recoveries记录。worker最终输出强制JSON result/verification/not_done；get_worker_result的structured_report给格式校验，独立命令与acceptance仍为实际证据。非法JSON标failed/invalid_report并拒绝land；旧历史标legacy_text。
 
 context用绝对文件路径与可选sha256声明材料，最多20份、与contracts合计6000字；文件不超过5 MB。首次派单记录实际哈希，resume校验原材料未变，需要新材料时显式传context。handoff最多1800字/16行，截断明确标记；完整约束和引用单独保留，材料不授予写权限。
 
