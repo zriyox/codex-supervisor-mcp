@@ -258,7 +258,15 @@ export function baseBehind(projectRoot, baseCommit) {
       if (error.status === 1) containsBase = false;
       else return { behind: null, contains_base: null, ref };
     }
-    return { behind: Number.isFinite(behind) ? behind : null, contains_base: containsBase, ref };
+    // When the recorded base is not an ancestor of the directory's current
+    // HEAD, the parent thread switched branches or the worktree was cut from
+    // another line: the count then describes unrelated history, so it is
+    // reported as unknown instead of as "the worker is behind".
+    if (!containsBase) {
+      return { behind: null, contains_base: false, ref,
+        note: `${baseCommit.slice(0, 12)} is not an ancestor of ${ref}; the directory is on a different line, so behind is unknown` };
+    }
+    return { behind: Number.isFinite(behind) ? behind : null, contains_base: true, ref };
   } catch {
     return { behind: null, contains_base: null, ref };
   }

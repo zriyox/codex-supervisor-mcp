@@ -234,6 +234,8 @@ test("a rewritten base is reported, and the rebase still replays only the worker
     const mainHead = await advanceMain(dir);
     const result = await call("get_worker_result", { task_id: created.id });
     assert.equal(result.base_behind.contains_base, false, "the base is no longer in main's history");
+    assert.equal(result.base_behind.behind, null, "a rewritten base must not be reported as a commit count");
+    assert.match(result.base_behind.note ?? "", /not an ancestor/);
     const resumed = await call("resume_codex_worker", { task_id: created.id, prompt: "carry on", rebaseOnto: "main" });
     assert.ok(!resumed.error, JSON.stringify(resumed).slice(0, 400));
     assert.equal(resumed.rebase.replayed, 1, "main's own amended commit is not replayed as the worker's");
