@@ -577,7 +577,7 @@ server.registerTool(
   {
     title: "Create Codex worker",
     description:
-      "Launch a Codex CLI worker with codex exec --json and track its events. ownedPaths and goal are required: ownedPaths reserves the files this worker may write (empty only for a read-only verifier), goal records what the worker is for. acceptance is the list of shell commands that decide whether the work is done: the supervisor runs them in the worker's worktree after codex exits, each must exit 0, and the worker sees them in its prompt so it can run them first. Write the check for this step (a test file, a file that must exist, an endpoint that must answer), not the whole suite; a check on another machine goes through ssh. They run with the supervisor's own privileges, as if you ran them yourself. The verdict shows as acceptance on wait, the overview and get_worker_result, and land_codex_worker refuses while it is failed.",
+      "Launch a Codex CLI worker with codex exec --json and track its events. ownedPaths and goal are required: ownedPaths reserves the files this worker may write (empty only for a read-only verifier), goal records what the worker is for. acceptance is the list of shell commands that decide whether the work is done: the supervisor runs them in the worker's worktree after codex exits, each must exit 0, and the worker sees them in its prompt so it can run them first. Write the check for this step (a test file, a file that must exist, an endpoint that must answer), not the whole suite; a check on another machine goes through ssh. They run with the supervisor's own privileges, as if you ran them yourself. The verdict shows as acceptance on wait, the overview and get_worker_result, and land_codex_worker refuses while it is failed. The worker's sandbox may write the worktree, the temp directory and the OS cache directory; a toolchain whose cache lives elsewhere needs writableRoots, a list of existing absolute directories.",
     inputSchema: {
       title: z.string().optional(),
       task: z.string().min(1),
@@ -601,6 +601,10 @@ server.registerTool(
       contracts: z.array(z.string().min(1).max(2000)).max(20).optional(),
       externalOutputs: z.array(z.object({ path: z.string().min(1), sha256: z.string().regex(/^[a-f0-9]{64}$/).optional() })).max(20).optional(),
       networkAccess: z.boolean().default(false),
+      // Extra absolute directories the sandbox may write. The OS cache
+      // directory is already writable; this is for toolchains that keep a
+      // cache somewhere else (~/.m2, ~/.gradle, a vendored mirror).
+      writableRoots: z.array(z.string().min(1)).max(20).optional(),
       maxRunMs: z.number().int().min(1000).max(86400000).optional(),
       maxTotalMs: z.number().int().min(1000).max(604800000).optional(),
       goal: z.object({
@@ -657,6 +661,7 @@ server.registerTool(
       contracts: z.array(z.string().min(1).max(2000)).max(20).optional(),
       externalOutputs: z.array(z.object({ path: z.string().min(1), sha256: z.string().regex(/^[a-f0-9]{64}$/).optional() })).max(20).optional(),
       networkAccess: z.boolean().optional(),
+      writableRoots: z.array(z.string().min(1)).max(20).optional(),
       maxRunMs: z.number().int().min(1000).max(86400000).optional(),
       maxTotalMs: z.number().int().min(1000).max(604800000).optional(),
       goal: z

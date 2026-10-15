@@ -1,8 +1,8 @@
-import { createWriteStream, existsSync } from "node:fs";
+import { createWriteStream, existsSync, statSync } from "node:fs";
 import { mkdir, rm, stat } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { execFileSync, spawn } from "node:child_process";
-import { join, resolve, sep, dirname } from "node:path";
+import { join, resolve, sep, dirname, isAbsolute } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   appendTaskEvent,
@@ -249,8 +249,8 @@ async function trackRunInHost({ record, args, prompt, logPath, spawnOptions = {}
   const configArgs = ["--output-schema", workerReportSchemaPath, "--dangerously-bypass-hook-trust", "-c",
     `hooks.PreToolUse=[{matcher="Bash|apply_patch",hooks=[{type="command",command=${JSON.stringify(hookCommand)}}]}]`];
   configArgs.push("-c", `sandbox_workspace_write.network_access=${record.guard_policy?.networkAccess === true}`);
-  const writableRoots = [...new Set([...externalBefore.map((file) => dirname(file.path)), ...cacheRoots()])];
-  if (writableRoots.length) configArgs.push("-c", `sandbox_workspace_write.writable_roots=${JSON.stringify(writableRoots)}`);
+  const sandboxWritableRoots = [...new Set([...externalBefore.map((file) => dirname(file.path)), ...cacheRoots(), ...(record.guard_policy?.writableRoots ?? [])])];
+  if (sandboxWritableRoots.length) configArgs.push("-c", `sandbox_workspace_write.writable_roots=${JSON.stringify(sandboxWritableRoots)}`);
   // Insert before the prompt/session positional arguments for exec/resume.
   const guardedArgs = [...args.slice(0, -1), ...configArgs, args.at(-1)];
   prompt = `Runtime supervisor guard: edits must use apply_patch within ${JSON.stringify(owned)}. Shell verification must exactly match declared commands ${JSON.stringify(guardPolicy.allowedCommands)}. Forbidden: ${JSON.stringify(guardPolicy.forbid ?? [])}. Undeclared shell programs are denied; report a needed validation command instead of bypassing the guard.\n\n${prompt}`;
@@ -600,6 +600,7 @@ export async function createCodexWorker({
   contracts = [],
   externalOutputs = [],
   networkAccess = false,
+  writableRoots = [],
   maxRunMs = null,
   maxTotalMs = null
 }) {
@@ -618,6 +619,13 @@ export async function createCodexWorker({
   if (externalOutputs.length && !acceptanceCommands?.length) throw new Error("shared outputs require explicit acceptance commands");
   if (externalOutputs.length && sandbox === "read-only") throw new Error("a read-only worker cannot declare writable shared outputs");
   if (networkAccess && sandbox !== "workspace-write") throw new Error("networkAccess is only configurable for workspace-write workers");
+  if (!Array.isArray(writableRoots) || writableRoots.length > 20 || writableRoots.some((root) => typeof root !== "string" || !isAbsolute(root))) {
+    throw new Error("writableRoots must be a list of at most 20 absolute paths");
+  }
+  if (writableRoots.length && sandbox !== "workspace-write") throw new Error("writableRoots is only configurable for workspace-write workers");
+  for (const root of writableRoots) {
+    if (!existsSync(root) || !statSync(root).isDirectory()) throw new Error(`writableRoots entry must be an existing directory: ${root}`);
+  }
   for (const value of [maxRunMs, maxTotalMs]) if (value !== null && (!Number.isInteger(value) || value < 1000)) throw new Error("time limits must be integer milliseconds of at least 1000");
   for (const [name, values] of Object.entries({ forbid, allowedCommands })) {
     if (!Array.isArray(values) || values.length > 100 || values.some((value) => typeof value !== "string" || !value.trim())) throw new Error(`${name} must be a list of at most 100 nonempty strings`);
@@ -664,7 +672,7 @@ export async function createCodexWorker({
     session_id: sessionId ?? null,
     thread_id: null,
     owned_paths: normalizedOwnedPaths,
-    guard_policy: { forbid, allowedCommands, externalOutputs, networkAccess, maxRunMs, maxTotalMs },
+    guard_policy: { forbid, allowedCommands, externalOutputs, networkAccess, writableRoots, maxRunMs, maxTotalMs },
     input_context: { context, contracts },
     depends_on: Array.isArray(dependsOn) ? dependsOn : [],
     goal_objective: validatedGoal.objective,
@@ -1016,6 +1024,7 @@ export async function createFollowupWorker({
   contracts,
   externalOutputs,
   networkAccess,
+  writableRoots,
   maxRunMs,
   maxTotalMs
 }) {
@@ -1063,6 +1072,7 @@ export async function createFollowupWorker({
     contracts: contracts ?? parent.input_context?.contracts ?? [],
     externalOutputs: externalOutputs ?? parent.guard_policy?.externalOutputs ?? [],
     networkAccess: networkAccess ?? parent.guard_policy?.networkAccess ?? false,
+    writableRoots: writableRoots ?? parent.guard_policy?.writableRoots ?? [],
     maxRunMs: maxRunMs ?? parent.guard_policy?.maxRunMs ?? null,
     maxTotalMs: maxTotalMs ?? parent.guard_policy?.maxTotalMs ?? null,
     goal: goal ?? { objective: parent.goal_objective ?? `Follow-up for ${parent.id}`, tokenBudget: parent.goal_token_budget ?? undefined },

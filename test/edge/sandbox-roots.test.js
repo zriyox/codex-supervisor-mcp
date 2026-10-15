@@ -42,3 +42,30 @@ test("a dispatched worker's sandbox is told to write that cache directory", asyn
   assert.ok(JSON.parse(flag.slice("sandbox_workspace_write.writable_roots=".length)).includes(cache),
     `the cache directory must be writable, got ${flag}`);
 });
+
+test("a dispatch may name a cache directory that is not the OS cache directory", async () => {
+  const home = await tempHome("supervisor-extra-root-");
+  const custom = join(home, "m2-repository");
+  await mkdir(custom, { recursive: true });
+  const argsLog = join(home, "codex-args.jsonl");
+  const { dir: repo } = await makeRepo(join(home, "repo"));
+  await withMcp({ SUPERVISOR_HOME: home, FAKE_CODEX_ARGS_LOG: argsLog }, async ({ call }) => {
+    const worker = await call("create_codex_worker", dispatchArgs("extra-root", repo, {
+      sandbox: "workspace-write", ownedPaths: [repo], writableRoots: [custom]
+    }));
+    await waitFor(call, worker.id, (task) => task.status === "completed");
+    const relative = await call("create_codex_worker", dispatchArgs("bad-root", repo, {
+      sandbox: "workspace-write", ownedPaths: [repo], writableRoots: ["relative/cache"]
+    }));
+    assert.match(relative.message ?? "", /absolute paths/, "a relative root is refused");
+    const missing = await call("create_codex_worker", dispatchArgs("missing-root", repo, {
+      sandbox: "workspace-write", ownedPaths: [repo], writableRoots: [join(home, "nope")]
+    }));
+    assert.match(missing.message ?? "", /existing directory/, "a root that does not exist is refused before dispatch");
+  });
+  const runs = (await readFile(argsLog, "utf8")).trim().split("\n").map((line) => JSON.parse(line).args);
+  const run = runs.find((args) => args.includes("--output-schema"));
+  const flag = run.find((arg) => arg.startsWith("sandbox_workspace_write.writable_roots="));
+  assert.ok(JSON.parse(flag.slice("sandbox_workspace_write.writable_roots=".length)).includes(custom),
+    `the declared directory must be writable, got ${flag}`);
+});
