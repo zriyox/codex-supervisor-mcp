@@ -1,12 +1,12 @@
 import { mkdir } from "node:fs/promises";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { dataDir, dbPath, runsDir } from "./paths.js";
 import { extractAgentMessage } from "./event-parser.js";
 import { ACTIVE_STATUSES, PHASES, TERMINAL_STATUSES } from "./status.js";
 import { readNativeGoal } from "./goal-store.js";
 import { normalizeAcceptance } from "./acceptance.js";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 
 let db;
 
@@ -172,10 +172,13 @@ const TASK_EVENTS_DDL = `
     CREATE TABLE IF NOT EXISTS task_events (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       task_id TEXT NOT NULL,
+      run_id TEXT,
       seq INTEGER NOT NULL,
       created_at TEXT NOT NULL,
+      actor TEXT NOT NULL DEFAULT 'legacy',
       event_type TEXT NOT NULL,
-      payload TEXT NOT NULL
+      payload TEXT NOT NULL,
+      payload_sha256 TEXT
     );
   `;
 
@@ -184,6 +187,83 @@ const TASK_EVENTS_INDEX_DDL =
 
 const TASKS_SESSION_INDEX_DDL =
   "CREATE INDEX IF NOT EXISTS idx_tasks_session ON tasks(session_id);";
+
+const CONTROL_DDL = `
+    CREATE TABLE IF NOT EXISTS repos (
+      id TEXT PRIMARY KEY,
+      canonical_remote TEXT,
+      root TEXT NOT NULL UNIQUE,
+      default_branch TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS work_items (
+      id TEXT PRIMARY KEY,
+      repo_id TEXT NOT NULL,
+      task_id TEXT NOT NULL UNIQUE,
+      parent_work_item_id TEXT,
+      objective TEXT,
+      owner TEXT,
+      delivery_state TEXT NOT NULL DEFAULT 'draft',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_work_items_repo ON work_items(repo_id, created_at);
+    CREATE TABLE IF NOT EXISTS runs (
+      id TEXT PRIMARY KEY,
+      task_id TEXT NOT NULL,
+      work_item_id TEXT NOT NULL,
+      attempt INTEGER NOT NULL,
+      codex_thread_id TEXT,
+      worktree_path TEXT,
+      branch TEXT,
+      base_sha TEXT,
+      run_status TEXT NOT NULL,
+      started_at TEXT NOT NULL,
+      finished_at TEXT,
+      UNIQUE(task_id, attempt)
+    );
+    CREATE INDEX IF NOT EXISTS idx_runs_work_item ON runs(work_item_id, attempt);
+    CREATE TABLE IF NOT EXISTS facts (
+      id TEXT PRIMARY KEY,
+      work_item_id TEXT NOT NULL,
+      scope_type TEXT NOT NULL,
+      scope_id TEXT NOT NULL,
+      key TEXT NOT NULL,
+      value_json TEXT NOT NULL,
+      state TEXT NOT NULL,
+      source_event_id INTEGER,
+      valid_for_sha TEXT,
+      expires_at TEXT,
+      supersedes_id TEXT,
+      created_at TEXT NOT NULL,
+      verified_at TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_facts_scope ON facts(scope_type, scope_id, state);
+    CREATE TABLE IF NOT EXISTS artifacts (
+      id TEXT PRIMARY KEY,
+      run_id TEXT NOT NULL,
+      type TEXT NOT NULL,
+      uri TEXT NOT NULL,
+      sha256 TEXT,
+      security_class TEXT NOT NULL DEFAULT 'internal',
+      retention TEXT NOT NULL DEFAULT 'permanent',
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_artifacts_run ON artifacts(run_id, created_at);
+    CREATE TABLE IF NOT EXISTS context_snapshots (
+      id TEXT PRIMARY KEY,
+      run_id TEXT NOT NULL,
+      recipient TEXT NOT NULL,
+      fact_versions TEXT NOT NULL DEFAULT '[]',
+      base_sha TEXT,
+      prompt_sha256 TEXT NOT NULL,
+      estimated_tokens INTEGER NOT NULL,
+      excluded_json TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_context_snapshots_run ON context_snapshots(run_id, created_at);
+  `;
 
 // A session is a string on each task row; this table is what a session is
 // *about*. A main thread sets it once per batch, so a reader sees "给 12
@@ -255,8 +335,17 @@ function initializeSchema(dbInstance) {
       if (columns.length === 0) dbInstance.exec(TASKS_DDL);
       else migrateTasksTable(dbInstance, columns);
       dbInstance.exec(TASK_EVENTS_DDL);
+      for (const [name, definition] of [
+        ["run_id", "TEXT"],
+        ["actor", "TEXT NOT NULL DEFAULT 'legacy'"],
+        ["payload_sha256", "TEXT"]
+      ]) {
+        if (!tableColumns(dbInstance, "task_events").some((column) => column.name === name)) dbInstance.exec(`ALTER TABLE task_events ADD COLUMN ${name} ${definition}`);
+      }
+      dbInstance.exec("UPDATE task_events SET actor = 'legacy' WHERE actor IS NULL");
       dbInstance.exec(TASK_EVENTS_INDEX_DDL);
       dbInstance.exec(TASKS_SESSION_INDEX_DDL);
+      dbInstance.exec(CONTROL_DDL);
       dbInstance.exec(SESSIONS_DDL);
       for (const [name, definition] of [
         ["objective", "TEXT"], ["default_acceptance", "TEXT"],
@@ -276,6 +365,7 @@ function initializeSchema(dbInstance) {
         dbInstance.exec("ALTER TABLE side_sessions ADD COLUMN worker_run_count INTEGER;");
 
       }
+      backfillControlRecords(dbInstance);
       dbInstance.exec("COMMIT;");
     } catch (error) {
       try {
@@ -286,6 +376,55 @@ function initializeSchema(dbInstance) {
       throw error;
     }
   });
+}
+
+function stableId(prefix, value) {
+  return `${prefix}-${createHash("sha256").update(String(value)).digest("hex").slice(0, 24)}`;
+}
+
+function repoIdForRoot(root) {
+  return stableId("repo", resolve(root));
+}
+
+function workItemIdForTask(taskId) {
+  return `work-${taskId}`;
+}
+
+export function runIdFor(taskId, attempt) {
+  return `run-${taskId}-${attempt}`;
+}
+
+function ensureControlRecords(dbInstance, task) {
+  if (!task?.id || !task.project_root) return;
+  const now = new Date().toISOString();
+  const root = resolve(task.project_root);
+  const repoId = repoIdForRoot(root);
+  const workItemId = workItemIdForTask(task.id);
+  dbInstance.prepare(`
+    INSERT INTO repos (id, canonical_remote, root, default_branch, created_at, updated_at)
+    VALUES (@id, NULL, @root, NULL, @now, @now)
+    ON CONFLICT(root) DO UPDATE SET updated_at = excluded.updated_at
+  `).run({ id: repoId, root, now });
+  dbInstance.prepare(`
+    INSERT INTO work_items (id, repo_id, task_id, parent_work_item_id, objective, owner, delivery_state, created_at, updated_at)
+    VALUES (@id, @repo_id, @task_id, NULL, @objective, NULL, @delivery_state, @now, @now)
+    ON CONFLICT(task_id) DO UPDATE SET
+      objective = COALESCE(excluded.objective, work_items.objective),
+      delivery_state = CASE WHEN work_items.delivery_state = 'draft' THEN excluded.delivery_state ELSE work_items.delivery_state END,
+      updated_at = excluded.updated_at
+  `).run({
+    id: workItemId,
+    repo_id: repoId,
+    task_id: task.id,
+    objective: task.goal_objective ?? task.title ?? null,
+    delivery_state: task.landed_at ? "landed" : "draft",
+    now
+  });
+}
+
+function backfillControlRecords(dbInstance) {
+  const rows = dbInstance.prepare("SELECT id,title,project_root,goal_objective,landed_at FROM tasks").all();
+  for (const row of rows) ensureControlRecords(dbInstance, row);
 }
 
 function openDb() {
@@ -477,6 +616,7 @@ function writeTaskNow(task) {
   params.phase = task.phase ?? null;
 
   stmt.run(params);
+  ensureControlRecords(openDb(), task);
   return task;
 }
 
@@ -752,14 +892,61 @@ export function taskRunPath(taskId) {
   return join(runsDir, `${taskId}.jsonl`);
 }
 
-export async function appendTaskEvent(taskId, event) {
+export async function ensureRunRecord(task, attempt) {
+  await ensureFilesystem();
+  if (!task?.id || !Number.isInteger(attempt) || attempt < 1) throw new Error("run record requires a task and positive attempt");
+  const dbInstance = openDb();
+  ensureControlRecords(dbInstance, task);
+  const now = new Date().toISOString();
+  const id = runIdFor(task.id, attempt);
+  dbInstance.prepare(`
+    INSERT INTO runs (id, task_id, work_item_id, attempt, codex_thread_id, worktree_path, branch, base_sha, run_status, started_at, finished_at)
+    VALUES (@id, @task_id, @work_item_id, @attempt, @codex_thread_id, @worktree_path, @branch, @base_sha, 'running', @started_at, NULL)
+    ON CONFLICT(task_id, attempt) DO UPDATE SET
+      codex_thread_id = COALESCE(excluded.codex_thread_id, runs.codex_thread_id),
+      worktree_path = COALESCE(excluded.worktree_path, runs.worktree_path),
+      base_sha = COALESCE(excluded.base_sha, runs.base_sha)
+  `).run({
+    id,
+    task_id: task.id,
+    work_item_id: workItemIdForTask(task.id),
+    attempt,
+    codex_thread_id: task.thread_id ?? null,
+    worktree_path: task.worktree_path ?? null,
+    branch: task.worktree_path ? `codex/${task.id}` : null,
+    base_sha: task.base_commit ?? null,
+    started_at: now
+  });
+  return id;
+}
+
+export async function completeRunRecord(task, attempt) {
+  await ensureFilesystem();
+  if (!task?.id || !Number.isInteger(attempt) || attempt < 1) return;
+  const now = task.completed_at ?? new Date().toISOString();
+  openDb().prepare(`
+    UPDATE runs SET codex_thread_id = @codex_thread_id,
+      run_status = @run_status, finished_at = @finished_at
+    WHERE task_id = @task_id AND attempt = @attempt
+  `).run({
+    task_id: task.id,
+    attempt,
+    codex_thread_id: task.thread_id ?? null,
+    run_status: task.status ?? "unknown",
+    finished_at: now
+  });
+}
+
+export async function appendTaskEvent(taskId, event, { runId = null, actor = "supervisor" } = {}) {
   await ensureFilesystem();
   const dbInstance = openDb();
   const nextSeqRow = dbInstance.prepare("SELECT COALESCE(MAX(seq), 0) + 1 AS seq FROM task_events WHERE task_id = ?").get(taskId);
+  const payload = JSON.stringify(event);
   dbInstance.prepare(`
-    INSERT INTO task_events (task_id, seq, created_at, event_type, payload)
-    VALUES (?, ?, ?, ?, ?)
-  `).run(taskId, nextSeqRow.seq, new Date().toISOString(), event.type ?? "unknown", JSON.stringify(event));
+    INSERT INTO task_events (task_id, run_id, seq, created_at, actor, event_type, payload, payload_sha256)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(taskId, runId, nextSeqRow.seq, new Date().toISOString(), actor, event.type ?? "unknown", payload,
+    createHash("sha256").update(payload).digest("hex"));
 }
 
 export async function readTaskEvents(taskId, limit = 100, kinds = null) {
@@ -778,6 +965,18 @@ export async function readTaskEvents(taskId, limit = 100, kinds = null) {
         WHERE task_id = ? ORDER BY seq DESC LIMIT ?
       `).all(taskId, limit);
   return rows.reverse().map((row) => JSON.parse(row.payload));
+}
+
+export async function readTaskEventRecords(taskId, limit = 100) {
+  await ensureFilesystem();
+  const rows = openDb().prepare(`
+    SELECT id, task_id, run_id, seq, created_at, actor, event_type, payload, payload_sha256
+    FROM task_events WHERE task_id = ? ORDER BY seq DESC LIMIT ?
+  `).all(taskId, limit);
+  return rows.reverse().map((row) => ({
+    ...row,
+    event: JSON.parse(row.payload)
+  }));
 }
 
 export async function listTaskEventKinds(taskId) {

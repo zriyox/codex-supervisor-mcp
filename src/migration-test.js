@@ -63,7 +63,7 @@ seed.prepare("INSERT INTO task_events (task_id, seq, created_at, event_type, pay
 seed.close();
 
 process.env.SUPERVISOR_HOME = home;
-const { readTasks, readTaskEvents, reconcileDetachedActiveTasks } = await import("./task-store.js");
+const { readTasks, readTaskEvents, readTaskEventRecords, reconcileDetachedActiveTasks } = await import("./task-store.js");
 
 let failures = 0;
 async function test(name, fn) {
@@ -118,6 +118,18 @@ await test("events survive the table rebuild", async () => {
   assert.equal(events.length, 1);
   assert.equal(events[0].type, "thread.started");
   assert.equal(events[0].thread_id, "abc");
+});
+
+await test("legacy rows gain control-plane identities without losing their event payload", async () => {
+  const control = new DatabaseSync(dbFile);
+  assert.equal(control.prepare("SELECT count(*) AS count FROM repos").get().count, 1);
+  assert.equal(control.prepare("SELECT count(*) AS count FROM work_items").get().count, LEGACY_ROWS.length);
+  control.close();
+  const [event] = await readTaskEventRecords("old-running", 10);
+  assert.equal(event.actor, "legacy");
+  assert.equal(event.run_id, null);
+  assert.equal(event.payload_sha256, null);
+  assert.equal(event.event.thread_id, "abc");
 });
 
 await test("migration is idempotent", async () => {

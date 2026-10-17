@@ -15,6 +15,8 @@ import {
   taskRunPath,
   upsertSession,
   upsertTask,
+  ensureRunRecord,
+  completeRunRecord,
   claimTaskRun,
   releaseTaskRun,
   reserveTaskOwnership
@@ -325,6 +327,7 @@ async function trackRunInHost({ record, args, prompt, logPath, spawnOptions = {}
     return writeChain;
   };
   await persist(live);
+  const runId = await ensureRunRecord(live, live.run_count);
 
   const logStream = createWriteStream(logPath, { flags: "a" });
   logStream.on("error", () => {});
@@ -353,7 +356,7 @@ async function trackRunInHost({ record, args, prompt, logPath, spawnOptions = {}
     logStream.write(`${JSON.stringify(event)}\n`);
     if (event.type === "item.completed" && event.item?.type === "agent_message") rawReport = event.item.text;
     if (["turn.completed", "turn.failed"].includes(event.type)) terminalEvent = true;
-    await appendTaskEvent(record.id, event);
+    await appendTaskEvent(record.id, event, { runId, actor: "codex" });
     await persist(applyCodexEvent(live, event));
   };
 
@@ -489,10 +492,10 @@ async function trackRunInHost({ record, args, prompt, logPath, spawnOptions = {}
       }); } finally { clearInterval(cancellationWatch); }
       acceptanceRuns.delete(record.id);
       const event = { type: "supervisor.acceptance", ...results };
-      await appendTaskEvent(record.id, event).catch(() => {});
+      await appendTaskEvent(record.id, event, { runId, actor: "supervisor" }).catch(() => {});
       await appendFile(logPath, `${JSON.stringify(event)}\n`).catch(() => {});
       const failing = results.checks.find((check) => check.passed === false || check.exit_code !== 0 || check.timed_out);
-      await persist({
+      const finalRecord = {
         ...next,
         acceptance_results: results,
         current_action: results.status === "passed"
@@ -501,9 +504,13 @@ async function trackRunInHost({ record, args, prompt, logPath, spawnOptions = {}
             ? `Acceptance failed: ${failing ? `${failing.command.slice(0, 80)} exit ${failing.error ?? (failing.baseline?.passed === false ? "baseline/evidence mismatch" : failing.timed_out ? "timeout" : failing.exit_code ?? "?")}` : results.error ?? "see acceptance_results"}`
             : next.current_action,
         updated_at: new Date().toISOString()
-      });
+      };
+      await persist(finalRecord);
+      await completeRunRecord(finalRecord, live.run_count);
     } else {
-      await persist(acceptance ? { ...next, acceptance_results: null } : next);
+      const finalRecord = acceptance ? { ...next, acceptance_results: null } : next;
+      await persist(finalRecord);
+      await completeRunRecord(finalRecord, live.run_count);
     }
     cancelledTasks.delete(record.id);
   });
