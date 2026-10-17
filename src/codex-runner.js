@@ -26,7 +26,7 @@ import { buildGuardPreamble, frameWorkerPrompt } from "./prompt.js";
 import { cacheRoots, resolveWritableRoot } from "./sandbox-roots.js";
 import { readTaskChanges, snapshotTaskOutput } from "./worktree.js";
 import { rebaseWorktree } from "./landing.js";
-import { DEFAULT_ACCEPTANCE_TIMEOUT_MS, normalizeAcceptance, runAcceptance } from "./acceptance.js";
+import { DEFAULT_ACCEPTANCE_TIMEOUT_MS, isArtifactOnlyAcceptance, normalizeAcceptance, runAcceptance } from "./acceptance.js";
 import { appendFile } from "node:fs/promises";
 import { defaultBinDirs, findBinaryPath, resolveCommand, shimMessage } from "./bin-resolver.js";
 import { findOutsideOwnedChanges } from "./owned-changes.js";
@@ -615,6 +615,9 @@ export async function createCodexWorker({
   }
   if (!Array.isArray(ownedPaths)) {
     throw new Error("ownedPaths is required; pass an empty list only for a worker that must never land a change (a read-only verifier, or a research worker that reads and reports)");
+  }
+  if (ownedPaths.length > 0 && acceptanceCommands?.length && acceptanceCommands.every(isArtifactOnlyAcceptance)) {
+    throw new Error("a write worker cannot use only file-existence acceptance; add a real test, endpoint probe or structured execution evidence");
   }
   const validatedGoal = validateGoal(goal);
   await buildHandoff({ context, contracts });

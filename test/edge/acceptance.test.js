@@ -2,7 +2,7 @@
 // worker exits, the verdict on every read, and the gate on landing.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { writeFile } from "node:fs/promises";
+import { chmod, mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { dispatchArgs, git, makeRepo, tempHome, waitFor, withMcp } from "./helpers.js";
@@ -27,6 +27,35 @@ test("acceptance identity overrides inherited values without mutating the parent
   assert.equal(env.CODEX_SUPERVISOR_RUN, "99");
   const anonymous = await runAcceptance([READ_IDENTITY], { cwd, env });
   assert.deepEqual(JSON.parse(anonymous.checks[0].output_tail), ["", "", ""]);
+});
+
+test("a test command that reports no runnable tests fails even with exit zero", async () => {
+  const cwd = await tempHome("supervisor-empty-test-");
+  const bin = join(cwd, "bin");
+  await mkdir(bin);
+  const npm = join(bin, "npm");
+  await writeFile(npm, "#!/bin/bash\necho 'No tests to run'\nexit 0\n");
+  await chmod(npm, 0o755);
+  const result = await runAcceptance(["npm test"], {
+    cwd,
+    env: { ...process.env, PATH: `${bin}:${process.env.PATH}` }
+  });
+  assert.equal(result.status, "failed");
+  assert.equal(result.checks[0].exit_code, 0);
+  assert.equal(result.checks[0].empty_test_run, true);
+});
+
+test("a write worker refuses file-existence checks as its only acceptance", async () => {
+  const home = await tempHome("supervisor-artifact-only-");
+  const { dir } = await makeRepo(join(home, "repo"));
+  await withMcp({ SUPERVISOR_HOME: home }, async ({ call }) => {
+    const refused = await call("create_codex_worker", dispatchArgs("artifact only", dir, {
+      sandbox: "workspace-write",
+      ownedPaths: ["result.txt"],
+      acceptance: "test -s result.txt"
+    }));
+    assert.match(refused.message ?? "", /file-existence acceptance/);
+  });
 });
 
 test("acceptance sees the current worker identity after rebase, resume and follow-up", async () => {

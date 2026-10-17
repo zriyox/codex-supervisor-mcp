@@ -176,7 +176,7 @@ land_codex_worker       核过了，落进集成分支
 
 必填的两个：`ownedPaths`（派单前和在跑的 worker 求交集，重叠就拒，只在派单时查）和 `goal.objective`（worker 会建成 Codex 原生 goal）。`session_id` 不传就归不了组，一批活传同一个值。
 
-`acceptance` 在 Bash 中启用 `errexit` 和 `pipefail`：未处理的失败会停止检查，`npm test | tail` 中的测试失败也会保留。预期失败用 `if` 或 `||` 显式处理；超时始终判失败，即使命令收到终止信号后退出 0。Windows 需要 Git for Windows 的 Bash；找不到会报错。显示的输出会裁剪，退出码不会因此改变。
+`acceptance` 在 Bash 中启用 `errexit` 和 `pipefail`：未处理的失败会停止检查，`npm test | tail` 中的测试失败也会保留。写 worker 不能只用 `test -s`、`test -f` 或 `[ -e ]` 这类文件存在性命令交付；要加真实 test、endpoint probe 或结构化执行证据。识别到的 test runner 输出 `no tests to run` / `[no test files]` 时，即使退出码是 0 也判失败。预期失败用 `if` 或 `||` 显式处理；超时始终判失败，即使命令收到终止信号后退出 0。Windows 需要 Git for Windows 的 Bash；找不到会报错。显示的输出会裁剪，退出码不会因此改变。
 
 验收命令的环境包含 `CODEX_SUPERVISOR_TASK_ID`、`CODEX_SUPERVISOR_BASE_COMMIT` 和 `CODEX_SUPERVISOR_RUN`；分别是当前任务、当前运行基线和运行次数，rebase/resume 后会更新。
 

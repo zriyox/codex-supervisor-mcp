@@ -23,6 +23,18 @@ export const DEFAULT_ACCEPTANCE_TIMEOUT_MS = 10 * 60 * 1000;
 export const MAX_ACCEPTANCE_COMMANDS = 10;
 const OUTPUT_TAIL_BYTES = 2000;
 const KILL_GRACE_MS = 3000;
+const ARTIFACT_ONLY = /^(?:test\s+-[efsd]\s+[^;&|]+|\[\[?\s+-[efsd]\s+[^\]]+\]\]?)$/;
+const TEST_COMMAND = /(?:^|\s)(?:go\s+test|node\s+--test|npm\s+(?:run\s+)?test|pnpm\s+(?:run\s+)?test|yarn\s+test|vitest|jest|pytest|python(?:3)?\s+-m\s+pytest|mvn\s+(?:test|verify)|gradle(?:w)?\s+(?:test|check))(?:\s|$)/i;
+const EMPTY_TEST_OUTPUT = /(?:no\s+tests?\s+to\s+run|no\s+test\s+files|\[no\s+test\s+files\]|0\s+tests?\s+(?:found|collected|run))/i;
+
+export function isArtifactOnlyAcceptance(check) {
+  const command = typeof check === "string" ? check : check?.command;
+  return typeof command === "string" && ARTIFACT_ONLY.test(command.trim());
+}
+
+export function isTestCommand(command) {
+  return typeof command === "string" && TEST_COMMAND.test(command);
+}
 
 // One string or a list; blanks dropped; an empty list is "not configured".
 export function normalizeAcceptance(value) {
@@ -242,7 +254,8 @@ export async function runAcceptance(commands, { cwd, env = process.env, timeoutM
       }
     });
     control.kill = null;
-    result.passed = result.exit_code === 0 && !result.timed_out && !result.cancelled;
+    result.empty_test_run = isTestCommand(command) && EMPTY_TEST_OUTPUT.test(result.output_tail ?? "");
+    result.passed = result.exit_code === 0 && !result.timed_out && !result.cancelled && !result.empty_test_run;
     if (typeof check !== "string" && result.passed) Object.assign(result, await readCheckEvidence(check, cwd, checkId, baseCommit));
     checks.push(result);
     if (result.cancelled) {

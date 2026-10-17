@@ -23,7 +23,7 @@ description: 把 Codex CLI 当并行 worker 派活、盯进度、收结果。用
 |---|---|
 | `task` | 这一路具体干什么。要能直接开工，别写"优化一下"。汇报格式 supervisor 已经附在 task 后面（结论 / 验证 / 没做的），别再要它列改动文件，diff 自己看 |
 | `cwd` | 项目根目录。worker 在自己的 worktree 里干活，不动你的工作区 |
-| `acceptance` | 这一步"做完了"的判据，shell 命令列表，worker 退出后 supervisor 在它的 worktree 里逐条跑，退出码 0 算过，worker 在 prompt 里看得到。任务书里的验证命令原样抄：查那个文件在不在、那个接口通不通、那个测试文件过不过。写能判这一步的，不写全仓回归；远端机器的检查包进 `ssh`。命令用 supervisor 自己的权限跑，等于你自己跑 |
+| `acceptance` | 这一步"做完了"的判据，worker 退出后 supervisor 在它的 worktree 里逐条跑。写 worker 不能只用 `test -s/-f`、`[ -e ]` 这类文件存在性检查；要有真实 test、endpoint probe 或结构化执行证据。识别到的 test runner 输出 `no tests to run` / `[no test files]` 即使 exit 0 也失败。必跑用例、skip、旧报告和失败身份用 `{command,reportPath,baseline}` 结构化验收证明；远端机器的检查包进 `ssh` |
 | `forbid` / `allowedCommands` | 原样声明红线与验证命令；守卫拒绝未声明Shell程序，编辑用apply_patch |
 | `writableRoots` | 只有需要凭据目录时才传（绝对路径、已存在、自动解析软链、只对 workspace-write 生效）：ssh/远程测试 → `["~/.ssh"]`；kubectl → `["~/.kube"]`；推私有镜像 → `["~/.docker"]`；aws cli → `["~/.aws"]`；签名提交 → `["~/.gnupg"]`。缓存目录不用写，已经自动加 |
 | `ownedPaths` | 必填。这路允许写的路径，和在跑的 worker 重叠会被拒（**读不排他**，多路读同一份共享文件合法）。冲突是好事，说明该改拆法。传 `[]` 表示这路不落地：只读验证或研究 |
@@ -34,7 +34,7 @@ description: 把 Codex CLI 当并行 worker 派活、盯进度、收结果。用
 | `preflight_id` | 写 worker 必填。先跑 `preflight_codex_worker`，它实际在目标 sandbox/guard 里执行 `probeCommands`；`get_worker_preflight.status` 必须是 `passed`。base、ownedPaths、命令、context、contracts、network、可写根有变化就重跑 |
 | `sandbox` | 默认 `workspace-write`，worker 提交不了（Codex 把 `.git` 设成只读）。要它自己提交就 `danger-full-access`，否则收活时让 supervisor 替它提交 |
 
-验收用 Bash 的 `errexit` + `pipefail`：`npm test | tail` 不能吞失败；预期失败用 `if` / `||` 显式判。超时即失败，别只看退出码 0。Windows 要有 Git for Windows Bash；缺失先修工具，别换回 cmd。
+验收用 Bash 的 `errexit` + `pipefail`：`npm test | tail` 不能吞失败；文件存在只可做附加门禁，不能单独证明业务完成。预期失败用 `if` / `||` 显式判。超时、`no tests to run`、`[no test files]` 都失败，别只看退出码 0。Windows 要有 Git for Windows Bash；缺失先修工具，别换回 cmd。
 
 验收取当前身份用 `CODEX_SUPERVISOR_TASK_ID` / `CODEX_SUPERVISOR_BASE_COMMIT` / `CODEX_SUPERVISOR_RUN`；不要在命令里写死旧 base，rebase/resume 后这些值会更新。
 
