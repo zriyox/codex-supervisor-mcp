@@ -1,12 +1,14 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { join, relative, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { execFileSync } from "node:child_process";
 import { artifactsDir, dataDir, dbPath, runsDir } from "./paths.js";
 import { extractAgentMessage } from "./event-parser.js";
 import { ACTIVE_STATUSES, PHASES, TERMINAL_STATUSES } from "./status.js";
 import { readNativeGoal } from "./goal-store.js";
 import { normalizeAcceptance } from "./acceptance.js";
 import { createHash, randomUUID } from "node:crypto";
+import { captureWorkspaceManifest } from "./workspace-kind.js";
 
 let db;
 
@@ -1105,27 +1107,89 @@ function pathsOverlap(left, right) {
   return a === b || a.startsWith(`${b}/`) || b.startsWith(`${a}/`);
 }
 
+function git(cwd, args) {
+  return execFileSync(process.env.GIT_BIN?.trim() || "git", ["-C", cwd, ...args], {
+    encoding: "utf8",
+    timeout: 15000,
+    stdio: ["ignore", "pipe", "ignore"]
+  }).trim();
+}
+
+function shaCoversBase(projectRoot, validForSha, baseSha) {
+  if (!validForSha || !baseSha) return true;
+  try {
+    git(projectRoot, ["merge-base", "--is-ancestor", validForSha, baseSha]);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function watchedPathsChanged(projectRoot, validForSha, baseSha, watchedPaths) {
+  if (!validForSha || !baseSha || watchedPaths.length === 0) return false;
+  try {
+    const relativePaths = watchedPaths.map((path) => relative(projectRoot, path)).filter((path) => path && !path.startsWith(".."));
+    if (relativePaths.length === 0) return true;
+    return Boolean(git(projectRoot, ["diff", "--name-only", validForSha, baseSha, "--", ...relativePaths]));
+  } catch {
+    return true;
+  }
+}
+
+async function currentWorkspaceManifest(task) {
+  const metadata = task.workspace_metadata;
+  if (!metadata?.source_root || !Array.isArray(metadata.manifest_paths) || metadata.manifest_paths.length === 0) return null;
+  try {
+    return await captureWorkspaceManifest(metadata.source_root, metadata.manifest_paths);
+  } catch {
+    return null;
+  }
+}
+
+function markFactExpired(id) {
+  openDb().prepare("UPDATE facts SET state = 'expired' WHERE id = ? AND state = 'verified'").run(id);
+}
+
 export async function listContextFacts({ taskId, baseSha, ownedPaths = [], dependencyTaskIds = [] }) {
   await ensureFilesystem();
   const workItem = await getWorkItemForTask(taskId);
   if (!workItem) return [];
+  const task = await getTask(taskId);
+  if (!task) return [];
   const dependencyItems = dependencyTaskIds.length === 0
     ? []
     : openDb().prepare(`SELECT id FROM work_items WHERE task_id IN (${dependencyTaskIds.map(() => "?").join(",")})`).all(...dependencyTaskIds).map((row) => row.id);
   const rows = openDb().prepare("SELECT * FROM facts WHERE state = 'verified' ORDER BY created_at ASC").all();
   const now = Date.now();
-  return rows.filter((row) => {
-    if (row.expires_at && Date.parse(row.expires_at) <= now) return false;
+  const workspaceManifest = await currentWorkspaceManifest(task);
+  const visible = [];
+  for (const row of rows) {
+    if (row.expires_at && Date.parse(row.expires_at) <= now) {
+      markFactExpired(row.id);
+      continue;
+    }
+    const watched = decodeJson(row.watched_paths, []);
+    if (!shaCoversBase(task.project_root, row.valid_for_sha, baseSha) || watchedPathsChanged(task.project_root, row.valid_for_sha, baseSha, watched)) {
+      markFactExpired(row.id);
+      continue;
+    }
+    if (row.valid_for_manifest_hash && (!workspaceManifest || workspaceManifest.sha256 !== row.valid_for_manifest_hash)) {
+      markFactExpired(row.id);
+      continue;
+    }
+    const included = (() => {
     if (row.scope_type === "work_item") return row.scope_id === workItem.id;
     if (row.scope_type === "dependency") return dependencyItems.includes(row.scope_id);
     if (row.scope_type !== "repo_verified" || row.scope_id !== workItem.repo_id) return false;
-    const watched = decodeJson(row.watched_paths, []);
     return watched.length > 0 && watched.some((path) => ownedPaths.some((owned) => pathsOverlap(path, owned)));
-  }).map((row) => ({
-    ...row,
-    value: decodeJson(row.value_json, null),
-    watched_paths: decodeJson(row.watched_paths, [])
-  }));
+    })();
+    if (included) visible.push({
+      ...row,
+      value: decodeJson(row.value_json, null),
+      watched_paths: watched
+    });
+  }
+  return visible;
 }
 
 export async function countVerifiedFacts() {

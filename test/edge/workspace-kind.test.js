@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { dispatchArgs, tempHome, waitFor, withMcp } from "./helpers.js";
 
 async function makeDirectory(home, name) {
@@ -93,4 +94,32 @@ test("in_place_write requires authorization and acceptance, then records before 
     const landed = await call("land_codex_worker", { task_id: worker.id });
     assert.equal(landed.error, "workspace_kind_not_landable");
   });
+});
+
+test("an in_place_write fact expires after its source manifest drifts before resume", async () => {
+  const home = await tempHome("supervisor-workspace-manifest-expiry-");
+  const source = await makeDirectory(home, "source");
+  let worker;
+  await withMcp({ SUPERVISOR_HOME: home, FAKE_CODEX_SCENARIO: "commit-in-worktree" }, async ({ call }) => {
+    worker = await call("create_codex_worker", dispatchArgs("manifest-expiry", source, {
+      sandbox: "workspace-write",
+      workspaceKind: "in_place_write",
+      inPlaceAuthorization: "User explicitly authorized this isolated non-Git fixture edit.",
+      ownedPaths: ["committed.txt", "uncommitted.txt"],
+      acceptance: ["node -e \"process.exit(0)\""]
+    }));
+    await waitFor(call, worker.id, (task) => task.exit_code === 0);
+  });
+  await writeFile(join(source, "committed.txt"), "manual change after verification\n");
+  await withMcp({ SUPERVISOR_HOME: home, FAKE_CODEX_SCENARIO: "echo-prompt" }, async ({ call }) => {
+    await call("resume_codex_worker", { task_id: worker.id, prompt: "recheck changed source" });
+    await waitFor(call, worker.id, (task) => task.run_count === 2 && task.exit_code === 0);
+  });
+  const db = new DatabaseSync(join(home, "data", "supervisor.sqlite"));
+  const facts = db.prepare("SELECT state, valid_for_manifest_hash FROM facts WHERE work_item_id = (SELECT id FROM work_items WHERE task_id = ?) AND key = 'accepted_outcome' ORDER BY created_at").all(worker.id);
+  assert.equal(facts.length, 2, JSON.stringify(facts));
+  assert.equal(facts[0].state, "expired");
+  assert.equal(facts[1].state, "verified");
+  assert.match(facts[1].valid_for_manifest_hash, /^[a-f0-9]{64}$/);
+  db.close();
 });

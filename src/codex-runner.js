@@ -55,6 +55,7 @@ async function recordOutcomeFacts({ task, runId, report, reportEventId = null, a
   if (!report?.valid) return;
   const workItem = await getWorkItemForTask(task.id);
   if (!workItem) return;
+  const validForManifestHash = task.run_evidence?.workspace?.after_manifest?.sha256 ?? null;
   const candidate = await recordFact({
     workItemId: workItem.id,
     scopeType: "run",
@@ -64,6 +65,7 @@ async function recordOutcomeFacts({ task, runId, report, reportEventId = null, a
     state: "candidate",
     sourceEventId: reportEventId,
     validForSha: task.base_commit ?? null,
+    validForManifestHash,
     watchedPaths: task.owned_paths ?? []
   });
   if (!acceptancePassed) return;
@@ -76,8 +78,10 @@ async function recordOutcomeFacts({ task, runId, report, reportEventId = null, a
     state: "verified",
     sourceEventId: acceptanceEventId,
     validForSha: task.base_commit ?? null,
+    validForManifestHash,
     watchedPaths: task.owned_paths ?? [],
-    supersedesId: candidate.id
+    supersedesId: candidate.id,
+    verifiedBy: "supervisor.acceptance"
   });
   await updateWorkItemDelivery(task.id, "verified");
 }

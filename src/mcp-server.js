@@ -1576,7 +1576,20 @@ server.registerTool(
           state: "verified",
           sourceEventId: event.id,
           validForSha: outcome.head,
-          watchedPaths: task.owned_paths ?? []
+          watchedPaths: task.owned_paths ?? [],
+          verifiedBy: "supervisor.git_land"
+        });
+        await recordFact({
+          workItemId: workItem.id,
+          scopeType: "dependency",
+          scopeId: workItem.id,
+          key: "landed_delivery_summary",
+          value: { task_id, landed_head: outcome.head, branch: outcome.onto ?? null, acceptance: task.acceptance_results?.passed === true ? "passed" : "not_configured_or_not_passed" },
+          state: "verified",
+          sourceEventId: event.id,
+          validForSha: outcome.head,
+          watchedPaths: task.owned_paths ?? [],
+          verifiedBy: "supervisor.git_land"
         });
       }
     }
@@ -1645,6 +1658,19 @@ server.registerTool(
           scopeId: workItem.id,
           key: "push_verified",
           value: { remote, branch: targetBranch, landed_head: task.landed_head, remote_head: remoteHead },
+          state: "verified",
+          sourceEventId: event.id,
+          sourceArtifactId: artifact.id,
+          validForSha: task.landed_head,
+          watchedPaths: task.owned_paths ?? [],
+          verifiedBy: "supervisor.remote_readback"
+        });
+        await recordFact({
+          workItemId: workItem.id,
+          scopeType: "dependency",
+          scopeId: workItem.id,
+          key: "push_delivery_summary",
+          value: { task_id, landed_head: task.landed_head, remote, branch: targetBranch, remote_head: remoteHead },
           state: "verified",
           sourceEventId: event.id,
           sourceArtifactId: artifact.id,

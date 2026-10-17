@@ -68,5 +68,9 @@ test("a dependent worker requires an integrated base from the same project", asy
       dependsOn: [upstream.id]
     }));
     assert.ok(downstream.id, JSON.stringify(downstream));
+    const facts = await call("search_worker_facts", { task_id: downstream.id, query: "landed_delivery_summary" });
+    assert.equal(facts.facts.length, 1);
+    assert.equal(facts.facts[0].scope, "dependency");
+    assert.equal(facts.facts[0].state, "verified");
   });
 });

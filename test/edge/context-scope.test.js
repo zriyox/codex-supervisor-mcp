@@ -1,7 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { dispatchArgs, makeRepo, tempHome, waitFor, withMcp } from "./helpers.js";
+import { dispatchArgs, git, makeRepo, tempHome, waitFor, withMcp } from "./helpers.js";
 
 test("worker context excludes session peers and includes only scoped verified facts", async () => {
   const home = await tempHome("supervisor-context-scope-");
@@ -52,4 +53,30 @@ test("worker context excludes session peers and includes only scoped verified fa
   assert.equal(snapshot.recipient, "worker");
   assert.equal(JSON.parse(snapshot.fact_versions).length, 2);
   assert.ok(snapshot.estimated_tokens <= 1500);
+});
+
+test("a verified watched-path fact expires when a resumed worker rebases across that path", async () => {
+  const home = await tempHome("supervisor-context-expiry-");
+  const { dir } = await makeRepo(join(home, "repo"));
+  let worker;
+  await withMcp({ SUPERVISOR_HOME: home, FAKE_CODEX_SCENARIO: "echo-prompt" }, async ({ call }) => {
+    worker = await call("create_codex_worker", dispatchArgs("watched", dir, {
+      ownedPaths: ["watched.txt"],
+      acceptance: "node -e \"process.exit(0)\""
+    }));
+    await waitFor(call, worker.id, (row) => row.exit_code === 0);
+  });
+  await writeFile(join(dir, "watched.txt"), "main changed this path\n");
+  git(dir, ["add", "watched.txt"]);
+  git(dir, ["commit", "-q", "-m", "change watched path"]);
+
+  await withMcp({ SUPERVISOR_HOME: home, FAKE_CODEX_SCENARIO: "echo-prompt" }, async ({ call }) => {
+    await call("resume_codex_worker", { task_id: worker.id, prompt: "recheck on new base", rebaseOnto: "main" });
+    await waitFor(call, worker.id, (row) => row.run_count === 2 && row.exit_code === 0);
+  });
+  const db = new (await import("node:sqlite")).DatabaseSync(join(home, "data", "supervisor.sqlite"));
+  const facts = db.prepare("SELECT state, key FROM facts WHERE work_item_id = (SELECT id FROM work_items WHERE task_id = ?) ORDER BY created_at").all(worker.id);
+  assert.ok(facts.some((fact) => fact.key === "accepted_outcome" && fact.state === "expired"), JSON.stringify(facts));
+  assert.ok(facts.some((fact) => fact.key === "accepted_outcome" && fact.state === "verified"), JSON.stringify(facts));
+  db.close();
 });
