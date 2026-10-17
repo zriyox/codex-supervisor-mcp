@@ -57,6 +57,7 @@ import { askWorker, endSideSession, latestSideTurn } from "./side-chat.js";
 import { landWorker } from "./landing.js";
 import { cleanupHint } from "./cleanup-hint.js";
 import { createCleanupPlan, removePlannedWorktree } from "./cleanup-plan.js";
+import { buildOverviewDelta } from "./overview-delta.js";
 
 // Report the real package version. This string had drifted to 0.4.0 while the
 // package shipped 0.5.x, so the handshake named a version nobody was running.
@@ -548,7 +549,30 @@ const acceptanceCheck = z.union([
 const acceptanceInput = z.union([z.string().min(1), z.array(acceptanceCheck).max(10)]);
 
 const observerId = process.env.CODEX_SUPERVISOR_OBSERVER_ID?.trim() || `mcp-${randomUUID()}`;
+const deltaObserverId = process.env.CODEX_SUPERVISOR_DELTA_OBSERVER_ID?.trim() || `${observerId}:delta`;
 let observerRead = Promise.resolve();
+let deltaRead = Promise.resolve();
+server.registerTool(
+  "overview_delta",
+  {
+    title: "Get orchestration delta",
+    description: "Return a small cursor-based orchestration view: active, needs_attention, ready_to_land, ready_to_clean and changed task summaries. It never returns full history, prompts, diffs, events or worker capsules.",
+    inputSchema: { cursor: z.record(z.string(), z.string()).optional() }
+  },
+  async ({ cursor }) => {
+    const read = deltaRead.then(async () => {
+      await reconcileDetachedActiveTasks();
+      const tasks = await readTasks();
+      const previous = cursor ?? await readObserverCursor(deltaObserverId);
+      const result = buildOverviewDelta(tasks, previous);
+      await writeObserverCursor(deltaObserverId, result.cursor);
+      const { cursor: nextCursor, ...reply } = result;
+      return textResult({ ...reply, next_cursor: nextCursor });
+    });
+    deltaRead = read.catch(() => {});
+    return read;
+  }
+);
 server.registerTool("check_workers", {
   title: "Check changed workers",
   description: "Check newly settled runs and actionable failures; automatically resume a dead lost/no_work first run once, except approval, authentication, permission and quota waits. Returns recovery receipts; unchanged state is quiet. Call from a host-scheduled loop; it cannot wake a closed host. Set a distinct CODEX_SUPERVISOR_OBSERVER_ID per main thread to retain its cursor across restarts.",

@@ -117,7 +117,8 @@ Codex需0.162+支持hooks/output-schema，能力不够派单start_failed先修CL
 
 | 想干什么 | 用哪个 |
 |---|---|
-| 全部 worker 的状态 | `get_orchestration_overview` |
+| 主线程日常增量 | `overview_delta`，保存 `next_cursor`；只看计数和变化 task 摘要 |
+| 全部 worker 的状态 | `get_orchestration_overview`，只在需要全量状态时用 |
 | 一路的完整结论 | `get_worker_result` |
 | 一路改了什么 | `get_worker_diff`；只要文件名用 `get_worker_result` 带 `includeFiles: true` |
 | 活着还是完了 | `get_worker_summary` |
