@@ -33,6 +33,7 @@ import { findOutsideOwnedChanges } from "./owned-changes.js";
 import { parseWorkerReport, workerReportSchemaPath } from "./worker-report.js";
 import { buildHandoff } from "./handoff.js";
 import { captureExternalOutputs, compareExternalOutputs } from "./external-output.js";
+import { buildRuntimeContract, createPreflightMetadata, readPreflightResult, runtimeContractHash } from "./worker-preflight.js";
 
 const processes = new Map();
 // taskId -> control object of an acceptance run in progress ({ kill, cancelled }).
@@ -592,6 +593,8 @@ export async function createCodexWorker({
   followupOf = null,
   useWorktree = true,
   baseRef = null,
+  preflightId = null,
+  preflight = null,
   acceptance = null,
   acceptanceTimeoutMs = null,
   forbid = [],
@@ -661,6 +664,33 @@ export async function createCodexWorker({
     : { path: null, baseCommit: null };
   const worktreePath = worktree.path;
   const effectiveCwd = worktreePath ?? projectRoot;
+  if (preflight && (!Array.isArray(preflight.probeCommands) || preflight.probeCommands.length === 0
+    || preflight.probeCommands.some((command) => typeof command !== "string" || !command.trim()))) {
+    throw new Error("preflight.probeCommands must be a nonempty list of shell commands");
+  }
+  const guardPolicy = {
+    forbid,
+    allowedCommands,
+    externalOutputs,
+    networkAccess,
+    writableRoots: [...new Set(resolvedWritableRoots)],
+    maxRunMs,
+    maxTotalMs
+  };
+  const runtimeContract = buildRuntimeContract({
+    projectRoot,
+    baseCommit: worktree.baseCommit,
+    sandbox,
+    ownedPaths: normalizedOwnedPaths,
+    allowedCommands,
+    networkAccess,
+    writableRoots: guardPolicy.writableRoots,
+    context,
+    contracts
+  });
+  const preflightMetadata = preflight
+    ? createPreflightMetadata(runtimeContract, preflight.probeCommands)
+    : null;
 
   const record = {
     id,
@@ -679,7 +709,11 @@ export async function createCodexWorker({
     session_id: sessionId ?? null,
     thread_id: null,
     owned_paths: normalizedOwnedPaths,
-    guard_policy: { forbid, allowedCommands, externalOutputs, networkAccess, writableRoots: [...new Set(resolvedWritableRoots)], maxRunMs, maxTotalMs },
+    guard_policy: {
+      ...guardPolicy,
+      ...(preflightMetadata ? { preflight: preflightMetadata } : {}),
+      ...(preflightId ? { preflight_source_id: preflightId } : {})
+    },
     input_context: { context, contracts },
     depends_on: Array.isArray(dependsOn) ? dependsOn : [],
     goal_objective: validatedGoal.objective,
@@ -703,7 +737,26 @@ export async function createCodexWorker({
     updated_at: new Date().toISOString(),
     run_log: taskRunPath(id)
   };
-  try { await reserveTaskOwnership(record); }
+  try {
+    if (preflightId) {
+      const preflightTask = await getTask(preflightId);
+      const preflightResult = readPreflightResult(preflightTask);
+      if (preflightResult.status !== "passed") {
+        const error = new Error(`preflight ${preflightId} is ${preflightResult.status}; wait for its probes to pass before dispatching this worker`);
+        error.code = "preflight_not_passed";
+        error.details = preflightResult;
+        throw error;
+      }
+      const contractHash = runtimeContractHash(runtimeContract);
+      if (preflightResult.contract_hash !== contractHash) {
+        const error = new Error(`preflight ${preflightId} does not match this worker's runtime contract; create a new preflight after changing baseRef, sandbox, ownedPaths, commands, context, contracts, network or writable roots`);
+        error.code = "preflight_mismatch";
+        error.details = { preflight_id: preflightId, expected_contract_hash: contractHash, actual_contract_hash: preflightResult.contract_hash };
+        throw error;
+      }
+    }
+    await reserveTaskOwnership(record);
+  }
   catch (error) {
     if (worktreePath) {
       // This checkout belongs to this not-yet-started dispatch and contains

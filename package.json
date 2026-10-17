@@ -55,6 +55,7 @@
     "src/paths.js",
     "src/prompt.js",
     "src/cleanup.js",
+    "src/worker-preflight.js",
     "src/monitor.jsx",
     "src/web-server.js",
     "src/web-app.js",

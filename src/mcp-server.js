@@ -35,6 +35,7 @@ import { collectWorkerChanges } from "./worker-changes.js";
 import { buildHostGoalSync } from "./prompt.js";
 import { baseBehind, readTaskChanges, readWorktreeDiff, worktreeRef } from "./worktree.js";
 import { summarizeVerification } from "./event-parser.js";
+import { readPreflightResult } from "./worker-preflight.js";
 import { acceptanceVerdict, runAcceptance } from "./acceptance.js";
 import { ACTIVE_STATUSES, TERMINAL_STATUSES, TASK_STATUSES, isGoalNeedingAttention } from "./status.js";
 import { approxTokenCount, truncateEventStrings, truncateMiddleChars, truncateReport } from "./truncate.js";
@@ -577,6 +578,70 @@ server.registerTool(
 );
 
 server.registerTool(
+  "preflight_codex_worker",
+  {
+    title: "Preflight Codex worker environment",
+    description:
+      "Launch a short-lived Codex probe worker in the same base commit, sandbox, guard, network and writable-root configuration intended for a later write worker. The probe must run every requested command in the actual worker environment. Read get_worker_preflight after it settles, then pass its task_id as create_codex_worker.preflight_id; a changed runtime contract is refused.",
+    inputSchema: {
+      title: z.string().optional(),
+      cwd: z.string().min(1),
+      sandbox: z.enum(["read-only", "workspace-write", "danger-full-access"]).default("workspace-write"),
+      model: z.string().optional(),
+      reasoningEffort: z.enum(["minimal", "low", "medium", "high"]).default("high"),
+      skipGitRepoCheck: z.boolean().default(true),
+      ownedPaths: z.array(z.string().min(1)),
+      forbid: z.array(z.string().min(1)).max(100).optional(),
+      allowedCommands: z.array(z.string().min(1)).max(100).optional(),
+      context: z.array(z.object({ path: z.string().min(1), sha256: z.string().regex(/^[a-f0-9]{64}$/).optional() })).max(20).optional(),
+      contracts: z.array(z.string().min(1).max(2000)).max(20).optional(),
+      networkAccess: z.boolean().default(false),
+      writableRoots: z.array(z.string().min(1)).max(20).optional(),
+      maxRunMs: z.number().int().min(1000).max(86400000).optional(),
+      maxTotalMs: z.number().int().min(1000).max(604800000).optional(),
+      baseRef: z.string().min(1).optional(),
+      probeCommands: z.array(z.string().min(1)).min(1).max(20)
+    }
+  },
+  async (input) => {
+    try {
+      const task = [
+        "Runtime environment preflight. Do not edit files, create files, install packages, dispatch workers or call MCP tools.",
+        "Run every command below exactly once, in the listed order, without wrapping it in another shell command.",
+        "If any command is denied, missing, times out or exits nonzero, stop and quote the raw error under Not done / risks.",
+        "Commands:",
+        ...input.probeCommands.map((command) => `- ${command}`)
+      ].join("\n");
+      const record = await createCodexWorker({
+        ...input,
+        title: input.title ? `Preflight: ${input.title}` : "Runtime environment preflight",
+        task,
+        goal: { objective: `Prove the requested Codex worker runtime environment before dispatching ${input.title ?? "the dependent worker"}` },
+        acceptance: null,
+        preflight: { probeCommands: input.probeCommands }
+      });
+      return textResult(withUpdate({ ...receipt(record), preflight: { status: "running", probe_commands: input.probeCommands } }));
+    } catch (error) {
+      return errorResult(error);
+    }
+  }
+);
+
+server.registerTool(
+  "get_worker_preflight",
+  {
+    title: "Get worker preflight result",
+    description: "Read whether a preflight probe ran every required command successfully in the tracked worker environment, plus the immutable runtime contract hash required by create_codex_worker.preflight_id.",
+    inputSchema: { task_id: z.string().min(1) }
+  },
+  async ({ task_id }) => {
+    const task = await getTask(task_id);
+    if (!task) return textResult({ error: "task_not_found", task_id });
+    return textResult(readPreflightResult(task));
+  }
+);
+
+server.registerTool(
   "create_codex_worker",
   {
     title: "Create Codex worker",
@@ -620,6 +685,9 @@ server.registerTool(
       // HEAD; pass a branch, tag or sha to build on work that is not on the
       // main line yet (for example another worker's codex/<id> branch).
       baseRef: z.string().min(1).optional(),
+      // A successful preflight_codex_worker task id. When present, this worker
+      // is refused unless base commit and the complete runtime contract match.
+      preflight_id: z.string().min(1).optional(),
       // Shell commands that decide whether the work is done. The supervisor
       // runs them in the worktree after codex exits; each must exit 0.
       acceptance: acceptanceInput.optional(),
@@ -630,6 +698,7 @@ server.registerTool(
     try {
       const record = await createCodexWorker({
         ...input,
+        preflightId: input.preflight_id ?? null,
         sessionId: input.session_id ?? null,
         sessionTitle: input.session_title ?? null,
         sessionNote: input.session_note ?? null

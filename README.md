@@ -117,6 +117,8 @@ npx -p codex-supervisor-mcp codex-supervisor-web
 
 ```
 search_works            查这批活派过没有
+preflight_codex_worker  同环境跑 probe，确认 sandbox / guard / base / cache 真可用
+get_worker_preflight    核 probe 的实际 command evidence；passed 才能派目标 worker
 create_codex_worker     一步一个 worker，同一个 session_id，ownedPaths 不重叠
 wait_codex_workers      60 秒一轮，compact: true，没完接着调
 get_worker_result       它说自己做了什么，verification 里是它真跑过的命令
@@ -144,13 +146,15 @@ land_codex_worker       核过了，落进集成分支
 
 ## 工具
 
-21 个。
+23 个。
 
 | 工具 | 入参 | 作用 |
 |---|---|---|
 | `check_workers` | 无参 | 交付新终态、验收失败和需处理goal；新格式第1轮lost/no_work自动恢复一次，未变返回quiet；用宿主定时唤醒调用，每个主线程设独立CODEX_SUPERVISOR_OBSERVER_ID可在重启后接回 |
 | `check_acceptance` | `cwd`, `acceptance`, `baseRef`, `timeoutMs` | 派单前实际运行给定验收命令，不建 worker，不证明 worker 完成；数量 grep 会提示不能证明失败名单和必跑执行 |
-| `create_codex_worker` | `task`, `cwd`, **`ownedPaths`**, **`goal`**, `forbid`, `allowedCommands`, `context`, `contracts`, `externalOutputs`, `networkAccess`, `writableRoots`, `maxRunMs`, `maxTotalMs`, `acceptance`, `session_id`, `session_title`, `session_note`, `dependsOn`, `baseRef`, `sandbox`, `model`, `reasoningEffort`, `title`, `skipGitRepoCheck` | 起一个 worker。`acceptance` 是验收命令，worker 退出后 supervisor 在它的 worktree 里跑，退出码 0 算过。`baseRef` 指定 worktree 从哪个提交切，默认 `HEAD`，接另一路填它的 `codex/<id>` |
+| `preflight_codex_worker` | `cwd`, `ownedPaths`, `probeCommands`, `baseRef`, `sandbox`, `allowedCommands`, `context`, `contracts`, `networkAccess`, `writableRoots` | 用与目标 worker 相同的 base/sandbox/guard 起短 probe worker；它必须实际跑完每条 probe command。等终态后读 `get_worker_preflight` |
+| `get_worker_preflight` | `task_id` | 返回 probe 的实际 command evidence、运行环境 contract hash 和 `running/passed/failed`；只有 `passed` 才能复用 |
+| `create_codex_worker` | `task`, `cwd`, **`ownedPaths`**, **`goal`**, `preflight_id`, `forbid`, `allowedCommands`, `context`, `contracts`, `externalOutputs`, `networkAccess`, `writableRoots`, `maxRunMs`, `maxTotalMs`, `acceptance`, `session_id`, `session_title`, `session_note`, `dependsOn`, `baseRef`, `sandbox`, `model`, `reasoningEffort`, `title`, `skipGitRepoCheck` | 起一个 worker。`preflight_id` 给了就必须是通过的同环境 probe，base/guard/context 任何变化都会拒绝派工。`acceptance` 是验收命令，worker 退出后 supervisor 在它的 worktree 里跑 |
 | `create_codex_followup_worker` | `task_id`, `followup_prompt`, `session_id`, 其余同上 | 开一个新会话，把老 worker 的 prompt、状态、近期事件拼进去 |
 | `resume_codex_worker` | `task_id`, `prompt`, `rebaseOnto`, `acceptance`, `context` | 接同一个 Codex 会话继续跑，`thread_id` 不变。`rebaseOnto` 先把 worktree 挪到主线新头（stash、跳过已合入补丁、重放新增提交、放回），冲突原样退回不起 worker |
 | `wait_codex_workers` | `task_ids`, `mode`(any/all), `timeoutMinutes`, `timeoutMs`, `compact`, `includeEvents`, `eventLimit`, `eventMaxChars`, `eventKinds` | 等终态。默认 60 秒，到点带快照返回，worker 照跑；`compact` 每路只回一行，带 `idle_seconds` / `command_running`，分得清长命令和卡住 |

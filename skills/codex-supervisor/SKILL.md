@@ -14,9 +14,10 @@ description: 把 Codex CLI 当并行 worker 派活、盯进度、收结果。用
 ## 派单
 
 1. 先 `search_works` 搜一下，别重复派。
-2. 拆活。每路写清楚：干什么、能写哪些文件、怎么算做完。改同一批文件就串行，文件完全不重叠才并行。
-3. `create_codex_worker` 派出去。回执只有 `id`、`worktree_path`、`branch`、`owned_paths`、`status`，不回传任务原文。
-4. 长任务配宿主 `/loop 5m check_workers` 定时收活，没变化 quiet，有新结果按 next_step 收。工具会按规则恢复一次，但不会唤醒关闭的主窗口；每个主线程设独立 `CODEX_SUPERVISOR_OBSERVER_ID` 可重启接回。短等用 `wait_codex_workers` 的 `timeoutMs: 60000`、`compact: true`，到点继续同批 task_ids。
+2. 拆功能包。每路写清楚：干什么、能写哪些文件、依赖谁、怎么算做完和谁负责集成。改同一批文件就串行；文件不重叠只是并行前提，不等于依赖已满足。
+3. 写 worker 先 `preflight_codex_worker`：用目标同一份 `baseRef` / `ownedPaths` / `sandbox` / `allowedCommands` / `context` / `networkAccess` / `writableRoots` 跑必要命令。等它终态后 `get_worker_preflight` 必须 `passed`，再把它的 `task_id` 填进 `create_codex_worker.preflight_id`。contract 变了重跑，不能拿宿主 `check_acceptance` 冒充 worker 环境成功。
+4. `create_codex_worker` 派出去。回执只有 `id`、`worktree_path`、`branch`、`owned_paths`、`status`，不回传任务原文。
+5. 长任务配宿主 `/loop 5m check_workers` 定时收活，没变化 quiet，有新结果按 next_step 收。工具会按规则恢复一次，但不会唤醒关闭的主窗口；每个主线程设独立 `CODEX_SUPERVISOR_OBSERVER_ID` 可重启接回。短等用 `wait_codex_workers` 的 `timeoutMs: 60000`、`compact: true`，到点继续同批 task_ids。
 
 | 参数 | 怎么填 |
 |---|---|
@@ -30,13 +31,14 @@ description: 把 Codex CLI 当并行 worker 派活、盯进度、收结果。用
 | `session_id` | 同一批传同一个值。第一路顺手带 `session_title`（30 字内，看板和 `get_session_works` 显示它），漏了用 `describe_session` 补 |
 | `dependsOn` | 有先后依赖填上游的 `task_id` |
 | `baseRef` | worktree 从哪个提交切，默认 `HEAD`。第 N+1 步要建立在第 N 步上，填 `codex/<第 N 步 task_id>` |
+| `preflight_id` | 写 worker 必填。先跑 `preflight_codex_worker`，它实际在目标 sandbox/guard 里执行 `probeCommands`；`get_worker_preflight.status` 必须是 `passed`。base、ownedPaths、命令、context、contracts、network、可写根有变化就重跑 |
 | `sandbox` | 默认 `workspace-write`，worker 提交不了（Codex 把 `.git` 设成只读）。要它自己提交就 `danger-full-access`，否则收活时让 supervisor 替它提交 |
 
 验收用 Bash 的 `errexit` + `pipefail`：`npm test | tail` 不能吞失败；预期失败用 `if` / `||` 显式判。超时即失败，别只看退出码 0。Windows 要有 Git for Windows Bash；缺失先修工具，别换回 cmd。
 
 验收取当前身份用 `CODEX_SUPERVISOR_TASK_ID` / `CODEX_SUPERVISOR_BASE_COMMIT` / `CODEX_SUPERVISOR_RUN`；不要在命令里写死旧 base，rebase/resume 后这些值会更新。
 
-派单前可用 `check_acceptance` 实跑验收命令；预检通过不代表 worker 已完成。已知失败必须按结构化 baseline 的用例名/类型/签名比，必跑项写 required；报告必须标本次 `CODEX_SUPERVISOR_CHECK_ID`，给 complete/identity/failures/executed/skipped，缺失、跳过和旧报告都不算过。reportPath 用工作区内忽略的临时目录，验收报告别混进业务提交。
+`check_acceptance` 只是在宿主权限跑验收命令，预检通过不代表 worker sandbox/guard/PATH/cache/network 可用；写 worker 的实际环境预检必须走上面的 `preflight_codex_worker`。已知失败必须按结构化 baseline 的用例名/类型/签名比，必跑项写 required；报告必须标本次 `CODEX_SUPERVISOR_CHECK_ID`，给 complete/identity/failures/executed/skipped，缺失、跳过和旧报告都不算过。reportPath 用工作区内忽略的临时目录，验收报告别混进业务提交。
 
 同批公共门禁用 `describe_session.default_acceptance`，自动追加本路验收；更新目标/门禁传 `expected_revision`，避免旧窗口覆盖。需要用户拍板时设 `approval_state: waiting_user`，不得自动resume；获批改approved并同步宿主goal。回执host_goal_sync给当前策略的/goal命令；宿主已有原生goal时，用/goal替换条件，支持ProposeGoal时提议同一condition并走宿主批准。这个条件要求读取最新session revision，批准旧失败或waiting_user后不再追旧目标；工具不偷偷改/禁用Stop hook。
 
