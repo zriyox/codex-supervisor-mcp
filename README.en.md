@@ -144,7 +144,7 @@ Light and dark follow the system. No external resources.
 
 ## Tools
 
-Thirty.
+Thirty-three.
 
 | Tool | Arguments | What it does |
 |---|---|---|
@@ -171,6 +171,9 @@ Thirty.
 | `get_codex_worker_events` | `task_id`, `limit`, `maxChars`, `kinds` | The raw event stream |
 | `get_context_snapshot_meta` | `task_id` | Worker-only context snapshot metadata: fact IDs, token count and excluded categories, never capsule text |
 | `get_fact` | `fact_id` | Read one fact by ID for audit without injecting it into main-thread context |
+| `search_worker_facts` | `task_id`, `query`, `limit`, `cursor` | Search only verified facts scoped to the current work, explicit dependencies and path-matched repository facts; returns coverage and next_cursor, never raw history |
+| `get_worker_evidence` | `task_id`, `limit` | Bounded event metadata and retained artifact IDs for one worker; select an artifact or event explicitly for detail |
+| `get_artifact` | `artifact_id`, `maxChars` | Read one supervisor-managed evidence artifact without expanding a worker capsule into main context |
 | `get_worker_goal` | `task_id` | The goal recorded at dispatch plus the native Codex goal (tokens, time) |
 | `list_codex_workers` | `status`, `includeHistory`, `includeDetails` | List workers, active ones by default |
 | `get_session_works` | `session_id` | Every worker of one session. The way back after a main-thread restart |

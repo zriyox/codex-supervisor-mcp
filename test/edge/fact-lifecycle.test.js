@@ -17,6 +17,14 @@ test("worker reports become candidates and acceptance alone promotes verified fa
     failed = await call("create_codex_worker", dispatchArgs("rejected", dir, { acceptance: FAIL, ownedPaths: ["rejected.txt"] }));
     await waitFor(call, passed.id, (task) => task.status === "completed" && task.exit_code !== null);
     await waitFor(call, failed.id, (task) => task.status === "completed" && task.exit_code !== null);
+    const searched = await call("search_worker_facts", { task_id: passed.id, query: "done" });
+    assert.equal(searched.facts.length, 1);
+    assert.equal(searched.facts[0].state, "verified");
+    assert.equal(searched.facts[0].key, "accepted_outcome");
+    assert.equal(searched.facts[0].scope, "work_item");
+    assert.ok(searched.facts[0].source_refs.some((ref) => ref.startsWith("event:")));
+    assert.equal(searched.next_cursor, null);
+    assert.ok(searched.coverage.omitted.some((entry) => entry.reason === "candidate_and_nonverified_facts_excluded"));
   });
 
   const db = new DatabaseSync(join(home, "data", "supervisor.sqlite"));

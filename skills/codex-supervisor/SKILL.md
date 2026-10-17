@@ -130,10 +130,12 @@ Codex需0.162+支持hooks/output-schema，能力不够派单start_failed先修CL
 | 验收过没过 | 每个读都带 `acceptance`；命令和每条的输出在 `get_worker_result.acceptance.checks` |
 | worker 吃了哪些上下文 | `get_context_snapshot_meta`，只看 fact IDs/token/排除项，不会回 capsule 正文 |
 | 一条共享事实的来源 | `get_fact`，按 ID 精确读；不要把一批 facts 全拉进主线程 |
+| 找当前任务的已验证事实 | `search_worker_facts`，传 task_id/query/cursor；只回 scope 内 verified summary + coverage，绝不拉 raw history |
+| 找某路的证据索引 | `get_worker_evidence`，再按需 `get_artifact` 或 `get_codex_worker_events` |
 
 默认读回来的长文本都是裁过的（`current_action` 300 字、`prompt` 300 字、`last_message` 400 字），别把裁剪当成活没干。全量在库里。别一次 `limit: 200` 拉全量事件。
 
-worker 的 capsule 只在内部 create/resume 时生成：自身 L0 身份、当前 work 的 verified facts、显式 `dependsOn` 的摘要、路径命中且 SHA 有效的 repo facts。`session_id` peers、raw event、完整 diff/报告、candidate facts 一律不自动注入。主线程只能看 snapshot 元数据；要查证据按 ID 读，不能把自己变成 worker。
+worker 的 capsule 只在内部 create/resume 时生成：自身 L0 身份、当前 work 的 verified facts、显式 `dependsOn` 的摘要、路径命中且 SHA 有效的 repo facts。`session_id` peers、raw event、完整 diff/报告、candidate facts 一律不自动注入。主线程只能看 snapshot 元数据；要查事实用 `search_worker_facts` / `get_fact`，查证据用 `get_worker_evidence` / `get_artifact`，不能把自己变成 worker。
 
 worker 最终 JSON 只是 `candidate`：先留在本 run 做审计，绝不因为它自己说“完成”就变共享事实。supervisor acceptance 通过才会派生当前 work 的 `verified` outcome；验收失败/未配置、脏 diff、未 land/push 都不是 verified 交付证据。
 

@@ -146,7 +146,7 @@ land_codex_worker       核过了，落进集成分支
 
 ## 工具
 
-30 个。
+33 个。
 
 | 工具 | 入参 | 作用 |
 |---|---|---|
@@ -173,6 +173,9 @@ land_codex_worker       核过了，落进集成分支
 | `get_codex_worker_events` | `task_id`, `limit`, `maxChars`, `kinds` | 原始事件流 |
 | `get_context_snapshot_meta` | `task_id` | 只读 worker context 的 snapshot ID、fact IDs、token 估算和排除项；不返回 capsule 正文或历史记录 |
 | `get_fact` | `fact_id` | 按 ID 审计一条 candidate/verified fact；不会自动扩展进主线程上下文 |
+| `search_worker_facts` | `task_id`, `query`, `limit`, `cursor` | 只检索当前 work、显式依赖和路径命中 repo scope 的 verified facts；返回 coverage / next_cursor，不返回 raw history |
+| `get_worker_evidence` | `task_id`, `limit` | 返回某 worker 的有界 event 元数据和 retained artifact 索引；按需再点查 artifact / event |
+| `get_artifact` | `artifact_id`, `maxChars` | 读取一个 supervisor-managed evidence artifact；不影响 worker capsule 或主线程自动上下文 |
 | `get_worker_goal` | `task_id` | 派单时记的 goal + Codex 原生 goal（token、用时） |
 | `list_codex_workers` | `status`, `includeHistory`, `includeDetails` | 列 worker，默认只看在跑的 |
 | `get_session_works` | `session_id` | 一个 session 的全部 worker。主线程重启后靠它找回那批活 |
@@ -189,7 +192,7 @@ land_codex_worker       核过了，落进集成分支
 
 `session_id` 只负责批次、默认门禁和审批，不再把同批 worker 的标题、汇报或 session objective 自动塞进新 worker。worker 只收到内部编译的 context capsule：自身身份/任务、显式依赖和路径/SHA 命中的 verified facts；raw event、完整 diff、历史报告、candidate facts 都只可按需读取。主线程只看 `get_context_snapshot_meta`，需要证据时再显式 `get_fact` / `get_worker_result` / `get_worker_diff`。
 
-worker 的最终 JSON 报告会先记录为该 run 的 `candidate` fact，不能跨 work 自动注入；supervisor acceptance 通过后才生成当前 work 的 `verified` outcome，并带 report/acceptance event 来源、base SHA 与 watched paths。验收失败、未配置验收或 worker 自报完成都不会升级成共享真相。
+worker 的最终 JSON 报告会先记录为该 run 的 `candidate` fact，不能跨 work 自动注入；supervisor acceptance 通过后才生成当前 work 的 `verified` outcome，并带 report/acceptance event 来源、base SHA 与 watched paths。push proof 另存为 retained artifact，verified fact 可回指该 artifact。验收失败、未配置验收或 worker 自报完成都不会升级成共享真相。
 
 交付状态分开：acceptance 通过只是 `verified`，`land_codex_worker` 只是 `landed`，仍不代表远端有这笔提交。需要显式 `verify_delivery_push` fetch 并校验 `landed_head` 已在目标 remote branch 上，才是 `push_verified`；它会自动生成 cleanup plan，SAFE 项进入 `cleanup_eligible`，但永远不会自己删除。该工具绝不代替用户执行 push 或部署。
 

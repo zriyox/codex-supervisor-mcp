@@ -1,7 +1,7 @@
-import { mkdir } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { dataDir, dbPath, runsDir } from "./paths.js";
+import { artifactsDir, dataDir, dbPath, runsDir } from "./paths.js";
 import { extractAgentMessage } from "./event-parser.js";
 import { ACTIVE_STATUSES, PHASES, TERMINAL_STATUSES } from "./status.js";
 import { readNativeGoal } from "./goal-store.js";
@@ -251,12 +251,16 @@ const CONTROL_DDL = `
       value_json TEXT NOT NULL,
       state TEXT NOT NULL,
       source_event_id INTEGER,
+      source_artifact_id TEXT,
       valid_for_sha TEXT,
+      valid_for_content_hash TEXT,
+      valid_for_manifest_hash TEXT,
       watched_paths TEXT NOT NULL DEFAULT '[]',
       expires_at TEXT,
       supersedes_id TEXT,
       created_at TEXT NOT NULL,
-      verified_at TEXT
+      verified_at TEXT,
+      verified_by TEXT
     );
     CREATE INDEX IF NOT EXISTS idx_facts_scope ON facts(scope_type, scope_id, state);
     CREATE TABLE IF NOT EXISTS artifacts (
@@ -391,8 +395,14 @@ function initializeSchema(dbInstance) {
         if (!tableColumns(dbInstance, "tasks").some((column) => column.name === name)) dbInstance.exec(`ALTER TABLE tasks ADD COLUMN ${name} ${definition}`);
       }
       dbInstance.exec(CONTROL_DDL);
-      if (!tableColumns(dbInstance, "facts").some((column) => column.name === "watched_paths")) {
-        dbInstance.exec("ALTER TABLE facts ADD COLUMN watched_paths TEXT NOT NULL DEFAULT '[]'");
+      for (const [name, definition] of [
+        ["watched_paths", "TEXT NOT NULL DEFAULT '[]'"],
+        ["source_artifact_id", "TEXT"],
+        ["valid_for_content_hash", "TEXT"],
+        ["valid_for_manifest_hash", "TEXT"],
+        ["verified_by", "TEXT"]
+      ]) {
+        if (!tableColumns(dbInstance, "facts").some((column) => column.name === name)) dbInstance.exec(`ALTER TABLE facts ADD COLUMN ${name} ${definition}`);
       }
       dbInstance.exec(SESSIONS_DDL);
       for (const [name, definition] of [
@@ -491,6 +501,7 @@ function openDb() {
 async function ensureFilesystem() {
   await mkdir(dataDir, { recursive: true });
   await mkdir(runsDir, { recursive: true });
+  await mkdir(artifactsDir, { recursive: true });
 }
 
 function encodeJson(value) {
@@ -1045,11 +1056,15 @@ export async function recordFact({
   value,
   state = "candidate",
   sourceEventId = null,
+  sourceArtifactId = null,
   validForSha = null,
+  validForContentHash = null,
+  validForManifestHash = null,
   watchedPaths = [],
   expiresAt = null,
   supersedesId = null,
-  verifiedAt = null
+  verifiedAt = null,
+  verifiedBy = null
 }) {
   await ensureFilesystem();
   if (!workItemId || !scopeType || !scopeId || !key) throw new Error("fact requires workItemId, scopeType, scopeId and key");
@@ -1058,8 +1073,8 @@ export async function recordFact({
   const now = new Date().toISOString();
   const id = randomUUID();
   openDb().prepare(`
-    INSERT INTO facts (id, work_item_id, scope_type, scope_id, key, value_json, state, source_event_id, valid_for_sha, watched_paths, expires_at, supersedes_id, created_at, verified_at)
-    VALUES (@id, @work_item_id, @scope_type, @scope_id, @key, @value_json, @state, @source_event_id, @valid_for_sha, @watched_paths, @expires_at, @supersedes_id, @created_at, @verified_at)
+    INSERT INTO facts (id, work_item_id, scope_type, scope_id, key, value_json, state, source_event_id, source_artifact_id, valid_for_sha, valid_for_content_hash, valid_for_manifest_hash, watched_paths, expires_at, supersedes_id, created_at, verified_at, verified_by)
+    VALUES (@id, @work_item_id, @scope_type, @scope_id, @key, @value_json, @state, @source_event_id, @source_artifact_id, @valid_for_sha, @valid_for_content_hash, @valid_for_manifest_hash, @watched_paths, @expires_at, @supersedes_id, @created_at, @verified_at, @verified_by)
   `).run({
     id,
     work_item_id: workItemId,
@@ -1069,14 +1084,18 @@ export async function recordFact({
     value_json: JSON.stringify(value),
     state,
     source_event_id: sourceEventId,
+    source_artifact_id: sourceArtifactId,
     valid_for_sha: validForSha,
+    valid_for_content_hash: validForContentHash,
+    valid_for_manifest_hash: validForManifestHash,
     watched_paths: JSON.stringify(watchedPaths.map((path) => resolve(path))),
     expires_at: expiresAt,
     supersedes_id: supersedesId,
     created_at: now,
-    verified_at: verifiedAt ?? (state === "verified" ? now : null)
+    verified_at: verifiedAt ?? (state === "verified" ? now : null),
+    verified_by: verifiedBy ?? (state === "verified" ? "supervisor" : null)
   });
-  return { id, work_item_id: workItemId, scope_type: scopeType, scope_id: scopeId, key, value, state, valid_for_sha: validForSha, watched_paths: watchedPaths, created_at: now };
+  return { id, work_item_id: workItemId, scope_type: scopeType, scope_id: scopeId, key, value, state, source_event_id: sourceEventId, source_artifact_id: sourceArtifactId, valid_for_sha: validForSha, valid_for_content_hash: validForContentHash, valid_for_manifest_hash: validForManifestHash, watched_paths: watchedPaths, verified_by: verifiedBy ?? (state === "verified" ? "supervisor" : null), created_at: now };
 }
 
 function pathsOverlap(left, right) {
@@ -1109,6 +1128,11 @@ export async function listContextFacts({ taskId, baseSha, ownedPaths = [], depen
   }));
 }
 
+export async function countVerifiedFacts() {
+  await ensureFilesystem();
+  return openDb().prepare("SELECT COUNT(*) AS count FROM facts WHERE state = 'verified'").get().count;
+}
+
 export async function createContextSnapshot({ runId, recipient = "worker", factIds = [], baseSha = null, prompt, estimatedTokens, excluded = {} }) {
   await ensureFilesystem();
   if (!runId || typeof prompt !== "string") throw new Error("context snapshot requires runId and prompt");
@@ -1139,6 +1163,49 @@ export async function getFact(factId) {
     value: decodeJson(row.value_json, null),
     watched_paths: decodeJson(row.watched_paths, [])
   };
+}
+
+export async function recordJsonArtifact({ runId, type, value, securityClass = "internal", retention = "permanent" }) {
+  await ensureFilesystem();
+  if (!runId || !type) throw new Error("artifact requires runId and type");
+  const id = randomUUID();
+  const content = JSON.stringify(value, null, 2);
+  const sha256 = createHash("sha256").update(content).digest("hex");
+  const path = join(artifactsDir, `${id}.json`);
+  await writeFile(path, content, { encoding: "utf8", mode: 0o600 });
+  const now = new Date().toISOString();
+  openDb().prepare(`
+    INSERT INTO artifacts (id, run_id, type, uri, sha256, security_class, retention, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(id, runId, type, path, sha256, securityClass, retention, now);
+  return { id, run_id: runId, type, uri: path, sha256, security_class: securityClass, retention, created_at: now };
+}
+
+export async function getArtifact(artifactId) {
+  await ensureFilesystem();
+  return openDb().prepare("SELECT * FROM artifacts WHERE id = ?").get(artifactId) ?? null;
+}
+
+export async function readArtifact(artifactId, maxChars = 12000) {
+  const artifact = await getArtifact(artifactId);
+  if (!artifact) return null;
+  if (!artifact.uri.startsWith(`${artifactsDir}/`)) return { ...artifact, content: null, reason: "artifact_uri_not_managed" };
+  let content;
+  try {
+    content = await readFile(artifact.uri, "utf8");
+  } catch (error) {
+    return { ...artifact, content: null, reason: `artifact_unreadable: ${error.code ?? error.message}` };
+  }
+  const truncated = content.length > maxChars;
+  return { ...artifact, content: truncated ? `${content.slice(0, maxChars)}…` : content, truncated };
+}
+
+export async function listArtifactsForTask(taskId, limit = 50) {
+  await ensureFilesystem();
+  return openDb().prepare(`
+    SELECT a.* FROM artifacts a JOIN runs r ON r.id = a.run_id
+    WHERE r.task_id = ? ORDER BY a.created_at DESC LIMIT ?
+  `).all(taskId, limit);
 }
 
 export async function updateWorkItemDelivery(taskId, deliveryState) {

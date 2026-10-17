@@ -19,5 +19,6 @@ export const goalsDbPath = join(codexHome, "goals_1.sqlite");
 export const dataDir = join(supervisorRoot, "data");
 export const dbPath = join(dataDir, "supervisor.sqlite");
 export const runsDir = join(dataDir, "runs");
+export const artifactsDir = join(dataDir, "artifacts");
 export const worktreesDir = join(supervisorRoot, "worktrees");
 export const scratchDir = join(supervisorRoot, "scratch");
