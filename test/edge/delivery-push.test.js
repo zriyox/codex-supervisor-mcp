@@ -38,6 +38,14 @@ test("land and remote push verification are distinct delivery states", async () 
     const content = JSON.parse(artifact.artifact.content);
     assert.equal(content.landed_head, verified.landed_head);
     assert.equal(content.remote_head, verified.remote_head);
+    const db = new DatabaseSync(join(home, "data", "supervisor.sqlite"));
+    const outsideId = "00000000-0000-4000-8000-000000000001";
+    db.prepare("INSERT INTO artifacts (id, run_id, type, uri, created_at) VALUES (?, ?, ?, ?, ?)")
+      .run(outsideId, proof.run_id, "outside", join(dir, "first.txt"), new Date().toISOString());
+    db.close();
+    const outside = await call("get_artifact", { artifact_id: outsideId });
+    assert.equal(outside.artifact.content, null);
+    assert.equal(outside.artifact.reason, "artifact_uri_not_managed");
   });
 
   const db = new DatabaseSync(join(home, "data", "supervisor.sqlite"));

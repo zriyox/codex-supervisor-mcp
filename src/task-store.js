@@ -1,5 +1,5 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { join, relative, resolve } from "node:path";
+import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { execFileSync } from "node:child_process";
 import { artifactsDir, dataDir, dbPath, runsDir } from "./paths.js";
@@ -1325,7 +1325,10 @@ export async function getArtifact(artifactId) {
 export async function readArtifact(artifactId, maxChars = 12000) {
   const artifact = await getArtifact(artifactId);
   if (!artifact) return null;
-  if (!artifact.uri.startsWith(`${artifactsDir}/`)) return { ...artifact, content: null, reason: "artifact_uri_not_managed" };
+  const artifactPath = relative(artifactsDir, resolve(artifact.uri));
+  if (!artifactPath || artifactPath === ".." || artifactPath.startsWith(`..${sep}`) || isAbsolute(artifactPath)) {
+    return { ...artifact, content: null, reason: "artifact_uri_not_managed" };
+  }
   let content;
   try {
     content = await readFile(artifact.uri, "utf8");
