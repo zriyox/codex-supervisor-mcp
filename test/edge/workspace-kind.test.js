@@ -55,7 +55,7 @@ test("scratch runs in supervisor storage and never writes the non-Git source dir
     const settled = await waitFor(call, worker.id, (task) => task.status === "completed" && task.exit_code === 0);
     assert.equal(settled.workspace_kind, "scratch");
     assert.equal(settled.worktree_path, null);
-    assert.match(settled.cwd, new RegExp(`${home.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}/scratch/`));
+    assert.equal(settled.cwd, join(home, "scratch", worker.id));
     assert(existsSync(join(settled.cwd, "committed.txt")), "the worker wrote inside supervisor scratch");
     assert.equal(existsSync(join(source, "committed.txt")), false, "the source directory remains untouched");
   });
