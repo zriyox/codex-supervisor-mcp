@@ -58,6 +58,7 @@
     "src/cleanup-plan.js",
     "src/worker-preflight.js",
     "src/workspace-kind.js",
+    "src/runner-adapter.js",
     "src/mcp-config.js",
     "src/context-compiler.js",
     "src/overview-delta.js",

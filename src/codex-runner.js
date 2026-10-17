@@ -23,7 +23,6 @@ import {
   releaseTaskRun,
   reserveTaskOwnership
 } from "./task-store.js";
-import { applyCodexEvent } from "./event-parser.js";
 import { ACTIVE_STATUSES, TERMINAL_STATUSES } from "./status.js";
 import { worktreesDir } from "./paths.js";
 import { buildGuardPreamble, frameWorkerPrompt } from "./prompt.js";
@@ -32,7 +31,6 @@ import { readTaskChanges, snapshotTaskOutput } from "./worktree.js";
 import { rebaseWorktree } from "./landing.js";
 import { DEFAULT_ACCEPTANCE_TIMEOUT_MS, isArtifactOnlyAcceptance, normalizeAcceptance, runAcceptance } from "./acceptance.js";
 import { appendFile } from "node:fs/promises";
-import { defaultBinDirs, findBinaryPath, resolveCommand, shimMessage } from "./bin-resolver.js";
 import { findOutsideOwnedChanges } from "./owned-changes.js";
 import { parseWorkerReport, workerReportSchemaPath } from "./worker-report.js";
 import { buildHandoff } from "./handoff.js";
@@ -41,12 +39,12 @@ import { captureExternalOutputs, compareExternalOutputs } from "./external-outpu
 import { buildRuntimeContract, createPreflightMetadata, readPreflightResult, runtimeContractHash } from "./worker-preflight.js";
 import { supervisorMcpDisableArgs } from "./mcp-config.js";
 import { captureWorkspaceManifest, isGitCheckout, prepareWorkspace } from "./workspace-kind.js";
+import { codexRunner } from "./runner-adapter.js";
 
 const processes = new Map();
 // taskId -> control object of an acceptance run in progress ({ kill, cancelled }).
 const acceptanceRuns = new Map();
 const cancelledTasks = new Set();
-const CODEX_NPM_ENTRY = { pkg: "@openai/codex", bin: "bin/codex.js" };
 const defaultGitBin = process.env.GIT_BIN?.trim() || "git";
 const allowedReasoningEfforts = new Set(["minimal", "low", "medium", "high"]);
 const MAX_RUN_HOST_PROMPT_BYTES = 4 * 1024 * 1024;
@@ -218,18 +216,6 @@ function ownershipConflictError(conflicts) {
   return error;
 }
 
-// The Codex CLI as a spawnable target. On Windows npm installs a `codex.cmd`
-// shim that Node refuses to spawn directly, so bin-resolver.js steps over it and
-// hands back `node <entry>` instead; on macOS and Linux this is the bare name,
-// unchanged. Resolved per dispatch so a CLI installed later is picked up.
-function codexTarget() {
-  const configured = process.env.CODEX_BIN?.trim();
-  const located = configured ? configured : (findBinaryPath("codex", { extraDirs: defaultBinDirs() }) ?? "codex");
-  const target = resolveCommand(located, { npmEntry: CODEX_NPM_ENTRY });
-  if (target.shim) return { error: shimMessage("codex", target.cmd, "CODEX_BIN") };
-  return { cmd: target.cmd, prefixArgs: target.prefixArgs };
-}
-
 function failedStart(record, reason) {
   const now = new Date().toISOString();
   return {
@@ -274,14 +260,9 @@ async function spawnAndAwaitStart(target, args, options) {
 // Every write goes through one serialized chain so concurrent stdout/stderr
 // callbacks cannot interleave and persist out of order.
 async function trackRunInHost({ record, args, prompt, logPath, spawnOptions = {} }) {
-  const target = codexTarget();
-  if (target.error) return failedStart(record, target.error);
-  try {
-    const help = execFileSync(target.cmd, [...target.prefixArgs, "exec", "--help"], { encoding: "utf8", timeout: 15000, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
-    if (!help.includes("--dangerously-bypass-hook-trust") || !help.includes("--output-schema")) return failedStart(record, "Codex CLI lacks required per-run hooks/output-schema; install Codex 0.162 or newer before dispatch");
-  } catch (error) { return failedStart(record, error.code === "ENOENT"
-    ? `failed to spawn ${target.cmd} for Codex capability preflight: ${error.message}`
-    : `Codex capability preflight failed: ${error.message}`); }
+  const capability = codexRunner.capabilityPreflight();
+  if (!capability.ok) return failedStart(record, capability.error);
+  const target = capability.target;
   const outputBefore = snapshotTaskOutput(record);
   const workspaceBefore = record.workspace_metadata?.before_manifest ?? null;
   const externalBefore = await captureExternalOutputs(record.guard_policy?.externalOutputs ?? [], { checkBaseline: (record.run_count ?? 0) === 0 });
@@ -401,7 +382,7 @@ async function trackRunInHost({ record, args, prompt, logPath, spawnOptions = {}
     if (["turn.completed", "turn.failed"].includes(event.type)) terminalEvent = true;
     const storedEvent = await appendTaskEvent(record.id, event, { runId, actor: "codex" });
     if (event.type === "item.completed" && event.item?.type === "agent_message") rawReportEventId = storedEvent.id;
-    await persist(applyCodexEvent(live, event));
+    await persist(codexRunner.parseEvent(live, event));
   };
 
   let stdoutRest = "";
@@ -661,15 +642,6 @@ async function startTrackedRun(job) {
   });
   if (!started.ok) await upsertTask(started.record);
   return started;
-}
-
-function buildExecArgs({ cwd, sandbox, model, reasoningEffort, skipGitRepoCheck }) {
-  const args = ["exec", "--json", "--cd", cwd, "--sandbox", sandbox];
-  if (skipGitRepoCheck) args.push("--skip-git-repo-check");
-  if (model) args.push("--model", model);
-  args.push("-c", `model_reasoning_effort="${reasoningEffort}"`);
-  args.push("-");
-  return args;
 }
 
 function validateGoal(goal) {
@@ -981,7 +953,7 @@ export async function createCodexWorker({
     throw error;
   }
 
-  const args = buildExecArgs({ cwd: effectiveCwd, sandbox, model, reasoningEffort, skipGitRepoCheck });
+  const args = codexRunner.startArgs({ cwd: effectiveCwd, sandbox, model, reasoningEffort, skipGitRepoCheck });
 
   const started = await startTrackedRun({
     record,
@@ -1083,13 +1055,7 @@ export async function resumeCodexWorker({ taskId, prompt, rebaseOnto = null, acc
   }
 
   const cwd = (await exists(task.cwd)) ? task.cwd : task.project_root;
-  const args = ["exec", "resume", "--json"];
-  args.push("-c", `sandbox_mode="${task.sandbox}"`);
-  if (task.model) args.push("--model", task.model);
-  args.push("-c", `model_reasoning_effort="${task.reasoning_effort ?? "high"}"`);
-  if (task.skip_git_repo_check) args.push("--skip-git-repo-check");
-  args.push(task.thread_id);
-  args.push("-");
+  const args = codexRunner.resumeArgs(task);
 
   const started = await startTrackedRun({
     record: { ...task, resumed_from: task.resumed_from ?? task.id },
@@ -1203,39 +1169,18 @@ function describeProcess(pid) {
 }
 
 function isLikelyCodexProcess(pid) {
-  const description = describeProcess(pid);
-  return description.includes("codex");
+  return codexRunner.ownsPid(pid, describeProcess);
 }
 
 // Ends a worker and, on Windows, its whole process tree: the direct child there
 // is the JS wrapper around the native Codex binary, so terminating it alone
 // would leave the real CLI running and the task stuck in `running`.
 function terminateChild(child) {
-  if (process.platform === "win32" && child.pid) {
-    try {
-      execFileSync("taskkill", ["/PID", String(child.pid), "/T", "/F"], {
-        stdio: "ignore",
-        timeout: 5000,
-        windowsHide: true
-      });
-      return;
-    } catch {
-      // fall back to the handle-based kill below
-    }
-  }
-  child.kill("SIGTERM");
+  codexRunner.cancelChild(child);
 }
 
 function terminatePid(pid) {
-  if (process.platform === "win32") {
-    execFileSync("taskkill", ["/PID", String(pid), "/T", "/F"], {
-      stdio: "ignore",
-      timeout: 5000,
-      windowsHide: true
-    });
-    return;
-  }
-  process.kill(pid, "SIGTERM");
+  codexRunner.cancelPid(pid);
 }
 
 export async function cancelCodexWorker(taskId) {

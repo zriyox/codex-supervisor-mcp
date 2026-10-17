@@ -24,8 +24,8 @@
 //   session ended ................... fork deleted, history cleared
 import { execFileSync, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { defaultBinDirs, findBinaryPath, resolveCommand, shimMessage } from "./bin-resolver.js";
 import { codexConfigText, disableMcpServerArgs } from "./mcp-config.js";
+import { codexRunner } from "./runner-adapter.js";
 import {
   closeSideSession,
   getSideSession,
@@ -37,7 +37,6 @@ import {
   updateSideTurn
 } from "./task-store.js";
 
-const CODEX_NPM_ENTRY = { pkg: "@openai/codex", bin: "bin/codex.js" };
 const TURN_TIMEOUT_MS = 10 * 60 * 1000;
 
 // What a side question is, said to the fork every time. Without it the fork
@@ -102,29 +101,6 @@ async function sweepOnce() {
   if (swept) return;
   swept = true;
   await interruptRunningSideTurns();
-}
-
-function codexTarget() {
-  const configured = process.env.CODEX_BIN?.trim();
-  const located = configured ? configured : (findBinaryPath("codex", { extraDirs: defaultBinDirs() }) ?? "codex");
-  const target = resolveCommand(located, { npmEntry: CODEX_NPM_ENTRY });
-  if (target.shim) return { error: shimMessage("codex", target.cmd, "CODEX_BIN") };
-  return { cmd: target.cmd, prefixArgs: target.prefixArgs };
-}
-
-// Stop a side turn and everything under it. On Windows the direct child is
-// the JS wrapper around the native Codex binary; killing the wrapper alone
-// leaves the real CLI running, so the whole tree goes through taskkill.
-function killTree(child) {
-  if (process.platform === "win32" && child.pid) {
-    try {
-      execFileSync("taskkill", ["/PID", String(child.pid), "/T", "/F"], { stdio: "ignore", timeout: 5000, windowsHide: true });
-      return;
-    } catch {
-      // fall back to the handle below
-    }
-  }
-  child.kill("SIGTERM");
 }
 
 function clip(text, max = OUTPUT_CLIP) {
@@ -338,20 +314,16 @@ export async function runSideTurn({ task, text, res = null, fresh = false }) {
   await sweepOnce();
   if (!task.thread_id) throw Object.assign(new Error("this worker recorded no thread_id, so there is no Codex thread to fork"), { code: "no_thread" });
   if (running.has(task.id)) throw Object.assign(new Error("a side turn is already running for this worker"), { code: "busy" });
-  const target = codexTarget();
+  const target = codexRunner.resolveTarget();
   if (target.error) throw Object.assign(new Error(target.error), { code: "codex_missing" });
 
   const { session, refreshed } = await prepareSideSession(task, { fresh });
 
-  const args = session.fork_thread_id
-    ? ["exec", "resume", "--json", "--skip-git-repo-check", "-c", 'sandbox_mode="read-only"']
-    : ["exec", "fork", "--json", "--skip-git-repo-check", "-c", 'sandbox_mode="read-only"'];
-  args.push(...sideTurnConfigArgs(codexConfigText()));
-  if (task.model) args.push("-m", task.model);
-  args.push(session.fork_thread_id ?? task.thread_id, "-");
+  const args = codexRunner.forkSideArgs({ forkThreadId: session.fork_thread_id, workerThreadId: task.thread_id, model: task.model });
+  args.splice(-2, 0, ...sideTurnConfigArgs(codexConfigText()));
 
   const cwd = task.worktree_path || task.project_root || process.cwd();
-  const child = spawn(target.cmd, [...target.prefixArgs, ...args], {
+  const child = codexRunner.start(target, args, {
     cwd,
     stdio: ["pipe", "pipe", "pipe"],
     env: { ...process.env, NO_COLOR: "1" },
@@ -390,11 +362,11 @@ export async function runSideTurn({ task, text, res = null, fresh = false }) {
   let stoppedBy = null;
   const timer = setTimeout(() => {
     stoppedBy = "timeout";
-    killTree(child);
+    codexRunner.cancelChild(child);
   }, TURN_TIMEOUT_MS);
   live.stop = (reason) => {
     stoppedBy = reason;
-    killTree(child);
+    codexRunner.cancelChild(child);
   };
 
   child.stdout.setEncoding("utf8");
@@ -546,12 +518,12 @@ export async function endSideSession(taskId) {
   if (!row) return { ended: false };
   let deleted = false;
   if (row.fork_thread_id) {
-    const target = codexTarget();
+    const target = codexRunner.resolveTarget();
     if (!target.error) {
       deleted = await new Promise((resolve) => {
         // --force: without a terminal codex asks for confirmation and exits.
-        const child = spawn(target.cmd, [...target.prefixArgs, "delete", "--force", row.fork_thread_id], { stdio: "ignore", windowsHide: true, env: { ...process.env, NO_COLOR: "1" } });
-        const t = setTimeout(() => { killTree(child); resolve(false); }, 15000);
+        const child = codexRunner.start(target, ["delete", "--force", row.fork_thread_id], { stdio: "ignore", windowsHide: true, env: { ...process.env, NO_COLOR: "1" } });
+        const t = setTimeout(() => { codexRunner.cancelChild(child); resolve(false); }, 15000);
         child.on("exit", (code) => { clearTimeout(t); resolve(code === 0); });
         child.on("error", () => { clearTimeout(t); resolve(false); });
       });
