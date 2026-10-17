@@ -265,6 +265,7 @@ const CONTROL_DDL = `
       verified_by TEXT
     );
     CREATE INDEX IF NOT EXISTS idx_facts_scope ON facts(scope_type, scope_id, state);
+    CREATE INDEX IF NOT EXISTS idx_facts_supersedes ON facts(supersedes_id, state);
     CREATE TABLE IF NOT EXISTS artifacts (
       id TEXT PRIMARY KEY,
       run_id TEXT NOT NULL,
@@ -1166,7 +1167,15 @@ async function currentWorkspaceManifest(task) {
 }
 
 function markFactExpired(id) {
-  openDb().prepare("UPDATE facts SET state = 'expired' WHERE id = ? AND state = 'verified'").run(id);
+  openDb().prepare(`
+    INSERT INTO facts (id, work_item_id, scope_type, scope_id, key, value_json, state, source_event_id, source_artifact_id,
+      valid_for_sha, valid_for_content_hash, valid_for_manifest_hash, watched_paths, expires_at, supersedes_id, created_at, verified_at, verified_by)
+    SELECT ?, source.work_item_id, source.scope_type, source.scope_id, source.key, source.value_json, 'expired', source.source_event_id, source.source_artifact_id,
+      source.valid_for_sha, source.valid_for_content_hash, source.valid_for_manifest_hash, source.watched_paths, source.expires_at, source.id, ?, source.verified_at, source.verified_by
+    FROM facts AS source
+    WHERE source.id = ? AND source.state = 'verified'
+      AND NOT EXISTS (SELECT 1 FROM facts AS transition WHERE transition.supersedes_id = source.id AND transition.state IN ('expired', 'revoked'))
+  `).run(randomUUID(), new Date().toISOString(), id);
 }
 
 export async function listContextFacts({ taskId, baseSha, ownedPaths = [], dependencyTaskIds = [] }) {
@@ -1181,7 +1190,7 @@ export async function listContextFacts({ taskId, baseSha, ownedPaths = [], depen
   const rows = openDb().prepare(`
     SELECT facts.* FROM facts
     WHERE state = 'verified'
-      AND NOT EXISTS (SELECT 1 FROM facts AS transition WHERE transition.supersedes_id = facts.id AND transition.state = 'revoked')
+      AND NOT EXISTS (SELECT 1 FROM facts AS transition WHERE transition.supersedes_id = facts.id AND transition.state IN ('expired', 'revoked'))
     ORDER BY created_at ASC
   `).all();
   const now = Date.now();
@@ -1224,7 +1233,7 @@ export async function countVerifiedFacts() {
   return openDb().prepare(`
     SELECT COUNT(*) AS count FROM facts
     WHERE state = 'verified'
-      AND NOT EXISTS (SELECT 1 FROM facts AS transition WHERE transition.supersedes_id = facts.id AND transition.state = 'revoked')
+      AND NOT EXISTS (SELECT 1 FROM facts AS transition WHERE transition.supersedes_id = facts.id AND transition.state IN ('expired', 'revoked'))
   `).get().count;
 }
 
@@ -1268,6 +1277,15 @@ export async function getTaskForWorkItem(workItemId) {
 export async function isFactRevoked(factId) {
   await ensureFilesystem();
   return Boolean(openDb().prepare("SELECT 1 FROM facts WHERE supersedes_id = ? AND state = 'revoked'").get(factId));
+}
+
+export async function getFactEffectiveState(factId) {
+  await ensureFilesystem();
+  const transition = openDb().prepare(`
+    SELECT state FROM facts WHERE supersedes_id = ? AND state IN ('revoked', 'expired')
+    ORDER BY CASE state WHEN 'revoked' THEN 0 ELSE 1 END, created_at DESC LIMIT 1
+  `).get(factId);
+  return transition?.state ?? null;
 }
 
 export async function promoteCandidateFact({ factId, scopeType = "work_item", watchedPaths = null, expiresAt = null, sourceEventId = null, verifiedBy = "main_thread" }) {

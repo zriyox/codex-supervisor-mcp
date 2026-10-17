@@ -170,7 +170,7 @@ Thirty-nine.
 | `get_codex_worker_status` | `task_id`, `includePrompt`, `promptMaxChars` | One worker in detail |
 | `get_codex_worker_events` | `task_id`, `limit`, `maxChars`, `kinds` | The raw event stream |
 | `get_context_snapshot_meta` | `task_id` | Worker-only context snapshot metadata: fact IDs, token count and excluded categories, never capsule text |
-| `get_fact` | `fact_id` | Read one historical fact version and its `effective_state` without injecting it into main-thread context |
+| `get_fact` | `fact_id` | Read one historical fact version and its `effective_state`; revocation and automatic expiry retain the original version |
 | `search_worker_facts` | `task_id`, `query`, `limit`, `cursor` | Search only verified facts scoped to the current work, explicit dependencies and path-matched repository facts; returns coverage and next_cursor, never raw history |
 | `get_worker_evidence` | `task_id`, `limit` | Bounded event metadata and retained artifact IDs for one worker; select an artifact or event explicitly for detail |
 | `get_artifact` | `artifact_id`, `maxChars` | Read one supervisor-managed evidence artifact without expanding a worker capsule into main context |

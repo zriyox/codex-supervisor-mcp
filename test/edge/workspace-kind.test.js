@@ -116,10 +116,12 @@ test("an in_place_write fact expires after its source manifest drifts before res
     await waitFor(call, worker.id, (task) => task.run_count === 2 && task.exit_code === 0);
   });
   const db = new DatabaseSync(join(home, "data", "supervisor.sqlite"));
-  const facts = db.prepare("SELECT state, valid_for_manifest_hash FROM facts WHERE work_item_id = (SELECT id FROM work_items WHERE task_id = ?) AND key = 'accepted_outcome' ORDER BY created_at").all(worker.id);
-  assert.equal(facts.length, 2, JSON.stringify(facts));
-  assert.equal(facts[0].state, "expired");
-  assert.equal(facts[1].state, "verified");
-  assert.match(facts[1].valid_for_manifest_hash, /^[a-f0-9]{64}$/);
+  const facts = db.prepare("SELECT id, state, supersedes_id, valid_for_manifest_hash FROM facts WHERE work_item_id = (SELECT id FROM work_items WHERE task_id = ?) AND key = 'accepted_outcome' ORDER BY rowid").all(worker.id);
+  assert.equal(facts.length, 3, JSON.stringify(facts));
+  assert.equal(facts[0].state, "verified");
+  assert.equal(facts[1].state, "expired");
+  assert.equal(facts[1].supersedes_id, facts[0].id);
+  assert.equal(facts[2].state, "verified");
+  assert.match(facts[2].valid_for_manifest_hash, /^[a-f0-9]{64}$/);
   db.close();
 });

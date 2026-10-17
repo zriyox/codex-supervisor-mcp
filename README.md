@@ -172,7 +172,7 @@ land_codex_worker       核过了，落进集成分支
 | `get_codex_worker_status` | `task_id`, `includePrompt`, `promptMaxChars` | 单个 worker 的状态细节 |
 | `get_codex_worker_events` | `task_id`, `limit`, `maxChars`, `kinds` | 原始事件流 |
 | `get_context_snapshot_meta` | `task_id` | 只读 worker context 的 snapshot ID、fact IDs、token 估算和排除项；不返回 capsule 正文或历史记录 |
-| `get_fact` | `fact_id` | 按 ID 审计原始 fact 版本及 `effective_state`；不会自动扩展进主线程上下文 |
+| `get_fact` | `fact_id` | 按 ID 审计原始 fact 版本及 `effective_state`；撤销和自动过期均保留原版本 |
 | `search_worker_facts` | `task_id`, `query`, `limit`, `cursor` | 只检索当前 work、显式依赖和路径命中 repo scope 的 verified facts；返回 coverage / next_cursor，不返回 raw history |
 | `get_worker_evidence` | `task_id`, `limit` | 返回某 worker 的有界 event 元数据和 retained artifact 索引；按需再点查 artifact / event |
 | `get_artifact` | `artifact_id`, `maxChars` | 读取一个 supervisor-managed evidence artifact；不影响 worker capsule 或主线程自动上下文 |

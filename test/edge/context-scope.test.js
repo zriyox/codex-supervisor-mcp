@@ -79,16 +79,45 @@ test("searching another repository does not expire the original work's verified 
   });
 });
 
+test("concurrent searches append at most one expiry version for the same fact", async () => {
+  const home = await tempHome("supervisor-concurrent-fact-expiry-");
+  const { dir } = await makeRepo(join(home, "repo"));
+  let worker;
+  await withMcp({ SUPERVISOR_HOME: home }, async ({ call }) => {
+    worker = await call("create_codex_worker", dispatchArgs("expiry race", dir, {
+      acceptance: "node -e \"process.exit(0)\"", ownedPaths: ["first.txt"]
+    }));
+    await waitFor(call, worker.id, (row) => row.exit_code === 0);
+  });
+  const db = new DatabaseSync(join(home, "data", "supervisor.sqlite"));
+  const original = db.prepare("SELECT id FROM facts WHERE work_item_id = (SELECT id FROM work_items WHERE task_id = ?) AND key = 'accepted_outcome' AND state = 'verified'").get(worker.id);
+  db.prepare("UPDATE facts SET expires_at = ? WHERE id = ?").run("2000-01-01T00:00:00.000Z", original.id);
+  await withMcp({ SUPERVISOR_HOME: home }, async ({ call: first }) => withMcp({ SUPERVISOR_HOME: home }, async ({ call: second }) => {
+    const results = await Promise.all([
+      first("search_worker_facts", { task_id: worker.id }),
+      second("search_worker_facts", { task_id: worker.id })
+    ]);
+    for (const result of results) assert.equal(result.facts.some((fact) => fact.id === original.id), false);
+  }));
+  assert.equal(db.prepare("SELECT state FROM facts WHERE id = ?").get(original.id).state, "verified");
+  assert.equal(db.prepare("SELECT COUNT(*) AS count FROM facts WHERE supersedes_id = ? AND state = 'expired'").get(original.id).count, 1);
+  db.close();
+});
+
 test("a verified watched-path fact expires when a resumed worker rebases across that path", async () => {
   const home = await tempHome("supervisor-context-expiry-");
   const { dir } = await makeRepo(join(home, "repo"));
   let worker;
+  let originalFactId;
   await withMcp({ SUPERVISOR_HOME: home, FAKE_CODEX_SCENARIO: "echo-prompt" }, async ({ call }) => {
     worker = await call("create_codex_worker", dispatchArgs("watched", dir, {
       ownedPaths: ["watched.txt"],
       acceptance: "node -e \"process.exit(0)\""
     }));
     await waitFor(call, worker.id, (row) => row.exit_code === 0);
+    const db = new DatabaseSync(join(home, "data", "supervisor.sqlite"));
+    originalFactId = db.prepare("SELECT id FROM facts WHERE work_item_id = (SELECT id FROM work_items WHERE task_id = ?) AND key = 'accepted_outcome' AND state = 'verified'").get(worker.id).id;
+    db.close();
   });
   await writeFile(join(dir, "watched.txt"), "main changed this path\n");
   git(dir, ["add", "watched.txt"]);
@@ -97,10 +126,16 @@ test("a verified watched-path fact expires when a resumed worker rebases across 
   await withMcp({ SUPERVISOR_HOME: home, FAKE_CODEX_SCENARIO: "echo-prompt" }, async ({ call }) => {
     await call("resume_codex_worker", { task_id: worker.id, prompt: "recheck on new base", rebaseOnto: "main" });
     await waitFor(call, worker.id, (row) => row.run_count === 2 && row.exit_code === 0);
+    const original = await call("get_fact", { fact_id: originalFactId });
+    assert.equal(original.fact.state, "verified");
+    assert.equal(original.effective_state, "expired");
+    await call("search_worker_facts", { task_id: worker.id });
+    await call("search_worker_facts", { task_id: worker.id });
   });
   const db = new (await import("node:sqlite")).DatabaseSync(join(home, "data", "supervisor.sqlite"));
   const facts = db.prepare("SELECT state, key FROM facts WHERE work_item_id = (SELECT id FROM work_items WHERE task_id = ?) ORDER BY created_at").all(worker.id);
   assert.ok(facts.some((fact) => fact.key === "accepted_outcome" && fact.state === "expired"), JSON.stringify(facts));
   assert.ok(facts.some((fact) => fact.key === "accepted_outcome" && fact.state === "verified"), JSON.stringify(facts));
+  assert.equal(db.prepare("SELECT COUNT(*) AS count FROM facts WHERE supersedes_id = ? AND state = 'expired'").get(originalFactId).count, 1);
   db.close();
 });

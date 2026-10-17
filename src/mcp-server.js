@@ -16,6 +16,7 @@ import {
   getSession,
   getArtifact,
   getFact,
+  getFactEffectiveState,
   isFactRevoked,
   getReviewByVerifierTask,
   getTaskForWorkItem,
@@ -1214,7 +1215,7 @@ server.registerTool(
   async ({ fact_id }) => {
     const fact = await getFact(fact_id);
     if (!fact) return textResult({ error: "fact_not_found", fact_id });
-    return textResult({ fact, effective_state: await isFactRevoked(fact_id) ? "revoked" : fact.state });
+    return textResult({ fact, effective_state: await getFactEffectiveState(fact_id) ?? fact.state });
   }
 );
 
