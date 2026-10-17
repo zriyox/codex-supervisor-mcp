@@ -95,7 +95,7 @@ test("every writable root a worker receives is symlink-free", async () => {
   const cacheEnv = isWindows ? { LOCALAPPDATA: cache } : { XDG_CACHE_HOME: cache };
   await withMcp({ SUPERVISOR_HOME: home, ...cacheEnv, FAKE_CODEX_ARGS_LOG: argsLog }, async ({ call }) => {
     const worker = await call("create_codex_worker", dispatchArgs("cache-roots", repo, {}));
-    await waitFor(call, worker.id, (task) => task.status === "completed");
+    await waitFor(call, worker.id, (task) => task.status === "completed" && task.exit_code != null);
   });
   const runs = (await readFile(argsLog, "utf8")).trim().split("\n").map((line) => JSON.parse(line).args);
   const run = runs.find((args) => args.includes("--output-schema"));
@@ -116,7 +116,7 @@ test("a declared root is stored and passed resolved, and unusable ones are refus
       sandbox: "workspace-write", ownedPaths: [repo], writableRoots: [custom]
     }));
     assert.ok(worker.id, JSON.stringify(worker).slice(0, 300));
-    await waitFor(call, worker.id, (task) => task.status === "completed");
+    await waitFor(call, worker.id, (task) => task.status === "completed" && task.exit_code != null);
     const relative = await call("create_codex_worker", dispatchArgs("bad-root", repo, {
       sandbox: "workspace-write", ownedPaths: [repo], writableRoots: ["relative/cache"]
     }));
@@ -132,7 +132,7 @@ test("a declared root is stored and passed resolved, and unusable ones are refus
         sandbox: "workspace-write", ownedPaths: [repo], writableRoots: [link]
       }));
       assert.ok(viaLink.id, JSON.stringify(viaLink).slice(0, 300));
-      await waitFor(call, viaLink.id, (task) => task.status === "completed");
+      await waitFor(call, viaLink.id, (task) => task.status === "completed" && task.exit_code != null);
     }
   });
   const runs = (await readFile(argsLog, "utf8")).trim().split("\n").map((line) => JSON.parse(line).args);
