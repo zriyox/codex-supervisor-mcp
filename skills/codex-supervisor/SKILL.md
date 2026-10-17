@@ -129,6 +129,8 @@ Codex需0.162+支持hooks/output-schema，能力不够派单start_failed先修CL
 
 worker 的 capsule 只在内部 create/resume 时生成：自身 L0 身份、当前 work 的 verified facts、显式 `dependsOn` 的摘要、路径命中且 SHA 有效的 repo facts。`session_id` peers、raw event、完整 diff/报告、candidate facts 一律不自动注入。主线程只能看 snapshot 元数据；要查证据按 ID 读，不能把自己变成 worker。
 
+worker 最终 JSON 只是 `candidate`：先留在本 run 做审计，绝不因为它自己说“完成”就变共享事实。supervisor acceptance 通过才会派生当前 work 的 `verified` outcome；验收失败/未配置、脏 diff、未 land/push 都不是 verified 交付证据。
+
 ## 断了怎么接
 
 | 情况 | 用什么 |

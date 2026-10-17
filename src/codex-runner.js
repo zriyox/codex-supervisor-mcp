@@ -16,6 +16,9 @@ import {
   upsertTask,
   ensureRunRecord,
   completeRunRecord,
+  getWorkItemForTask,
+  recordFact,
+  updateWorkItemDelivery,
   claimTaskRun,
   releaseTaskRun,
   reserveTaskOwnership
@@ -45,6 +48,37 @@ const cancelledTasks = new Set();
 const CODEX_NPM_ENTRY = { pkg: "@openai/codex", bin: "bin/codex.js" };
 const defaultGitBin = process.env.GIT_BIN?.trim() || "git";
 const allowedReasoningEfforts = new Set(["minimal", "low", "medium", "high"]);
+
+async function recordOutcomeFacts({ task, runId, report, reportEventId = null, acceptanceEventId = null, acceptancePassed = false }) {
+  if (!report?.valid) return;
+  const workItem = await getWorkItemForTask(task.id);
+  if (!workItem) return;
+  const candidate = await recordFact({
+    workItemId: workItem.id,
+    scopeType: "run",
+    scopeId: runId,
+    key: "worker_outcome",
+    value: report.report,
+    state: "candidate",
+    sourceEventId: reportEventId,
+    validForSha: task.base_commit ?? null,
+    watchedPaths: task.owned_paths ?? []
+  });
+  if (!acceptancePassed) return;
+  await recordFact({
+    workItemId: workItem.id,
+    scopeType: "work_item",
+    scopeId: workItem.id,
+    key: "accepted_outcome",
+    value: report.report,
+    state: "verified",
+    sourceEventId: acceptanceEventId,
+    validForSha: task.base_commit ?? null,
+    watchedPaths: task.owned_paths ?? [],
+    supersedesId: candidate.id
+  });
+  await updateWorkItemDelivery(task.id, "verified");
+}
 
 function splitLines(buffer, chunk) {
   const next = buffer + chunk;
@@ -345,6 +379,7 @@ async function trackRunInHost({ record, args, prompt, logPath, spawnOptions = {}
   let eventChain = Promise.resolve();
   let terminalEvent = false;
   let rawReport = null;
+  let rawReportEventId = null;
   const handleLine = async (line) => {
     let event;
     try {
@@ -356,7 +391,8 @@ async function trackRunInHost({ record, args, prompt, logPath, spawnOptions = {}
     logStream.write(`${JSON.stringify(event)}\n`);
     if (event.type === "item.completed" && event.item?.type === "agent_message") rawReport = event.item.text;
     if (["turn.completed", "turn.failed"].includes(event.type)) terminalEvent = true;
-    await appendTaskEvent(record.id, event, { runId, actor: "codex" });
+    const storedEvent = await appendTaskEvent(record.id, event, { runId, actor: "codex" });
+    if (event.type === "item.completed" && event.item?.type === "agent_message") rawReportEventId = storedEvent.id;
     await persist(applyCodexEvent(live, event));
   };
 
@@ -492,7 +528,7 @@ async function trackRunInHost({ record, args, prompt, logPath, spawnOptions = {}
       }); } finally { clearInterval(cancellationWatch); }
       acceptanceRuns.delete(record.id);
       const event = { type: "supervisor.acceptance", ...results };
-      await appendTaskEvent(record.id, event, { runId, actor: "supervisor" }).catch(() => {});
+      const acceptanceEvent = await appendTaskEvent(record.id, event, { runId, actor: "supervisor" }).catch(() => null);
       await appendFile(logPath, `${JSON.stringify(event)}\n`).catch(() => {});
       const failing = results.checks.find((check) => check.passed === false || check.exit_code !== 0 || check.timed_out);
       const finalRecord = {
@@ -507,10 +543,24 @@ async function trackRunInHost({ record, args, prompt, logPath, spawnOptions = {}
       };
       await persist(finalRecord);
       await completeRunRecord(finalRecord, live.run_count);
+      await recordOutcomeFacts({
+        task: finalRecord,
+        runId,
+        report: finalRecord.run_evidence?.structured_report,
+        reportEventId: rawReportEventId,
+        acceptanceEventId: acceptanceEvent?.id ?? null,
+        acceptancePassed: results.passed === true
+      });
     } else {
       const finalRecord = acceptance ? { ...next, acceptance_results: null } : next;
       await persist(finalRecord);
       await completeRunRecord(finalRecord, live.run_count);
+      await recordOutcomeFacts({
+        task: finalRecord,
+        runId,
+        report: finalRecord.run_evidence?.structured_report,
+        reportEventId: rawReportEventId
+      });
     }
     cancelledTasks.delete(record.id);
   });

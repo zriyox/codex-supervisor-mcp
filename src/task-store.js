@@ -946,11 +946,12 @@ export async function appendTaskEvent(taskId, event, { runId = null, actor = "su
   const dbInstance = openDb();
   const nextSeqRow = dbInstance.prepare("SELECT COALESCE(MAX(seq), 0) + 1 AS seq FROM task_events WHERE task_id = ?").get(taskId);
   const payload = JSON.stringify(event);
-  dbInstance.prepare(`
+  const result = dbInstance.prepare(`
     INSERT INTO task_events (task_id, run_id, seq, created_at, actor, event_type, payload, payload_sha256)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
   `).run(taskId, runId, nextSeqRow.seq, new Date().toISOString(), actor, event.type ?? "unknown", payload,
     createHash("sha256").update(payload).digest("hex"));
+  return { id: Number(result.lastInsertRowid), run_id: runId, actor };
 }
 
 export async function readTaskEvents(taskId, limit = 100, kinds = null) {
@@ -1091,6 +1092,16 @@ export async function getFact(factId) {
     value: decodeJson(row.value_json, null),
     watched_paths: decodeJson(row.watched_paths, [])
   };
+}
+
+export async function updateWorkItemDelivery(taskId, deliveryState) {
+  await ensureFilesystem();
+  if (!["draft", "verified", "landed", "push_verified", "cleanup_eligible", "cleanup_removed", "needs_attention"].includes(deliveryState)) {
+    throw new Error("invalid delivery state");
+  }
+  const result = openDb().prepare("UPDATE work_items SET delivery_state = ?, updated_at = ? WHERE task_id = ?")
+    .run(deliveryState, new Date().toISOString(), taskId);
+  return result.changes > 0;
 }
 
 export async function listTaskEventKinds(taskId) {

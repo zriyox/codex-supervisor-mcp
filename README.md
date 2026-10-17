@@ -184,6 +184,8 @@ land_codex_worker       核过了，落进集成分支
 
 `session_id` 只负责批次、默认门禁和审批，不再把同批 worker 的标题、汇报或 session objective 自动塞进新 worker。worker 只收到内部编译的 context capsule：自身身份/任务、显式依赖和路径/SHA 命中的 verified facts；raw event、完整 diff、历史报告、candidate facts 都只可按需读取。主线程只看 `get_context_snapshot_meta`，需要证据时再显式 `get_fact` / `get_worker_result` / `get_worker_diff`。
 
+worker 的最终 JSON 报告会先记录为该 run 的 `candidate` fact，不能跨 work 自动注入；supervisor acceptance 通过后才生成当前 work 的 `verified` outcome，并带 report/acceptance event 来源、base SHA 与 watched paths。验收失败、未配置验收或 worker 自报完成都不会升级成共享真相。
+
 验收命令的环境包含 `CODEX_SUPERVISOR_TASK_ID`、`CODEX_SUPERVISOR_BASE_COMMIT` 和 `CODEX_SUPERVISOR_RUN`；分别是当前任务、当前运行基线和运行次数，rebase/resume 后会更新。
 
 结构化验收项用 `{command, reportPath, baseline}`。baseline 包含 `identity.base_commit`、`failures`（test_id/kind/signature）和 `required`；报告包含 complete、identity、failures、executed、skipped，以及本次 `CODEX_SUPERVISOR_CHECK_ID`。必跑用例缺失/跳过、旧报告、失败名单变化都拒绝通过，原始退出码保留。reportPath 必须在工作目录内；测试报告可能写文件，要用忽略的临时目录，避免把报告合入。
