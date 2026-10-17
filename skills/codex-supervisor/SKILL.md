@@ -19,6 +19,8 @@ description: 把 Codex CLI 当并行 worker 派活、盯进度、收结果。用
 4. `create_codex_worker` 派出去。回执只有 `id`、`worktree_path`、`branch`、`owned_paths`、`status`，不回传任务原文。
 5. 长任务配宿主 `/loop 5m check_workers` 定时收活，没变化 quiet，有新结果按 next_step 收。工具会按规则恢复一次，但不会唤醒关闭的主窗口；每个主线程设独立 `CODEX_SUPERVISOR_OBSERVER_ID` 可重启接回。短等用 `wait_codex_workers` 的 `timeoutMs: 60000`、`compact: true`，到点继续同批 task_ids。
 
+worker 默认不是调度员：启动时会禁用它继承到的 `codex-supervisor` MCP，不能再派 worker、resume、cancel 或改 session。要拆新路只能主线程决定并派；业务 MCP 仍按原配置可用。旁问 fork 则关闭全部 MCP。
+
 | 参数 | 怎么填 |
 |---|---|
 | `task` | 这一路具体干什么。要能直接开工，别写"优化一下"。汇报格式 supervisor 已经附在 task 后面（结论 / 验证 / 没做的），别再要它列改动文件，diff 自己看 |

@@ -34,6 +34,7 @@ import { parseWorkerReport, workerReportSchemaPath } from "./worker-report.js";
 import { buildHandoff } from "./handoff.js";
 import { captureExternalOutputs, compareExternalOutputs } from "./external-output.js";
 import { buildRuntimeContract, createPreflightMetadata, readPreflightResult, runtimeContractHash } from "./worker-preflight.js";
+import { supervisorMcpDisableArgs } from "./mcp-config.js";
 
 const processes = new Map();
 // taskId -> control object of an acceptance run in progress ({ kill, cancelled }).
@@ -249,6 +250,9 @@ async function trackRunInHost({ record, args, prompt, logPath, spawnOptions = {}
   const hookCommand = `${quoteCommand(process.execPath)} ${quoteCommand(guard)}`;
   const configArgs = ["--output-schema", workerReportSchemaPath, "--dangerously-bypass-hook-trust", "-c",
     `hooks.PreToolUse=[{matcher="Bash|apply_patch",hooks=[{type="command",command=${JSON.stringify(hookCommand)}}]}]`];
+  // A worker may use its explicitly configured business MCP servers, but it
+  // must not inherit this supervisor and create a second orchestration tree.
+  configArgs.push(...supervisorMcpDisableArgs());
   configArgs.push("-c", `sandbox_workspace_write.network_access=${record.guard_policy?.networkAccess === true}`);
   const sandboxWritableRoots = [...new Set([...externalBefore.map((file) => dirname(file.path)), ...cacheRoots(), ...(record.guard_policy?.writableRoots ?? [])])];
   if (sandboxWritableRoots.length) configArgs.push("-c", `sandbox_workspace_write.writable_roots=${JSON.stringify(sandboxWritableRoots)}`);

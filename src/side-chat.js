@@ -24,10 +24,8 @@
 //   session ended ................... fork deleted, history cleared
 import { execFileSync, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
-import { codexHome } from "./paths.js";
 import { defaultBinDirs, findBinaryPath, resolveCommand, shimMessage } from "./bin-resolver.js";
+import { codexConfigText, disableMcpServerArgs } from "./mcp-config.js";
 import {
   closeSideSession,
   getSideSession,
@@ -68,25 +66,7 @@ export function sideQuestionText(question) {
 // server literally called "name", quotes included, with no transport, and
 // the whole config then fails to load.
 export function sideTurnConfigArgs(configText) {
-  const names = new Set();
-  for (const line of String(configText ?? "").split("\n")) {
-    const match = line.match(/^\s*\[mcp_servers\.(?:"([^"]+)"|([^\].]+))\]\s*(?:#.*)?$/);
-    if (match) names.add(match[1] ?? match[2]);
-  }
-  const args = [];
-  for (const name of names) {
-    if (!/^[A-Za-z0-9_-]+$/.test(name)) continue; // a name codex cannot take bare on the command line
-    args.push("-c", `mcp_servers.${name}.enabled=false`);
-  }
-  return args;
-}
-
-function codexConfigText() {
-  try {
-    return readFileSync(join(codexHome, "config.toml"), "utf8");
-  } catch {
-    return "";
-  }
+  return disableMcpServerArgs(configText);
 }
 
 // The session to ask on. A fork taken before the worker was resumed no

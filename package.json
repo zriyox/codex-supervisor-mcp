@@ -56,6 +56,7 @@
     "src/prompt.js",
     "src/cleanup.js",
     "src/worker-preflight.js",
+    "src/mcp-config.js",
     "src/monitor.jsx",
     "src/web-server.js",
     "src/web-app.js",
