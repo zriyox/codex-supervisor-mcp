@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { dispatchArgs, git, makeRepo, tempHome, waitFor, withMcp } from "./helpers.js";
 
 test("worker context excludes session peers and includes only scoped verified facts", async () => {
@@ -53,6 +54,29 @@ test("worker context excludes session peers and includes only scoped verified fa
   assert.equal(snapshot.recipient, "worker");
   assert.equal(JSON.parse(snapshot.fact_versions).length, 2);
   assert.ok(snapshot.estimated_tokens <= 1500);
+});
+
+test("searching another repository does not expire the original work's verified facts", async () => {
+  const home = await tempHome("supervisor-cross-repo-fact-");
+  const { dir: firstRepo } = await makeRepo(join(home, "first-repo"));
+  const { dir: secondRepo } = await makeRepo(join(home, "second-repo"));
+  await writeFile(join(secondRepo, "second-only.txt"), "different repository history\n");
+  git(secondRepo, ["add", "second-only.txt"]);
+  git(secondRepo, ["commit", "-q", "-m", "make second repository distinct"]);
+  await withMcp({ SUPERVISOR_HOME: home }, async ({ call }) => {
+    const first = await call("create_codex_worker", dispatchArgs("first repo", firstRepo, {
+      acceptance: "node -e \"process.exit(0)\"", ownedPaths: ["first.txt"]
+    }));
+    await waitFor(call, first.id, (row) => row.exit_code === 0);
+    const db = new DatabaseSync(join(home, "data", "supervisor.sqlite"));
+    const fact = db.prepare("SELECT id FROM facts WHERE work_item_id = (SELECT id FROM work_items WHERE task_id = ?) AND state = 'verified'").get(first.id);
+    assert.ok(fact);
+    const second = await call("create_codex_worker", dispatchArgs("second repo", secondRepo, { ownedPaths: ["second.txt"] }));
+    await waitFor(call, second.id, (row) => row.exit_code === 0);
+    await call("search_worker_facts", { task_id: second.id });
+    assert.equal(db.prepare("SELECT state FROM facts WHERE id = ?").get(fact.id).state, "verified");
+    db.close();
+  });
 });
 
 test("a verified watched-path fact expires when a resumed worker rebases across that path", async () => {

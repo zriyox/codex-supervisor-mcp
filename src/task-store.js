@@ -1183,26 +1183,29 @@ export async function listContextFacts({ taskId, baseSha, ownedPaths = [], depen
   const workspaceManifest = await currentWorkspaceManifest(task);
   const visible = [];
   for (const row of rows) {
+    const watched = decodeJson(row.watched_paths, []);
+    const included = row.scope_type === "work_item" ? row.scope_id === workItem.id
+      : row.scope_type === "dependency" ? dependencyItems.includes(row.scope_id)
+        : row.scope_type === "repo_verified" && row.scope_id === workItem.repo_id
+          && watched.length > 0 && watched.some((path) => ownedPaths.some((owned) => pathsOverlap(path, owned)));
+    if (!included) continue;
     if (row.expires_at && Date.parse(row.expires_at) <= now) {
       markFactExpired(row.id);
       continue;
     }
-    const watched = decodeJson(row.watched_paths, []);
-    if (!shaCoversBase(task.project_root, row.valid_for_sha, baseSha) || watchedPathsChanged(task.project_root, row.valid_for_sha, baseSha, watched)) {
-      markFactExpired(row.id);
+    if (!shaCoversBase(task.project_root, row.valid_for_sha, baseSha)) continue;
+    if (watchedPathsChanged(task.project_root, row.valid_for_sha, baseSha, watched)) {
+      if (row.scope_type === "work_item" && row.scope_id === workItem.id) markFactExpired(row.id);
       continue;
     }
     if (row.valid_for_manifest_hash && (!workspaceManifest || workspaceManifest.sha256 !== row.valid_for_manifest_hash)) {
-      markFactExpired(row.id);
+      if (row.scope_type === "work_item" && row.scope_id === workItem.id && workspaceManifest) markFactExpired(row.id);
       continue;
     }
-    const included = (() => {
-    if (row.scope_type === "work_item") return row.scope_id === workItem.id;
-    if (row.scope_type === "dependency") return dependencyItems.includes(row.scope_id);
-    if (row.scope_type !== "repo_verified" || row.scope_id !== workItem.repo_id) return false;
-    return watched.length > 0 && watched.some((path) => ownedPaths.some((owned) => pathsOverlap(path, owned)));
-    })();
-    if (included) visible.push({
+    if (row.valid_for_content_hash) {
+      continue;
+    }
+    visible.push({
       ...row,
       value: decodeJson(row.value_json, null),
       watched_paths: watched
