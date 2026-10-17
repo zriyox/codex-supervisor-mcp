@@ -1,8 +1,22 @@
 import { buildHandoff } from "./handoff.js";
+import { execFileSync } from "node:child_process";
 import { approxTokenCount } from "./truncate.js";
 import { createContextSnapshot, listContextFacts, runIdFor } from "./task-store.js";
 
 const MAX_CONTEXT_TOKENS = 1500;
+
+function factAppliesToBase(task, fact) {
+  if (!fact.valid_for_sha || fact.valid_for_sha === task.base_commit) return true;
+  try {
+    execFileSync(process.env.GIT_BIN?.trim() || "git", ["-C", task.project_root, "merge-base", "--is-ancestor", fact.valid_for_sha, task.base_commit], {
+      stdio: "ignore",
+      timeout: 15000
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 function clip(value, max = 360) {
   const text = typeof value === "string" ? value : JSON.stringify(value);
@@ -23,12 +37,12 @@ export async function compileWorkerContext(task, { attempt }) {
     contracts: task.input_context?.contracts ?? [],
     context: task.input_context?.context ?? []
   }, { maxLines: 12, maxChars: 1200 });
-  const facts = await listContextFacts({
+  const facts = (await listContextFacts({
     taskId: task.id,
     baseSha: task.base_commit ?? null,
     ownedPaths: task.owned_paths ?? [],
     dependencyTaskIds: task.depends_on ?? []
-  });
+  })).filter((fact) => factAppliesToBase(task, fact));
   let lines = [
     "Worker context capsule. This is scoped execution context, not a transcript and not authorization to expand work.",
     "L0 identity:",

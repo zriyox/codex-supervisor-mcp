@@ -106,6 +106,8 @@ Codex需0.162+支持hooks/output-schema，能力不够派单start_failed先修CL
 4. **交付报告三件套**：本地改动 → commit SHA → push 后的远端 SHA（以及部署状态）。缺远端 SHA 就不算完成。
 5. **合并即清理**：`land_codex_worker` 落地后，那路 worker 的 worktree 和 `codex/<id>` 分支就没用了 —— 清掉，别攒着。先 `SUPERVISOR_HOME=<store> npm run cleanup -- --days 0 --dry-run` 看候选（默认 14 天窗口会把最近两周的全都漏掉，所以必须带 `--days 0`），确认只删「已合并 + 干净 + 无活跃依赖」的，再 `--apply`。脏、未合、lost、failed 一律保留，并在报告里写清还剩什么、为什么。`check_workers` 在 worktree 数超过阈值（默认 50，`SUPERVISOR_CLEANUP_HINT` 可调，0 关闭）时会带回 `cleanup` 字段和两条命令。
 
+`land_codex_worker` 只到本地集成 `landed`，不是远端交付。用户已经 push 后，主线程调 `verify_delivery_push({task_id,remote:"origin"})`，它只 fetch + 祖先校验、不替你 push/部署；通过才记 `push_verified`，后续才可进入安全 cleanup 候选。
+
 典型事故：两个实现类只存在于主线程的 worktree 里，没 add / 没 commit / 没 push，线上跑的还是上一个提交，Spring 找不到 bean 启动失败 —— 不是代码错，是没上线。
 
 多 worktree 场景同理：worker 的分支、主线程的改动、集成 worktree 的合并，三者都要各自 push 到远端；只在自己 worktree 里"跑通了"不算。

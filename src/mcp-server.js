@@ -15,6 +15,7 @@ import {
 import {
   getSession,
   getFact,
+  getWorkItemForTask,
   getTask,
   getTasks,
   isPidAlive,
@@ -30,7 +31,11 @@ import {
   recordTerminalChangedFiles,
   searchTasks,
   upsertSession,
-  upsertTask
+  upsertTask,
+  appendTaskEvent,
+  recordFact,
+  runIdFor,
+  updateWorkItemDelivery
 } from "./task-store.js";
 import { readNativeGoal, readNativeGoalState } from "./goal-store.js";
 import { collectWorkerChanges } from "./worker-changes.js";
@@ -125,6 +130,14 @@ const OVERVIEW_CAP_LEVELS = [
   { title: 8, goal: 8, action: 8, path: 8 },
   { title: 0, goal: 0, action: 0, path: 0 }
 ];
+
+function git(cwd, args) {
+  return execFileSync(process.env.GIT_BIN?.trim() || "git", ["-C", cwd, ...args], {
+    encoding: "utf8",
+    timeout: 60000,
+    stdio: ["ignore", "pipe", "pipe"]
+  }).trim();
+}
 
 // `current_action` is "Running <command>", and a command can be a heredoc that
 // writes a whole file. Returning it whole put tens of thousands of characters
@@ -1367,9 +1380,100 @@ server.registerTool(
       // Recorded so a later read knows the work is on the branch: the
       // board shows it, and base_behind after this is not drift.
       const now = new Date().toISOString();
-      await upsertTask({ ...task, landed_at: now, landed_head: outcome.head ?? null, updated_at: now });
+      const landed = { ...task, landed_at: now, landed_head: outcome.head ?? null, landed_branch: outcome.onto ?? null, updated_at: now };
+      await upsertTask(landed);
+      await updateWorkItemDelivery(task_id, "landed");
+      const event = await appendTaskEvent(task_id, {
+        type: "supervisor.landed",
+        head: outcome.head ?? null,
+        branch: outcome.onto ?? null,
+        target: outcome.target ?? null,
+        landed_at: now
+      }, { runId: runIdFor(task_id, task.run_count ?? 1), actor: "supervisor" });
+      const workItem = await getWorkItemForTask(task_id);
+      if (workItem && outcome.head) {
+        await recordFact({
+          workItemId: workItem.id,
+          scopeType: "work_item",
+          scopeId: workItem.id,
+          key: "landed",
+          value: { head: outcome.head, branch: outcome.onto ?? null },
+          state: "verified",
+          sourceEventId: event.id,
+          validForSha: outcome.head,
+          watchedPaths: task.owned_paths ?? []
+        });
+      }
     }
     return textResult({ task_id, title: task.title, status: task.status, branch: `codex/${task.id}`, ...outcome });
+  }
+);
+
+server.registerTool(
+  "verify_delivery_push",
+  {
+    title: "Verify landed work reached a remote branch",
+    description: "Fetch a remote branch and prove the worker's landed_head is reachable from it. This never pushes or deploys. A passing check records push_verified; cleanup eligibility may depend on this evidence.",
+    inputSchema: {
+      task_id: z.string().min(1),
+      remote: z.string().min(1).default("origin"),
+      branch: z.string().min(1).optional()
+    }
+  },
+  async ({ task_id, remote, branch }) => {
+    const task = await getTask(task_id);
+    if (!task) return textResult({ error: "task_not_found", task_id });
+    const targetBranch = branch ?? task.landed_branch;
+    if (!task.landed_at || !task.landed_head || !targetBranch) {
+      return textResult({ error: "not_landed", task_id, reason: "land the worker first; this task has no landed head and branch to verify" });
+    }
+    try {
+      git(task.project_root, ["remote", "get-url", remote]);
+      git(task.project_root, ["fetch", "--no-tags", remote, `refs/heads/${targetBranch}`]);
+      const remoteHead = git(task.project_root, ["rev-parse", "FETCH_HEAD"]);
+      try {
+        git(task.project_root, ["merge-base", "--is-ancestor", task.landed_head, remoteHead]);
+      } catch {
+        return textResult({
+          error: "not_pushed",
+          task_id,
+          remote,
+          branch: targetBranch,
+          landed_head: task.landed_head,
+          remote_head: remoteHead,
+          reason: "landed_head is not reachable from the fetched remote branch"
+        });
+      }
+      const now = new Date().toISOString();
+      const verified = { ...task, push_verified_at: now, push_remote: remote, push_branch: targetBranch, updated_at: now };
+      await upsertTask(verified);
+      await updateWorkItemDelivery(task_id, "push_verified");
+      const event = await appendTaskEvent(task_id, {
+        type: "supervisor.push_verified",
+        remote,
+        branch: targetBranch,
+        landed_head: task.landed_head,
+        remote_head: remoteHead,
+        verified_at: now
+      }, { runId: runIdFor(task_id, task.run_count ?? 1), actor: "supervisor" });
+      const workItem = await getWorkItemForTask(task_id);
+      if (workItem) {
+        await recordFact({
+          workItemId: workItem.id,
+          scopeType: "work_item",
+          scopeId: workItem.id,
+          key: "push_verified",
+          value: { remote, branch: targetBranch, landed_head: task.landed_head, remote_head: remoteHead },
+          state: "verified",
+          sourceEventId: event.id,
+          validForSha: task.landed_head,
+          watchedPaths: task.owned_paths ?? []
+        });
+      }
+      return textResult({ task_id, remote, branch: targetBranch, landed_head: task.landed_head, remote_head: remoteHead, push_verified_at: now });
+    } catch (error) {
+      return textResult({ error: "push_verification_failed", task_id, remote, branch: targetBranch, reason: error.message.split("\n")[0] });
+    }
   }
 );
 

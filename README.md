@@ -146,7 +146,7 @@ land_codex_worker       核过了，落进集成分支
 
 ## 工具
 
-25 个。
+26 个。
 
 | 工具 | 入参 | 作用 |
 |---|---|---|
@@ -163,6 +163,7 @@ land_codex_worker       核过了，落进集成分支
 | `get_worker_diff` | `task_id`, `maxChars`, `paths` | worker 实际改了什么：从 worktree 起点到工作区的 patch，提交没提交都算。`maxChars` 管总量，超了的文件只列名 |
 | `ask_codex_worker` | `task_id`, `question`, `timeoutMs`, `maxChars`, `fresh`, `end` | 旁路问 worker 一句。线程 fork 成只读侧会话，没网络、没 MCP 工具，worker 本身不动。worker 被 resume 过会自动换新 fork，`fresh` 强制换，`end` 删 |
 | `land_codex_worker` | `task_id`, `onto`, `commitMessage`, `ignoreAcceptance`, `allowOutsideOwned` | 把 worker 在 `codex/<id>` 上的提交 cherry-pick 到派单目录的当前分支。目标要干净，冲突回滚，验收 `failed` 拒绝。`commitMessage` 先替它把未提交的改动提交成一笔，`ignoreAcceptance` 放行 |
+| `verify_delivery_push` | `task_id`, `remote`, `branch` | fetch 指定 remote branch 并证明 `landed_head` 已可达；只读验证，不会 push 或部署。通过后记录 `push_verified` |
 | `get_worker_summary` | `task_id` | 一段话：goal、状态、改动、最后一条命令和消息 |
 | `get_codex_worker_status` | `task_id`, `includePrompt`, `promptMaxChars` | 单个 worker 的状态细节 |
 | `get_codex_worker_events` | `task_id`, `limit`, `maxChars`, `kinds` | 原始事件流 |
@@ -185,6 +186,8 @@ land_codex_worker       核过了，落进集成分支
 `session_id` 只负责批次、默认门禁和审批，不再把同批 worker 的标题、汇报或 session objective 自动塞进新 worker。worker 只收到内部编译的 context capsule：自身身份/任务、显式依赖和路径/SHA 命中的 verified facts；raw event、完整 diff、历史报告、candidate facts 都只可按需读取。主线程只看 `get_context_snapshot_meta`，需要证据时再显式 `get_fact` / `get_worker_result` / `get_worker_diff`。
 
 worker 的最终 JSON 报告会先记录为该 run 的 `candidate` fact，不能跨 work 自动注入；supervisor acceptance 通过后才生成当前 work 的 `verified` outcome，并带 report/acceptance event 来源、base SHA 与 watched paths。验收失败、未配置验收或 worker 自报完成都不会升级成共享真相。
+
+交付状态分开：acceptance 通过只是 `verified`，`land_codex_worker` 只是 `landed`，仍不代表远端有这笔提交。需要显式 `verify_delivery_push` fetch 并校验 `landed_head` 已在目标 remote branch 上，才是 `push_verified`；该工具绝不代替用户执行 push 或部署。
 
 验收命令的环境包含 `CODEX_SUPERVISOR_TASK_ID`、`CODEX_SUPERVISOR_BASE_COMMIT` 和 `CODEX_SUPERVISOR_RUN`；分别是当前任务、当前运行基线和运行次数，rebase/resume 后会更新。
 

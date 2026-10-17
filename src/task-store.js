@@ -39,7 +39,11 @@ const POST_V1_COLUMNS = [
   ["acceptance_timeout_ms", "INTEGER"],
   ["acceptance_results", "TEXT"],
   ["landed_at", "TEXT"],
-  ["landed_head", "TEXT"]
+  ["landed_head", "TEXT"],
+  ["landed_branch", "TEXT"],
+  ["push_verified_at", "TEXT"],
+  ["push_remote", "TEXT"],
+  ["push_branch", "TEXT"]
 ];
 
 const TASKS_DDL = `
@@ -101,6 +105,10 @@ const TASKS_DDL = `
       acceptance_results TEXT,
       landed_at TEXT,
       landed_head TEXT,
+      landed_branch TEXT,
+      push_verified_at TEXT,
+      push_remote TEXT,
+      push_branch TEXT,
       run_log TEXT NOT NULL
     );
 `;
@@ -113,7 +121,7 @@ const TASK_COLUMNS = [
   "current_command", "error", "followup_of", "resumed_from", "session_id", "thread_id", "owned_paths",
   "depends_on", "goal_objective", "goal_token_budget", "goal_status", "goal_tokens_used",
   "goal_time_used_seconds", "goal_updated_at", "run_count", "cancel_requested_at",
-  "notices", "worktree_path", "base_commit", "acceptance", "acceptance_local", "session_policy_revision", "acceptance_timeout_ms", "acceptance_results", "landed_at", "landed_head", "run_log"
+  "notices", "worktree_path", "base_commit", "acceptance", "acceptance_local", "session_policy_revision", "acceptance_timeout_ms", "acceptance_results", "landed_at", "landed_head", "landed_branch", "push_verified_at", "push_remote", "push_branch", "run_log"
 ];
 
 function tableColumns(dbInstance, tableName) {
@@ -1049,7 +1057,6 @@ export async function listContextFacts({ taskId, baseSha, ownedPaths = [], depen
   const now = Date.now();
   return rows.filter((row) => {
     if (row.expires_at && Date.parse(row.expires_at) <= now) return false;
-    if (row.valid_for_sha && row.valid_for_sha !== baseSha) return false;
     if (row.scope_type === "work_item") return row.scope_id === workItem.id;
     if (row.scope_type === "dependency") return dependencyItems.includes(row.scope_id);
     if (row.scope_type !== "repo_verified" || row.scope_id !== workItem.repo_id) return false;
