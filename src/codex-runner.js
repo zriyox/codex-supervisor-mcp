@@ -40,6 +40,7 @@ import { compileWorkerContext } from "./context-compiler.js";
 import { captureExternalOutputs, compareExternalOutputs } from "./external-output.js";
 import { buildRuntimeContract, createPreflightMetadata, readPreflightResult, runtimeContractHash } from "./worker-preflight.js";
 import { supervisorMcpDisableArgs } from "./mcp-config.js";
+import { captureWorkspaceManifest, isGitCheckout, prepareWorkspace } from "./workspace-kind.js";
 
 const processes = new Map();
 // taskId -> control object of an acceptance run in progress ({ kill, cancelled }).
@@ -278,6 +279,7 @@ async function trackRunInHost({ record, args, prompt, logPath, spawnOptions = {}
     ? `failed to spawn ${target.cmd} for Codex capability preflight: ${error.message}`
     : `Codex capability preflight failed: ${error.message}`); }
   const outputBefore = snapshotTaskOutput(record);
+  const workspaceBefore = record.workspace_metadata?.before_manifest ?? null;
   const externalBefore = await captureExternalOutputs(record.guard_policy?.externalOutputs ?? [], { checkBaseline: (record.run_count ?? 0) === 0 });
   const owned = [...findOutsideOwnedChanges(record, []).mapping.map((entry) => entry.worker), ...externalBefore.map((entry) => entry.path)];
   const guardPolicy = { cwd: record.cwd, worktree: record.cwd, sandbox: record.sandbox, ownedPaths: owned, ...(record.guard_policy ?? {}),
@@ -473,11 +475,26 @@ async function trackRunInHost({ record, args, prompt, logPath, spawnOptions = {}
     let externalChanges = [];
     try { externalChanges = compareExternalOutputs(externalBefore, await captureExternalOutputs(record.guard_policy?.externalOutputs ?? [])); }
     catch (error) { next.attention_reason = "external_output_unverified"; next.error = error.message; }
+    let workspaceAfter = null;
+    if (workspaceBefore && Array.isArray(record.workspace_metadata?.manifest_paths)) {
+      try {
+        workspaceAfter = await captureWorkspaceManifest(record.workspace_metadata.source_root, record.workspace_metadata.manifest_paths);
+      } catch (error) {
+        next.attention_reason = "workspace_manifest_unverified";
+        next.error = error.message;
+      }
+    }
     next.run_evidence = {
       run: live.run_count, commands_run: live.commands.length,
       structured_report: parseWorkerReport(rawReport),
       output_before: outputBefore, output_after: outputAfter,
-      output_changed: outputBefore && outputAfter ? outputBefore !== outputAfter : null
+      output_changed: outputBefore && outputAfter ? outputBefore !== outputAfter : null,
+      workspace: workspaceBefore ? {
+        kind: record.workspace_kind,
+        before_manifest: workspaceBefore,
+        after_manifest: workspaceAfter,
+        manifest_changed: workspaceAfter ? workspaceBefore.sha256 !== workspaceAfter.sha256 : null
+      } : null
     };
     next.run_evidence.external_outputs = externalChanges;
     if (externalChanges.some((entry) => entry.changed)) next.run_evidence.output_changed = true;
@@ -727,7 +744,8 @@ export async function createCodexWorker({
   goal,
   dependsOn = [],
   followupOf = null,
-  useWorktree = true,
+  workspaceKind = null,
+  inPlaceAuthorization = null,
   baseRef = null,
   preflightId = null,
   preflight = null,
@@ -779,8 +797,22 @@ export async function createCodexWorker({
   for (const [name, values] of Object.entries({ forbid, allowedCommands })) {
     if (!Array.isArray(values) || values.length > 100 || values.some((value) => typeof value !== "string" || !value.trim())) throw new Error(`${name} must be a list of at most 100 nonempty strings`);
   }
+  if (baseRef && !isGitCheckout(cwd)) throw invalidBaseRefError(cwd, baseRef);
 
-  const projectRoot = cwd;
+  const id = `codex-${Date.now()}-${randomUUID().slice(0, 8)}`;
+  const workspace = await prepareWorkspace({
+    cwd,
+    workspaceKind,
+    sandbox,
+    ownedPaths,
+    networkAccess,
+    acceptance: acceptanceCommands,
+    externalOutputs,
+    inPlaceAuthorization,
+    taskId: id,
+    isPreflight: Boolean(preflight)
+  });
+  const projectRoot = workspace.sourceRoot;
   const normalizedOwnedPaths = normalizeOwnedPaths([...ownedPaths, ...externalOutputs.map((entry) => entry.path)], projectRoot);
   const conflicts = await findOwnershipConflicts(normalizedOwnedPaths);
   if (conflicts.length > 0) throw ownershipConflictError(conflicts);
@@ -797,12 +829,16 @@ export async function createCodexWorker({
   }
   const combinedAcceptance = normalizeAcceptance([...(session?.default_acceptance ?? []), ...(acceptanceCommands ?? [])]);
 
-  const id = `codex-${Date.now()}-${randomUUID().slice(0, 8)}`;
-  const worktree = useWorktree
+  const worktree = workspace.kind === "git_worktree"
     ? await ensureWorktree(projectRoot, id, baseRef)
     : { path: null, baseCommit: null };
   const worktreePath = worktree.path;
-  const effectiveCwd = worktreePath ?? projectRoot;
+  if (workspace.kind === "git_worktree" && !worktreePath) {
+    const error = new Error("workspaceKind git_worktree could not create an isolated worktree; use read_only_in_place for a non-writing inspection or initialize and commit the repository first");
+    error.code = "git_worktree_unavailable";
+    throw error;
+  }
+  const effectiveCwd = worktreePath ?? workspace.executionCwd;
   if (preflight && (!Array.isArray(preflight.probeCommands) || preflight.probeCommands.length === 0
     || preflight.probeCommands.some((command) => typeof command !== "string" || !command.trim()))) {
     throw new Error("preflight.probeCommands must be a nonempty list of shell commands");
@@ -814,7 +850,8 @@ export async function createCodexWorker({
     networkAccess,
     writableRoots: [...new Set(resolvedWritableRoots)],
     maxRunMs,
-    maxTotalMs
+    maxTotalMs,
+    workspaceKind: workspace.kind
   };
   const runtimeContract = buildRuntimeContract({
     projectRoot,
@@ -825,7 +862,9 @@ export async function createCodexWorker({
     networkAccess,
     writableRoots: guardPolicy.writableRoots,
     context,
-    contracts
+    contracts,
+    workspaceKind: workspace.kind,
+    workspaceManifestSha256: workspace.beforeManifest?.sha256 ?? null
   });
   const preflightMetadata = preflight
     ? createPreflightMetadata(runtimeContract, preflight.probeCommands)
@@ -839,6 +878,16 @@ export async function createCodexWorker({
     phase: null,
     cwd: effectiveCwd,
     project_root: projectRoot,
+    workspace_kind: workspace.kind,
+    workspace_metadata: {
+      source_root: workspace.sourceRoot,
+      execution_root: effectiveCwd,
+      manifest_paths: workspace.manifestPaths,
+      before_manifest: workspace.beforeManifest,
+      in_place_authorization: workspace.kind === "in_place_write" ? String(inPlaceAuthorization).trim() : null,
+      landable: workspace.landable,
+      cleanable: workspace.cleanable
+    },
     sandbox,
     model,
     reasoning_effort: reasoningEffort,
@@ -851,7 +900,14 @@ export async function createCodexWorker({
     guard_policy: {
       ...guardPolicy,
       ...(preflightMetadata ? { preflight: preflightMetadata } : {}),
-      ...(preflightId ? { preflight_source_id: preflightId } : {})
+      ...(preflightId ? { preflight_source_id: preflightId } : {}),
+      workspace: {
+        kind: workspace.kind,
+        source_root: workspace.sourceRoot,
+        execution_root: effectiveCwd,
+        manifest_paths: workspace.manifestPaths,
+        before_manifest_sha256: workspace.beforeManifest?.sha256 ?? null
+      }
     },
     input_context: { context, contracts },
     depends_on: Array.isArray(dependsOn) ? dependsOn : [],
@@ -904,6 +960,7 @@ export async function createCodexWorker({
       await runCommand(defaultGitBin,["-C",projectRoot,"worktree","remove",worktreePath]).catch(()=>{});
       await runCommand(defaultGitBin,["-C",projectRoot,"branch","-D",`codex/${id}`]).catch(()=>{});
     }
+    if (workspace.scratchPath) await rm(workspace.scratchPath, { recursive: true, force: true }).catch(() => {});
     throw error;
   }
 
@@ -1228,7 +1285,9 @@ export async function createFollowupWorker({
   networkAccess,
   writableRoots,
   maxRunMs,
-  maxTotalMs
+  maxTotalMs,
+  workspaceKind,
+  inPlaceAuthorization
 }) {
   const parent = await getTask(taskId);
   if (!parent) throw new Error(`task not found: ${taskId}`);
@@ -1280,7 +1339,8 @@ export async function createFollowupWorker({
     goal: goal ?? { objective: parent.goal_objective ?? `Follow-up for ${parent.id}`, tokenBudget: parent.goal_token_budget ?? undefined },
     dependsOn: [],
     followupOf: parent.id,
-    useWorktree: true,
+    workspaceKind: workspaceKind ?? (parent.workspace_kind === "legacy" ? null : parent.workspace_kind),
+    inPlaceAuthorization: inPlaceAuthorization ?? parent.workspace_metadata?.in_place_authorization ?? null,
     baseRef: baseRef ?? null,
     // Inherited unless given; the follow-up runs in a fresh worktree cut
     // from the project HEAD, so the parent's checks only pass there once

@@ -50,7 +50,7 @@ export const REPORT_SECTIONS = ["Result", "Verification", "Not done / risks"];
 // is stated. A worker is not always an editor: a read-only one can only read,
 // and one with no ownedPaths lands nothing, so both are told what their shell
 // may do instead of being told to use apply_patch they cannot use.
-export function buildGuardPreamble({ sandbox, ownedPaths = [], allowedCommands = [], forbid = [], networkAccess = false } = {}) {
+export function buildGuardPreamble({ sandbox, ownedPaths = [], allowedCommands = [], forbid = [], networkAccess = false, workspaceKind = null } = {}) {
   const forbidden = JSON.stringify(forbid);
   if (sandbox === "read-only") {
     return [
@@ -61,9 +61,12 @@ export function buildGuardPreamble({ sandbox, ownedPaths = [], allowedCommands =
     ].join(" ");
   }
   if (Array.isArray(ownedPaths) && ownedPaths.length === 0) {
+    const location = workspaceKind === "scratch"
+      ? "Its execution directory is a supervisor-managed scratch directory, not the user's source directory"
+      : "Its worktree is a scratch copy";
     return [
       "Runtime supervisor guard: this worker lands nothing: no ownedPaths means nothing it writes is ever merged into the project.",
-      "Its worktree is a scratch copy, so the shell is unrestricted apart from the red lines; keep notes and downloads inside it.",
+      `${location}, so the shell is unrestricted apart from the red lines; keep notes and downloads inside it.`,
       networkAccess ? "Network is available." : "There is no network in this sandbox; ask for it instead of retrying a failing fetch.",
       `Forbidden: ${forbidden}.`,
       "Report what you found and name the files a writer would have to change."

@@ -18,7 +18,12 @@ export const packageVersion = JSON.parse(
 
 export async function tempHome(prefix = "supervisor-edge-") {
   const home = await mkdtemp(join(tmpdir(), prefix));
-  await mkdir(join(home, "workspace"), { recursive: true });
+  const workspace = join(home, "workspace");
+  await mkdir(workspace, { recursive: true });
+  await writeFile(join(workspace, "README.md"), "edge fixture\n");
+  git(workspace, ["init", "-q", "-b", "main"]);
+  git(workspace, ["add", "README.md"]);
+  git(workspace, ["commit", "-q", "-m", "fixture"]);
   return home;
 }
 

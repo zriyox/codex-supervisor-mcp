@@ -35,7 +35,9 @@ export function buildRuntimeContract({
   networkAccess,
   writableRoots,
   context,
-  contracts
+  contracts,
+  workspaceKind = "git_worktree",
+  workspaceManifestSha256 = null
 }) {
   return stableValue({
     version: PREFLIGHT_VERSION,
@@ -46,6 +48,8 @@ export function buildRuntimeContract({
     allowed_commands: uniqueSorted(allowedCommands),
     network_access: networkAccess === true,
     writable_roots: uniqueSorted(writableRoots),
+    workspace_kind: workspaceKind,
+    workspace_manifest_sha256: workspaceManifestSha256,
     context: (context ?? [])
       .map((entry) => ({ path: resolve(entry.path), sha256: entry.sha256 ?? null }))
       .sort((left, right) => left.path.localeCompare(right.path)),

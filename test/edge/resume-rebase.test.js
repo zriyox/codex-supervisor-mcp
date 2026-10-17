@@ -4,7 +4,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { dispatchArgs, git, makeRepo, tempHome, waitFor, withMcp } from "./helpers.js";
@@ -210,7 +210,13 @@ test("a bad ref, a worker without a worktree, and a worker still running are ref
     await waitFor(call, created.id, settled);
     const bad = await call("resume_codex_worker", { task_id: created.id, prompt: "x", rebaseOnto: "does-not-exist" });
     assert.equal(bad.error, "invalid_rebase_onto");
-    const inPlace = await call("create_codex_worker", dispatchArgs("in-place", join(home, "workspace")));
+    const plain = join(home, "in-place");
+    await mkdir(plain, { recursive: true });
+    const inPlace = await call("create_codex_worker", dispatchArgs("in-place", plain, {
+      sandbox: "read-only",
+      ownedPaths: [],
+      workspaceKind: "read_only_in_place"
+    }));
     await waitFor(call, inPlace.id, settled);
     const none = await call("resume_codex_worker", { task_id: inPlace.id, prompt: "x", rebaseOnto: "HEAD" });
     assert.equal(none.error, "no_worktree");

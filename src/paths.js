@@ -20,3 +20,4 @@ export const dataDir = join(supervisorRoot, "data");
 export const dbPath = join(dataDir, "supervisor.sqlite");
 export const runsDir = join(dataDir, "runs");
 export const worktreesDir = join(supervisorRoot, "worktrees");
+export const scratchDir = join(supervisorRoot, "scratch");

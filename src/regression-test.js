@@ -19,6 +19,10 @@ const fakeCodex = join(here, "test-fixtures", "fake-codex.js");
 const home = await mkdtemp(join(tmpdir(), "supervisor-regression-"));
 const workspace = join(home, "workspace");
 await mkdir(workspace, { recursive: true });
+await writeFile(join(workspace, "README.md"), "regression fixture\n");
+execFileSync("git", ["init", "-q", "-b", "main"], { cwd: workspace });
+execFileSync("git", ["add", "README.md"], { cwd: workspace });
+execFileSync("git", ["-c", "user.name=regression", "-c", "user.email=regression@example.invalid", "commit", "-q", "-m", "fixture"], { cwd: workspace });
 
 const THREAD_ID = "01a0fd0a-54a3-7a91-b37c-1f540e80e164";
 const baseEnv = { SUPERVISOR_HOME: home, CODEX_BIN: fakeCodex, FAKE_CODEX_THREAD_ID: THREAD_ID };

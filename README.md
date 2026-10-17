@@ -23,7 +23,7 @@
 | 问题 | 做法 |
 |---|---|
 | 几个 worker 互相踩文件 | 一个 worker 一个 Git worktree，`ownedPaths` 在派单前查冲突 |
-| worker 不是只会改代码 | 三种形状：编辑（`ownedPaths` 非空）、只读验证（`read-only` + `ownedPaths: []`，无写入无网络）、研究检索（`workspace-write` + `networkAccess: true` + `ownedPaths: []`，能联网、能写草稿、永不 land）；读共享文件不排他，只有写排他 |
+| worker 不是只会改代码 | 四种 `workspaceKind`：Git 编辑 `git_worktree`、只读 `read_only_in_place`、联网研究 `scratch`、显式授权的非 Git 写入 `in_place_write`；非 Git 默认绝不写原目录 |
 | worker 的过程塞爆主线程上下文 | 事件写 `data/runs/<taskId>.jsonl`，读的时候有 `limit` / `maxChars` / `kinds` 三道闸 |
 | 主线程读一次状态就顶满 | `get_orchestration_overview` 把全部 worker 压进 7000 字节 |
 | 进程重启后不知道谁还在跑 | `supervisor.sqlite` 一行一个 work，带 `thread_id` |
@@ -153,9 +153,9 @@ land_codex_worker       核过了，落进集成分支
 | `check_workers` | 无参 | 交付新终态、验收失败和需处理goal；新格式第1轮lost/no_work自动恢复一次，未变返回quiet；用宿主定时唤醒调用，每个主线程设独立CODEX_SUPERVISOR_OBSERVER_ID可在重启后接回 |
 | `overview_delta` | `cursor` | 主线程默认轮询入口：只返回 active / needs_attention / ready_to_land / ready_to_clean、cursor 后变化和 next_cursor；不返回全量历史、prompt、diff、event 或 worker capsule |
 | `check_acceptance` | `cwd`, `acceptance`, `baseRef`, `timeoutMs` | 派单前实际运行给定验收命令，不建 worker，不证明 worker 完成；数量 grep 会提示不能证明失败名单和必跑执行 |
-| `preflight_codex_worker` | `cwd`, `ownedPaths`, `probeCommands`, `baseRef`, `sandbox`, `allowedCommands`, `context`, `contracts`, `networkAccess`, `writableRoots` | 用与目标 worker 相同的 base/sandbox/guard 起短 probe worker；它必须实际跑完每条 probe command。等终态后读 `get_worker_preflight` |
+| `preflight_codex_worker` | `cwd`, `workspaceKind`, `inPlaceAuthorization`, `ownedPaths`, `probeCommands`, `baseRef`, `sandbox`, `allowedCommands`, `context`, `contracts`, `networkAccess`, `writableRoots` | 用与目标 worker 相同的 workspace/base/sandbox/guard 起短 probe worker；它必须实际跑完每条 probe command。等终态后读 `get_worker_preflight` |
 | `get_worker_preflight` | `task_id` | 返回 probe 的实际 command evidence、运行环境 contract hash 和 `running/passed/failed`；只有 `passed` 才能复用 |
-| `create_codex_worker` | `task`, `cwd`, **`ownedPaths`**, **`goal`**, `preflight_id`, `forbid`, `allowedCommands`, `context`, `contracts`, `externalOutputs`, `networkAccess`, `writableRoots`, `maxRunMs`, `maxTotalMs`, `acceptance`, `session_id`, `session_title`, `session_note`, `dependsOn`, `baseRef`, `sandbox`, `model`, `reasoningEffort`, `title`, `skipGitRepoCheck` | 起一个 worker。`preflight_id` 给了就必须是通过的同环境 probe，base/guard/context 任何变化都会拒绝派工。`dependsOn` 是硬门禁：上游须同项目、成功结算、验收通过（如配置）、已 land，且本路 base 包含其 landed head |
+| `create_codex_worker` | `task`, `cwd`, `workspaceKind`, `inPlaceAuthorization`, **`ownedPaths`**, **`goal`**, `preflight_id`, `forbid`, `allowedCommands`, `context`, `contracts`, `externalOutputs`, `networkAccess`, `writableRoots`, `maxRunMs`, `maxTotalMs`, `acceptance`, `session_id`, `session_title`, `session_note`, `dependsOn`, `baseRef`, `sandbox`, `model`, `reasoningEffort`, `title`, `skipGitRepoCheck` | Git 默认隔离 worktree；非 Git 写入必须选 `scratch` 或有授权、paths、acceptance 的 `in_place_write`。`preflight_id` 给了就必须是通过的同环境 probe |
 | `create_codex_followup_worker` | `task_id`, `followup_prompt`, `session_id`, 其余同上 | 开一个新会话，把老 worker 的 prompt、状态、近期事件拼进去 |
 | `resume_codex_worker` | `task_id`, `prompt`, `rebaseOnto`, `acceptance`, `context` | 接同一个 Codex 会话继续跑，`thread_id` 不变。`rebaseOnto` 先把 worktree 挪到主线新头（stash、跳过已合入补丁、重放新增提交、放回），冲突原样退回不起 worker |
 | `wait_codex_workers` | `task_ids`, `mode`(any/all), `timeoutMinutes`, `timeoutMs`, `compact`, `includeEvents`, `eventLimit`, `eventMaxChars`, `eventKinds` | 等终态。默认 60 秒，到点带快照返回，worker 照跑；`compact` 每路只回一行，带 `idle_seconds` / `command_running`，分得清长命令和卡住 |
@@ -209,7 +209,7 @@ wait 默认预算60秒、默认compact；includeEvents会选择详细结果（�
 
 `allowedCommands` 里以 `*` 结尾的条目是前缀匹配（如 `go test ./internal/*` 覆盖 `go test ./internal/service -run TestX`），只对没有 shell 元字符的单条命令生效。编辑器 worker 的只读白名单覆盖 grep/sed（无 `-i`）/find（无 `-exec`/`-delete`）/jq（无 `-i`）/awk、git 只读子命令和 `cmd | head|tail|wc|sort|uniq` 纯读管道；`tee`、重定向、`env` 仍拒。守卫不是文件沙箱，漏网的写入只会落在 worker 自己的 worktree，land 会拒。
 
-守卫按 worker 形状放权：`ownedPaths` 非空的编辑 worker 只放声明过的命令和简单读取；`read-only` 或 `ownedPaths: []` 的 worker 没有可 land 的写边界，Shell 不再逐条限制（forbid 红线照旧），所以检索、审查、跑 `curl`/`gh`/`python` 都能干活。实测 read-only 沙箱连 `/tmp` 都写不了、也不通 DNS，所以联网检索要用 `workspace-write` + `networkAccess: true` + `ownedPaths: []`，产物永不进主分支。
+守卫按 worker 形状放权：`git_worktree` 编辑 worker 只放声明过的命令和简单读取；`read_only_in_place` 无写入无网络；`scratch` 的联网草稿只能写在 `SUPERVISOR_HOME/scratch/<taskId>`；`in_place_write` 必须有显式授权、ownedPaths 与 acceptance，并保存前后 manifest。非 Git `workspace-write` 没写 `workspaceKind` 会拒绝，绝不默认写用户目录。
 
 check_workers在状态协调后，对已结束的第1轮lost/no_work/invalid_report原子resume一次（invalid_report只要求重发裸JSON，不重做活）；第2轮仍有问题则保留证据等处理。审批、认证、权限和quota等待不重试，返回recoveries记录。worker最终输出强制JSON result/verification/not_done；get_worker_result的structured_report给格式校验，独立命令与acceptance仍为实际证据。非法JSON标failed/invalid_report并拒绝land；旧历史标legacy_text。
 
@@ -223,7 +223,7 @@ workspace-write默认networkAccess:false；需要ssh/联网验证显式true，�
 
 运行前核验Codex CLI是否具备hooks/output-schema（要求0.162+）；能力不足返回start_failed，wait可正常结算。get_worker_goal.native_goal_read区分missing_goal、missing_database、locked和read_error，不能把读取失败当没建goal。原生budget/usage限制也进入needs_attention。cleanup保留ignored artifacts、共享证据和未解决attention。
 
-ownedPaths预留和任务入库在同一事务内，跨MCP并发派单/恢复不能抢同一输出；验收或退出尚未结算时仍保留归属。Git工作区隔离创建失败明确报错，不退回主目录执行。
+ownedPaths预留和任务入库在同一事务内，跨MCP并发派单/恢复不能抢同一输出；验收或退出尚未结算时仍保留归属。Git工作区隔离创建失败明确报错，不退回主目录执行；非 Git `scratch` 也不落回原目录。
 
 清理先 `cleanup_plan`（CLI 对应 `npm run cleanup -- --dry-run`）分类 SAFE / REVIEW / BLOCKED；SAFE 要求 `push_verified`、干净、无活跃依赖、Git 注册和路径归属可证明。`apply_cleanup`（CLI `--apply`）会在删除前重验 fingerprint，只执行 `git worktree remove`/`prune`。branch、task row、event、JSONL、artifact 永远保留；脏、未合、未 push、lost/failed 和证明不足的一律不删。
 

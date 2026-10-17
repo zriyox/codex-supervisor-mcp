@@ -15,7 +15,7 @@ description: 把 Codex CLI 当并行 worker 派活、盯进度、收结果。用
 
 1. 先 `search_works` 搜一下，别重复派。
 2. 拆功能包。每路写清楚：干什么、能写哪些文件、依赖谁、怎么算做完和谁负责集成。改同一批文件就串行；文件不重叠只是并行前提，不等于依赖已满足。
-3. 写 worker 先 `preflight_codex_worker`：用目标同一份 `baseRef` / `ownedPaths` / `sandbox` / `allowedCommands` / `context` / `networkAccess` / `writableRoots` 跑必要命令。等它终态后 `get_worker_preflight` 必须 `passed`，再把它的 `task_id` 填进 `create_codex_worker.preflight_id`。contract 变了重跑，不能拿宿主 `check_acceptance` 冒充 worker 环境成功。
+3. 写 worker 先 `preflight_codex_worker`：用目标同一份 `workspaceKind` / `baseRef` / `ownedPaths` / `sandbox` / `allowedCommands` / `context` / `networkAccess` / `writableRoots` 跑必要命令。等它终态后 `get_worker_preflight` 必须 `passed`，再把它的 `task_id` 填进 `create_codex_worker.preflight_id`。contract 变了重跑，不能拿宿主 `check_acceptance` 冒充 worker 环境成功。
 4. `create_codex_worker` 派出去。回执只有 `id`、`worktree_path`、`branch`、`owned_paths`、`status`，不回传任务原文。
 5. 长任务配宿主 `/loop 5m check_workers` 定时收活，没变化 quiet，有新结果按 next_step 收。工具会按规则恢复一次，但不会唤醒关闭的主窗口；每个主线程设独立 `CODEX_SUPERVISOR_OBSERVER_ID` 可重启接回。短等用 `wait_codex_workers` 的 `timeoutMs: 60000`、`compact: true`，到点继续同批 task_ids。
 
@@ -24,7 +24,9 @@ worker 默认不是调度员：启动时会禁用它继承到的 `codex-supervis
 | 参数 | 怎么填 |
 |---|---|
 | `task` | 这一路具体干什么。要能直接开工，别写"优化一下"。汇报格式 supervisor 已经附在 task 后面（结论 / 验证 / 没做的），别再要它列改动文件，diff 自己看 |
-| `cwd` | 项目根目录。worker 在自己的 worktree 里干活，不动你的工作区 |
+| `cwd` | Git 项目根，或非 Git 输入目录；实际执行目录由 `workspaceKind` 决定，不能默认写原目录 |
+| `workspaceKind` | Git 代码默认 `git_worktree`；非 Git 只读用 `read_only_in_place`，联网研究用 `scratch`，要改用户非 Git 目录只能显式 `in_place_write` |
+| `inPlaceAuthorization` | 仅 `in_place_write`：写明用户授权原因；同时必须有非空 `ownedPaths` 和 `acceptance`，系统记录前后 manifest |
 | `acceptance` | 这一步"做完了"的判据，worker 退出后 supervisor 在它的 worktree 里逐条跑。写 worker 不能只用 `test -s/-f`、`[ -e ]` 这类文件存在性检查；要有真实 test、endpoint probe 或结构化执行证据。识别到的 test runner 输出 `no tests to run` / `[no test files]` 即使 exit 0 也失败。必跑用例、skip、旧报告和失败身份用 `{command,reportPath,baseline}` 结构化验收证明；远端机器的检查包进 `ssh` |
 | `forbid` / `allowedCommands` | 原样声明红线与验证命令；守卫拒绝未声明Shell程序，编辑用apply_patch |
 | `writableRoots` | 只有需要凭据目录时才传（绝对路径、已存在、自动解析软链、只对 workspace-write 生效）：ssh/远程测试 → `["~/.ssh"]`；kubectl → `["~/.kube"]`；推私有镜像 → `["~/.docker"]`；aws cli → `["~/.aws"]`；签名提交 → `["~/.gnupg"]`。缓存目录不用写，已经自动加 |
@@ -56,11 +58,12 @@ worker不止改代码，按这路要什么选形状：
 
 | 形状 | 参数 | 能干什么 |
 |---|---|---|
-| 编辑 worker | `ownedPaths` 非空（默认） | apply_patch 只能落在 ownedPaths，shell 只放声明过的命令和简单读取 |
-| 只读验证 worker | `sandbox: "read-only"` + `ownedPaths: []` | 随便跑读命令（rg/cat/git/jq），**沙箱没有任何写入（连 /tmp 都不行）、也没有网络**；结论写在最终报告 |
-| 研究/检索 worker | `sandbox: "workspace-write"` + `networkAccess: true` + `ownedPaths: []` | 能联网 curl/gh、能往自己的 worktree 写草稿；没有任何东西会 land，只出报告 |
+| Git 编辑 worker | `workspaceKind: "git_worktree"` + `ownedPaths` 非空 | apply_patch 只能落在 ownedPaths，shell 只放声明过的命令和简单读取 |
+| 只读验证 worker | `workspaceKind: "read_only_in_place"` + `sandbox: "read-only"` + `ownedPaths: []` | 随便跑读命令（rg/cat/git/jq），**沙箱没有任何写入（连 /tmp 都不行）、也没有网络**；结论写在最终报告 |
+| 研究/检索 worker | `workspaceKind: "scratch"` + `sandbox: "workspace-write"` + `networkAccess: true` + `ownedPaths: []` | 能联网 curl/gh，只能往 supervisor 管理 scratch 写草稿；没有任何东西会 land，也不碰原始非 Git 目录 |
+| 非 Git 写入 worker | `workspaceKind: "in_place_write"` + 授权 + `ownedPaths` + `acceptance` | 仅用户明确授权时使用；记录授权和前后 manifest，不能 land |
 
-read-only 下 `networkAccess: true` 会被拒（实测该沙箱连 DNS 都不通，配了也没用）；要联网就按研究 worker 派。研究 worker 的 shell 不受 allowedCommands 限制，forbid 红线照旧。读共享文件永远不排他，只有写按 ownedPaths 排他。
+read-only 下 `networkAccess: true` 会被拒（实测该沙箱连 DNS 都不通，配了也没用）；要联网就按 `scratch` 研究 worker 派。非 Git `workspace-write` 不写 `workspaceKind` 会拒绝，绝不偷偷落到用户目录。研究 worker 的 shell 不受 allowedCommands 限制，forbid 红线照旧。读共享文件永远不排他，只有写按 ownedPaths 排他。
 
 check_workers可对已死的第1轮lost/no_work/invalid_report自动resume一次，recoveries记动作；invalid_report只让它重发裸JSON、不重做活，第2轮仍失败看证据处理，审批/认证/权限/quota不盲重试。最终报告强制JSON，structured_report仅验证格式；invalid_report拒land，resume让模型提交合法JSON，命令和acceptance另外核对。
 
@@ -152,7 +155,7 @@ overview、派单回执、`wait` 返回里出现 `update` 且 `update_available:
 
 ## 常见坑
 
-- worktree 从一个提交切，你工作区里没 commit 的东西 worker 看不到。要让它读到就给绝对路径或先 commit。
+- worktree 从一个提交切，你工作区里没 commit 的东西 worker 看不到。要让它读到就给绝对路径或先 commit；Git worktree 建不出来会明确拒绝，不会退回主目录执行。
 - `exit_code: 0` 只说明没崩。`acceptance` 是 supervisor 替你跑的验收，`verification` 是它自己跑过的，两个都没有就只剩 diff。验收命令别往 worktree 写文件，会混进它的改动。
 - `ownedPaths` 在跨MCP派单/恢复时原子预留，验收和退出结算前仍占用；Git隔离创建失败不退回主目录。land 按真实 diff 拒越界（提交草稿前就查）。仍不等于运行时沙箱，收活看 diff；`allowOutsideOwned` 只用于用户明确批准的例外。
 - worktree 只隔离工作区，端口和数据库是共用的。

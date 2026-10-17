@@ -18,7 +18,11 @@ before(async () => {
     worker = await waitFor(call, created.id, (t) => t.status === "completed");
     const plain = join(home, "not-a-repo");
     await mkdir(plain, { recursive: true });
-    const createdPlain = await call("create_codex_worker", dispatchArgs("in-place", plain));
+    const createdPlain = await call("create_codex_worker", dispatchArgs("in-place", plain, {
+      sandbox: "read-only",
+      ownedPaths: [],
+      workspaceKind: "read_only_in_place"
+    }));
     inPlace = await waitFor(call, createdPlain.id, (t) => t.status === "completed");
   });
   // Stand in for the worker's own edits: one commit, one unstaged edit, one

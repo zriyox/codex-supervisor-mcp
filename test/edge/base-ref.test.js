@@ -54,18 +54,15 @@ test("an unknown ref, a ref in a non-git cwd, and an empty string are refused wi
   });
 });
 
-test("a repository with no commits yet gets no worktree and still runs", async () => {
+test("a repository with no commits is refused instead of falling back to an in-place write", async () => {
   const home = await tempHome("supervisor-baseref-");
   const bare = join(home, "fresh");
   await mkdir(bare, { recursive: true });
   git(bare, ["init", "-q", "-b", "main"]);
   await withMcp({ SUPERVISOR_HOME: home }, async ({ call }) => {
-    const created = await call("create_codex_worker", dispatchArgs("fresh", bare));
-    assert.ok(created.id, JSON.stringify(created));
-    assert.equal(created.worktree_path, null, "nothing to cut a worktree from");
-    assert.equal(created.base_commit, null);
-    assert.equal(created.cwd, bare);
-    const final = await waitFor(call, created.id, (t) => t.status === "completed");
-    assert.equal(final.status, "completed");
+    const refused = await call("create_codex_worker", dispatchArgs("fresh", bare));
+    assert.equal(refused.error, "git_worktree_unavailable");
+    const rows = await call("list_codex_workers", { includeHistory: true });
+    assert.equal(rows.filter((row) => row.title === "fresh").length, 0);
   });
 });

@@ -23,7 +23,7 @@ Point several agents at one repository and they overwrite each other, nobody can
 | Problem | What it does |
 |---|---|
 | Workers trample each other's files | One Git worktree per worker, `ownedPaths` checked for overlap before dispatch |
-| A worker is not only an editor | Three shapes: edit (`ownedPaths` non-empty), read-only verify (`read-only` + `ownedPaths: []`: no writes, no network), research/retrieval (`workspace-write` + `networkAccess: true` + `ownedPaths: []`: fetches, keeps scratch notes, never lands). Reading shared files is never exclusive; writing is |
+| A worker is not only an editor | Four `workspaceKind` shapes: Git edit `git_worktree`, read-only `read_only_in_place`, networked research `scratch`, and explicitly authorized non-Git writes `in_place_write`. A non-Git source directory is never writable by default. |
 | A worker says it is done and it is not | Dispatch with `acceptance` commands; the supervisor runs them in the worktree after the worker exits, and `land` refuses while they fail |
 | Worker output floods the main thread | Events go to `data/runs/<taskId>.jsonl`; reads are gated by `limit` / `maxChars` / `kinds` |
 | One status read fills the context | `get_orchestration_overview` fits every worker into 7000 bytes |
@@ -144,13 +144,14 @@ Light and dark follow the system. No external resources.
 
 ## Tools
 
-Twenty-one.
+Thirty.
 
 | Tool | Arguments | What it does |
 |---|---|---|
 | `check_workers` | none | Report newly settled runs and actionable changes; recover a new-format first lost/no_work run once. Unchanged state is quiet. Call from a host-scheduled loop and use a distinct CODEX_SUPERVISOR_OBSERVER_ID for each reconnecting main thread |
 | `check_acceptance` | `cwd`, `acceptance`, `baseRef`, `timeoutMs` | Execute supplied checks before dispatch, without creating a worker or proving completion; warns that failure-count greps do not establish an approved failure list or required execution |
-| `create_codex_worker` | `task`, `cwd`, **`ownedPaths`**, **`goal`**, `forbid`, `allowedCommands`, `context`, `contracts`, `externalOutputs`, `networkAccess`, `writableRoots`, `maxRunMs`, `maxTotalMs`, `acceptance`, `session_id`, `session_title`, `session_note`, `dependsOn`, `baseRef`, `sandbox`, `model`, `reasoningEffort`, `title`, `skipGitRepoCheck` | Start a worker. `acceptance` lists the commands the supervisor runs in the worktree once the worker exits; exit 0 on every one passes. `baseRef` picks the commit the worktree is cut from (default `HEAD`); pass another worker's `codex/<id>` to build on it |
+| `preflight_codex_worker` | `cwd`, `workspaceKind`, `inPlaceAuthorization`, `ownedPaths`, `probeCommands`, `baseRef`, `sandbox`, `allowedCommands`, `context`, `contracts`, `networkAccess`, `writableRoots` | Run a short probe worker under the exact workspace/base/sandbox/guard contract intended for the later worker; wait for `get_worker_preflight` to report passed before dispatch |
+| `create_codex_worker` | `task`, `cwd`, `workspaceKind`, `inPlaceAuthorization`, **`ownedPaths`**, **`goal`**, `forbid`, `allowedCommands`, `context`, `contracts`, `externalOutputs`, `networkAccess`, `writableRoots`, `maxRunMs`, `maxTotalMs`, `acceptance`, `session_id`, `session_title`, `session_note`, `dependsOn`, `baseRef`, `sandbox`, `model`, `reasoningEffort`, `title`, `skipGitRepoCheck` | Git defaults to an isolated worktree. A non-Git write must choose `scratch`, or an authorized `in_place_write` with paths and acceptance. |
 | `create_codex_followup_worker` | `task_id`, `followup_prompt`, `session_id`, plus the above | A new session seeded with the old worker's prompt, status and recent events |
 | `resume_codex_worker` | `task_id`, `prompt`, `rebaseOnto`, `acceptance`, `context` | Continue the same Codex conversation; `thread_id` stays. `rebaseOnto` first moves the worktree onto the project's newer commit (stash, skip integrated patches, replay new commits, unstash); a conflict puts it back and does not start the worker |
 | `wait_codex_workers` | `task_ids`, `mode` (any/all), `timeoutMinutes`, `timeoutMs`, `compact`, `includeEvents`, `eventLimit`, `eventMaxChars`, `eventKinds` | Wait for terminal states. 60 seconds by default, then a snapshot while the workers keep running; `compact` returns one line per worker with `idle_seconds` / `command_running`, so a long command and a stuck worker look different |
@@ -190,7 +191,7 @@ A model with no separate `apply_patch` tool (measured with Codex 0.162 + DeepSee
 
 An `allowedCommands` entry ending in `*` is a prefix match (so `go test ./internal/*` covers `go test ./internal/service -run TestX`), valid only for a single command without shell metacharacters. An editor worker may also read with grep/sed (without `-i`)/find (without `-exec`/`-delete`)/jq (without `-i`)/awk, the git read subcommands and pure read pipes such as `cmd | head|tail|wc|sort|uniq`; `tee`, redirects and `env` stay refused. The guard is not a filesystem sandbox: a miss only writes inside the worker's own worktree, and land refuses it.
 
-The guard relaxes by worker shape: an editor with non-empty `ownedPaths` gets only declared commands and simple reads; a `read-only` worker, or one with `ownedPaths: []`, has no landable write boundary left, so the shell is no longer restricted command by command (forbid red lines still apply) and retrieval, review, `curl`, `gh` and `python` work. Measured with Codex 0.162: the read-only sandbox cannot write even `/tmp` and has no DNS, so a fetching worker runs `workspace-write` + `networkAccess: true` + `ownedPaths: []` and its output never merges.
+The guard relaxes by workspace shape: a `git_worktree` editor with non-empty `ownedPaths` gets only declared commands and simple reads; `read_only_in_place` cannot write or use network; networked research uses `scratch` under `SUPERVISOR_HOME`, never the source directory; `in_place_write` requires explicit authorization, owned paths and acceptance with before/after manifests. A non-Git `workspace-write` request without `workspaceKind` is refused.
 
 After reconciliation, check_workers atomically resumes a dead first lost/no_work/invalid_report run once and returns recovery receipts (an invalid report only re-asks for the bare JSON; it does not redo the work). A second failure remains actionable; approval, authentication, permission and quota waits are not retried. Final reports use JSON result/verification/not_done; structured_report exposes validation independently of command history and acceptance. Invalid JSON is failed/invalid_report and cannot land. Existing history is labelled legacy_text.
 

@@ -269,6 +269,7 @@ function summarizeTask(task) {
     phase: task.phase ?? null,
     cwd: task.cwd,
     project_root: task.project_root,
+    workspace_kind: task.workspace_kind ?? "legacy",
     sandbox: task.sandbox,
     model: task.model,
     reasoning_effort: task.reasoning_effort ?? "high",
@@ -342,6 +343,7 @@ function receipt(task) {
     phase: task.phase ?? null,
     cwd: task.cwd,
     project_root: task.project_root,
+    workspace_kind: task.workspace_kind ?? "legacy",
     worktree_path: task.worktree_path,
     branch: task.worktree_path ? `codex/${task.id}` : null,
     base_commit: task.base_commit ?? null,
@@ -644,6 +646,8 @@ server.registerTool(
       maxRunMs: z.number().int().min(1000).max(86400000).optional(),
       maxTotalMs: z.number().int().min(1000).max(604800000).optional(),
       baseRef: z.string().min(1).optional(),
+      workspaceKind: z.enum(["git_worktree", "read_only_in_place", "scratch", "in_place_write"]).optional(),
+      inPlaceAuthorization: z.string().min(1).max(2000).optional(),
       probeCommands: z.array(z.string().min(1)).min(1).max(20)
     }
   },
@@ -690,7 +694,7 @@ server.registerTool(
   {
     title: "Create Codex worker",
     description:
-      "Launch a Codex CLI worker with codex exec --json and track its events. ownedPaths and goal are required: ownedPaths reserves the files this worker may write, and an empty list is the deliberate promise that nothing lands, which is how a read-only verifier or a research worker is dispatched. The worker is not only an editor: a read-only worker gets no network and may run any read command, and a research worker runs with sandbox \"workspace-write\", networkAccess: true and ownedPaths: [] so it can fetch, keep notes in its own throwaway worktree and never merge anything. Reading is never exclusive; only writes conflict. acceptance is the list of shell commands that decide whether the work is done: the supervisor runs them in the worker's worktree after codex exits, each must exit 0, and the worker sees them in its prompt so it can run them first. Write the check for this step (a test file, a file that must exist, an endpoint that must answer), not the whole suite; a check on another machine goes through ssh. They run with the supervisor's own privileges, as if you ran them yourself. The verdict shows as acceptance on wait, the overview and get_worker_result, and land_codex_worker refuses while it is failed. The worker's sandbox may write the worktree, the temp directory and the OS cache directory; a toolchain whose cache lives elsewhere needs writableRoots, a list of existing absolute directories.",
+      "Launch a Codex CLI worker with codex exec --json and track its events. workspaceKind controls where it runs: Git work writes only in an isolated git_worktree; read_only_in_place cannot write or use network; scratch writes only under SUPERVISOR_HOME and never lands; in_place_write is only for an explicitly authorized non-Git directory with ownedPaths and acceptance. A non-Git worker may never write the user directory by default. ownedPaths reserves files a landable worker may write; reading is never exclusive. acceptance is the list of shell commands that decide whether the work is done: the supervisor runs them after Codex exits. The worker's sandbox may write its execution directory, the temp directory and the OS cache directory; a toolchain whose cache lives elsewhere needs writableRoots, a list of existing absolute directories.",
     inputSchema: {
       title: z.string().optional(),
       task: z.string().min(1),
@@ -729,6 +733,8 @@ server.registerTool(
       // HEAD; pass a branch, tag or sha to build on work that is not on the
       // main line yet (for example another worker's codex/<id> branch).
       baseRef: z.string().min(1).optional(),
+      workspaceKind: z.enum(["git_worktree", "read_only_in_place", "scratch", "in_place_write"]).optional(),
+      inPlaceAuthorization: z.string().min(1).max(2000).optional(),
       // A successful preflight_codex_worker task id. When present, this worker
       // is refused unless base commit and the complete runtime contract match.
       preflight_id: z.string().min(1).optional(),
@@ -781,6 +787,8 @@ server.registerTool(
       writableRoots: z.array(z.string().min(1)).max(20).optional(),
       maxRunMs: z.number().int().min(1000).max(86400000).optional(),
       maxTotalMs: z.number().int().min(1000).max(604800000).optional(),
+      workspaceKind: z.enum(["git_worktree", "read_only_in_place", "scratch", "in_place_write"]).optional(),
+      inPlaceAuthorization: z.string().min(1).max(2000).optional(),
       goal: z
         .object({
           objective: z.string().min(1),
@@ -1279,6 +1287,7 @@ server.registerTool(
       exit_code: task.exit_code ?? null,
       thread_id: task.thread_id,
       session_id: task.session_id ?? null,
+      workspace_kind: task.workspace_kind ?? "legacy",
       worktree_path: task.worktree_path,
       goal_status: task.goal_status,
       attention_reason: task.attention_reason ?? null,
@@ -1399,6 +1408,9 @@ server.registerTool(
   async ({ task_id, onto, commitMessage, ignoreAcceptance, allowOutsideOwned }) => {
     const task = await getTask(task_id);
     if (!task) return textResult({ error: "task_not_found", task_id });
+    if (task.workspace_kind && task.workspace_kind !== "legacy" && task.workspace_kind !== "git_worktree") {
+      return textResult({ error: "workspace_kind_not_landable", task_id, workspace_kind: task.workspace_kind, reason: `${task.workspace_kind} does not create a Git worktree and cannot be landed` });
+    }
     const session = task.session_id ? await getSession(task.session_id) : null;
     if (task.attention_reason === "invalid_report") return textResult({ error: "invalid_report", task_id, reason: task.error });
     if (!isSettled(task)) return textResult({ error: "worker_active", task_id, reason: "wait for this run and acceptance to settle before landing" });

@@ -3,6 +3,7 @@
 // verification that exposes what the worker actually ran.
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { dispatchArgs, makeRepo, tempHome, waitFor, withMcp } from "./helpers.js";
 
@@ -42,9 +43,14 @@ test("files are a count by default, a list with includeFiles, and always a list 
     assert.ok(Array.isArray(listed.changed_files));
     assert.equal(listed.changed_files.length, listed.changed_file_count);
 
-    const plain = join(home, "workspace");
-    const inPlace = await call("create_codex_worker", dispatchArgs("in-place", plain));
-    assert.equal(inPlace.worktree_path, null, "a non-git cwd runs in place");
+    const plain = join(home, "in-place");
+    await mkdir(plain, { recursive: true });
+    const inPlace = await call("create_codex_worker", dispatchArgs("in-place", plain, {
+      sandbox: "read-only",
+      ownedPaths: [],
+      workspaceKind: "read_only_in_place"
+    }));
+    assert.equal(inPlace.worktree_path, null, "an explicit read_only_in_place worker has no worktree");
     await waitFor(call, inPlace.id, (t) => t.status === "completed" && t.exit_code !== null);
     const result = await call("get_worker_result", { task_id: inPlace.id });
     assert.deepEqual(result.changed_files, ["/tmp/fake/one.ts", "/tmp/fake/two.ts"], "event-sourced files are the only record and are never hidden");

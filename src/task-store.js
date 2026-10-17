@@ -46,6 +46,11 @@ const POST_V1_COLUMNS = [
   ["push_branch", "TEXT"]
 ];
 
+const TASK_EXTRA_COLUMNS = [
+  ["workspace_kind", "TEXT NOT NULL DEFAULT 'legacy'"],
+  ["workspace_metadata", "TEXT"]
+];
+
 const TASKS_DDL = `
     CREATE TABLE IF NOT EXISTS tasks (
       id TEXT PRIMARY KEY,
@@ -55,6 +60,8 @@ const TASKS_DDL = `
       phase TEXT,
       cwd TEXT NOT NULL,
       project_root TEXT NOT NULL,
+      workspace_kind TEXT NOT NULL DEFAULT 'legacy',
+      workspace_metadata TEXT,
       sandbox TEXT NOT NULL,
       model TEXT,
       reasoning_effort TEXT NOT NULL DEFAULT 'high',
@@ -114,7 +121,7 @@ const TASKS_DDL = `
 `;
 
 const TASK_COLUMNS = [
-  "id", "title", "worker", "status", "phase", "cwd", "project_root", "sandbox", "model",
+  "id", "title", "worker", "status", "phase", "cwd", "project_root", "workspace_kind", "workspace_metadata", "sandbox", "model",
   "reasoning_effort", "skip_git_repo_check", "prompt", "changed_files", "commands",
   "created_at", "updated_at", "started_at", "completed_at", "pid", "run_host_pid", "attention_reason", "run_evidence", "guard_policy", "input_context", "exit_code", "signal",
   "stderr_tail", "last_event_at", "last_event_type", "last_message", "current_action",
@@ -143,8 +150,9 @@ function migrateTasksTable(dbInstance, columns) {
 
   const selectExpression = (name) => {
     if (legacyNames.has(name)) return name;
-    const definition = POST_V1_COLUMNS.find(([columnName]) => columnName === name);
+    const definition = [...POST_V1_COLUMNS, ...TASK_EXTRA_COLUMNS].find(([columnName]) => columnName === name);
     if (definition && definition[1].includes("DEFAULT '[]'")) return "'[]'";
+    if (definition && definition[1].includes("DEFAULT 'legacy'")) return "'legacy'";
     if (definition && definition[1].includes("DEFAULT 0")) return "0";
     return "NULL";
   };
@@ -377,6 +385,9 @@ function initializeSchema(dbInstance) {
       dbInstance.exec("UPDATE task_events SET actor = 'legacy' WHERE actor IS NULL");
       dbInstance.exec(TASK_EVENTS_INDEX_DDL);
       dbInstance.exec(TASKS_SESSION_INDEX_DDL);
+      for (const [name, definition] of TASK_EXTRA_COLUMNS) {
+        if (!tableColumns(dbInstance, "tasks").some((column) => column.name === name)) dbInstance.exec(`ALTER TABLE tasks ADD COLUMN ${name} ${definition}`);
+      }
       dbInstance.exec(CONTROL_DDL);
       if (!tableColumns(dbInstance, "facts").some((column) => column.name === "watched_paths")) {
         dbInstance.exec("ALTER TABLE facts ADD COLUMN watched_paths TEXT NOT NULL DEFAULT '[]'");
@@ -498,6 +509,7 @@ function rowToTask(row) {
   const nativeGoal = readNativeGoal(row.thread_id);
   return {
     ...row,
+    workspace_kind: row.workspace_kind ?? "legacy",
     skip_git_repo_check: Boolean(row.skip_git_repo_check),
     changed_files: decodeJson(row.changed_files, []),
     commands: decodeJson(row.commands, []),
@@ -509,6 +521,7 @@ function rowToTask(row) {
     run_evidence: decodeJson(row.run_evidence, null),
     guard_policy: decodeJson(row.guard_policy, null),
     input_context: decodeJson(row.input_context, null),
+    workspace_metadata: decodeJson(row.workspace_metadata, null),
     pid: row.pid ?? null,
     exit_code: row.exit_code ?? null,
     phase: row.phase ?? null,
@@ -634,6 +647,7 @@ function writeTaskNow(task) {
   const params = {};
   for (const name of TASK_COLUMNS) params[name] = task[name] ?? null;
   params.reasoning_effort = task.reasoning_effort ?? "high";
+  params.workspace_kind = task.workspace_kind ?? "legacy";
   params.skip_git_repo_check = task.skip_git_repo_check ? 1 : 0;
   params.changed_files = encodeJson(task.changed_files);
   params.commands = encodeJson(task.commands);
@@ -647,6 +661,7 @@ function writeTaskNow(task) {
   params.run_evidence = task.run_evidence ? JSON.stringify(task.run_evidence) : null;
   params.guard_policy = task.guard_policy ? JSON.stringify(task.guard_policy) : null;
   params.input_context = task.input_context ? JSON.stringify(task.input_context) : null;
+  params.workspace_metadata = task.workspace_metadata ? JSON.stringify(task.workspace_metadata) : null;
   params.run_count = task.run_count ?? 0;
   params.phase = task.phase ?? null;
 
