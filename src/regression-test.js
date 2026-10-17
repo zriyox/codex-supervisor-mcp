@@ -323,11 +323,12 @@ await test("R4-3 a second MCP process can cancel and resume another process's wo
 await test("R3-2 a fresh MCP process resumes the same Codex thread", async () => {
   await withServer({}, async (client) => {
     const created = await call(client, "create_codex_worker", describe({ title: "resume-me" }));
-    const first = await waitFor(client, created.id, (task) => task.status === "completed");
+    const first = await waitFor(client, created.id, (task) => task.status === "completed" && task.exit_code !== null);
     assert.equal(first.thread_id, THREAD_ID);
     assert.equal(first.run_count, 1);
     await withServer({}, async (second) => {
       const resumed = await call(second, "resume_codex_worker", { task_id: created.id, prompt: "keep going" });
+      assert.ok(resumed.id, `resume rejected: ${JSON.stringify(resumed)}`);
       assert.equal(resumed.thread_id, THREAD_ID);
       const final = await waitFor(second, created.id, (task) => task.status === "completed" && task.run_count === 2);
       assert.equal(final.run_count, 2);
@@ -464,7 +465,7 @@ await test("R5-3 search_works finds a work by keyword across title and goal", as
 await test("R5-4 create asks for a native goal and resume does not", async () => {
   await withServer({ FAKE_CODEX_SCENARIO: "echo-prompt" }, async (client) => {
     const created = await call(client, "create_codex_worker", describe({ title: "preamble-create" }));
-    const createdRun = await waitFor(client, created.id, (row) => row.status === "completed");
+    const createdRun = await waitFor(client, created.id, (row) => row.status === "completed" && row.exit_code !== null);
     const createPrompt = createdRun.last_message ?? "";
     assert.match(createPrompt, /create_goal/, "a new worker must be told to create a goal");
     assert.match(createPrompt, /objective for preamble-create/, "the preamble must carry the real objective");
@@ -484,6 +485,7 @@ await test("R5-4 create asks for a native goal and resume does not", async () =>
       task_id: created.id,
       prompt: "continue the work"
     });
+    assert.ok(resumed.id, `resume rejected: ${JSON.stringify(resumed)}`);
     const resumedRun = await waitFor(client, resumed.id, (row) => row === undefined || row.status === "completed");
     const resumePrompt = resumedRun.last_message ?? "";
     assert.doesNotMatch(resumePrompt, /Call the create_goal tool/, "resume must not ask for a second goal");
