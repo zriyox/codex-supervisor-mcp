@@ -24,11 +24,14 @@ test("cleanup plan only removes verified-safe worktrees and preserves the eviden
   git(dir, ["remote", "add", "origin", remote]);
   git(dir, ["push", "-q", "-u", "origin", "main"]);
   const workers = {};
-  await withMcp({ SUPERVISOR_HOME: home, FAKE_CODEX_SCENARIO: "commit-in-worktree" }, async ({ call }) => {
+  await withMcp({ SUPERVISOR_HOME: home }, async ({ call }) => {
     for (const title of ["safe", "dirty", "unverified"]) {
-      const worker = await call("create_codex_worker", dispatchArgs(title, dir, { sandbox: "workspace-write", ownedPaths: ["committed.txt", "uncommitted.txt"] }));
+      const worker = await call("create_codex_worker", dispatchArgs(title, dir, { sandbox: "workspace-write", ownedPaths: [`${title}.txt`] }));
       await waitFor(call, worker.id, (task) => task.status === "completed" && task.exit_code === 0);
-      const landed = await call("land_codex_worker", { task_id: worker.id, commitMessage: `land ${title}` });
+      await writeFile(join(worker.worktree_path, `${title}.txt`), `${title}\n`);
+      git(worker.worktree_path, ["add", "-A"]);
+      git(worker.worktree_path, ["commit", "-q", "-m", `land ${title}`]);
+      const landed = await call("land_codex_worker", { task_id: worker.id });
       assert.ok(!landed.error, JSON.stringify(landed));
       workers[title] = worker;
       if (title === "safe" || title === "dirty") {
