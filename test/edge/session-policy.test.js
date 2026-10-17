@@ -86,7 +86,7 @@ test("combined defaults exceeding the command limit create no worker", async () 
   });
 });
 
-test("resume receives the latest approved session objective instead of reviving earlier scope", async () => {
+test("session objectives enforce policy but are not injected as worker context", async () => {
   const home = await tempHome("supervisor-current-scope-");
   await withMcp({ SUPERVISOR_HOME: home, FAKE_CODEX_SCENARIO: "echo-prompt" }, async ({ call }) => {
     await call("describe_session", { session_id: "batch", objective: "all tests must pass" });
@@ -96,8 +96,10 @@ test("resume receives the latest approved session objective instead of reviving 
     await call("resume_codex_worker", { task_id: task.id, prompt: "finish under current approval" });
     await waitFor(call, task.id, (row) => row.run_count === 2 && row.exit_code === 0);
     const result = await call("get_worker_result", { task_id: task.id, maxChars: 0 });
-    assert.match(result.reports[0], /Current session objective \(revision 2\): approved existing failure list and no new failures/);
-    assert.doesNotMatch(result.reports[0], /Current session objective.*all tests must pass/);
+    assert.match(result.reports[0], /Worker context capsule/);
+    assert.doesNotMatch(result.reports[0], /Current session objective/);
+    assert.doesNotMatch(result.reports[0], /approved existing failure list and no new failures/);
+    assert.doesNotMatch(result.reports[0], /all tests must pass/);
   });
 });
 

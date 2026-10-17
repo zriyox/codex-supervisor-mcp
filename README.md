@@ -146,7 +146,7 @@ land_codex_worker       核过了，落进集成分支
 
 ## 工具
 
-23 个。
+25 个。
 
 | 工具 | 入参 | 作用 |
 |---|---|---|
@@ -166,6 +166,8 @@ land_codex_worker       核过了，落进集成分支
 | `get_worker_summary` | `task_id` | 一段话：goal、状态、改动、最后一条命令和消息 |
 | `get_codex_worker_status` | `task_id`, `includePrompt`, `promptMaxChars` | 单个 worker 的状态细节 |
 | `get_codex_worker_events` | `task_id`, `limit`, `maxChars`, `kinds` | 原始事件流 |
+| `get_context_snapshot_meta` | `task_id` | 只读 worker context 的 snapshot ID、fact IDs、token 估算和排除项；不返回 capsule 正文或历史记录 |
+| `get_fact` | `fact_id` | 按 ID 审计一条 candidate/verified fact；不会自动扩展进主线程上下文 |
 | `get_worker_goal` | `task_id` | 派单时记的 goal + Codex 原生 goal（token、用时） |
 | `list_codex_workers` | `status`, `includeHistory`, `includeDetails` | 列 worker，默认只看在跑的 |
 | `get_session_works` | `session_id` | 一个 session 的全部 worker。主线程重启后靠它找回那批活 |
@@ -179,6 +181,8 @@ land_codex_worker       核过了，落进集成分支
 `acceptance` 在 Bash 中启用 `errexit` 和 `pipefail`：未处理的失败会停止检查，`npm test | tail` 中的测试失败也会保留。写 worker 不能只用 `test -s`、`test -f` 或 `[ -e ]` 这类文件存在性命令交付；要加真实 test、endpoint probe 或结构化执行证据。识别到的 test runner 输出 `no tests to run` / `[no test files]` 时，即使退出码是 0 也判失败。预期失败用 `if` 或 `||` 显式处理；超时始终判失败，即使命令收到终止信号后退出 0。Windows 需要 Git for Windows 的 Bash；找不到会报错。显示的输出会裁剪，退出码不会因此改变。
 
 普通 worker 启动时会关闭它继承到的 `codex-supervisor` MCP，不能再派 worker、resume、cancel 或改编排状态；主线程是唯一编排者。其他业务 MCP 不受影响；旁问 fork 仍关闭全部 MCP，因为它只允许只读回答。
+
+`session_id` 只负责批次、默认门禁和审批，不再把同批 worker 的标题、汇报或 session objective 自动塞进新 worker。worker 只收到内部编译的 context capsule：自身身份/任务、显式依赖和路径/SHA 命中的 verified facts；raw event、完整 diff、历史报告、candidate facts 都只可按需读取。主线程只看 `get_context_snapshot_meta`，需要证据时再显式 `get_fact` / `get_worker_result` / `get_worker_diff`。
 
 验收命令的环境包含 `CODEX_SUPERVISOR_TASK_ID`、`CODEX_SUPERVISOR_BASE_COMMIT` 和 `CODEX_SUPERVISOR_RUN`；分别是当前任务、当前运行基线和运行次数，rebase/resume 后会更新。
 

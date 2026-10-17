@@ -30,7 +30,7 @@ worker 默认不是调度员：启动时会禁用它继承到的 `codex-supervis
 | `writableRoots` | 只有需要凭据目录时才传（绝对路径、已存在、自动解析软链、只对 workspace-write 生效）：ssh/远程测试 → `["~/.ssh"]`；kubectl → `["~/.kube"]`；推私有镜像 → `["~/.docker"]`；aws cli → `["~/.aws"]`；签名提交 → `["~/.gnupg"]`。缓存目录不用写，已经自动加 |
 | `ownedPaths` | 必填。这路允许写的路径，和在跑的 worker 重叠会被拒（**读不排他**，多路读同一份共享文件合法）。冲突是好事，说明该改拆法。传 `[]` 表示这路不落地：只读验证或研究 |
 | `goal.objective` | 必填。一句话说目标，worker 会建成 Codex 原生 goal |
-| `session_id` | 同一批传同一个值。第一路顺手带 `session_title`（30 字内，看板和 `get_session_works` 显示它），漏了用 `describe_session` 补 |
+| `session_id` | 同一批传同一个值。只管批次、默认验收和审批，不是上下文继承边界；第一路顺手带 `session_title`（30 字内，看板和 `get_session_works` 显示它），漏了用 `describe_session` 补 |
 | `dependsOn` | 有先后依赖填上游的 `task_id`，它是硬门禁：上游必须同 `project_root`、成功结算、配置了 acceptance 就已通过、已 `land_codex_worker`，并且本路实际 `baseRef` 包含上游 `landed_head`。没满足先集成/修验收，不会启动下游 |
 | `baseRef` | worktree 从哪个提交切，默认 `HEAD`。第 N+1 步要建立在第 N 步上，填 `codex/<第 N 步 task_id>` |
 | `preflight_id` | 写 worker 必填。先跑 `preflight_codex_worker`，它实际在目标 sandbox/guard 里执行 `probeCommands`；`get_worker_preflight.status` 必须是 `passed`。base、ownedPaths、命令、context、contracts、network、可写根有变化就重跑 |
@@ -122,8 +122,12 @@ Codex需0.162+支持hooks/output-schema，能力不够派单start_failed先修CL
 | 过程 | `get_codex_worker_events`，`kinds` 先滤、`limit` 限条数、`maxChars` 截长串，先看 `available_kinds` |
 | 一路的状态细节 | `get_codex_worker_status`，`current_action` 是它正在跑的命令 |
 | 验收过没过 | 每个读都带 `acceptance`；命令和每条的输出在 `get_worker_result.acceptance.checks` |
+| worker 吃了哪些上下文 | `get_context_snapshot_meta`，只看 fact IDs/token/排除项，不会回 capsule 正文 |
+| 一条共享事实的来源 | `get_fact`，按 ID 精确读；不要把一批 facts 全拉进主线程 |
 
 默认读回来的长文本都是裁过的（`current_action` 300 字、`prompt` 300 字、`last_message` 400 字），别把裁剪当成活没干。全量在库里。别一次 `limit: 200` 拉全量事件。
+
+worker 的 capsule 只在内部 create/resume 时生成：自身 L0 身份、当前 work 的 verified facts、显式 `dependsOn` 的摘要、路径命中且 SHA 有效的 repo facts。`session_id` peers、raw event、完整 diff/报告、candidate facts 一律不自动注入。主线程只能看 snapshot 元数据；要查证据按 ID 读，不能把自己变成 worker。
 
 ## 断了怎么接
 

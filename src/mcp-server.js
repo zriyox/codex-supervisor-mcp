@@ -14,6 +14,7 @@ import {
 } from "./codex-runner.js";
 import {
   getSession,
+  getFact,
   getTask,
   getTasks,
   isPidAlive,
@@ -24,6 +25,7 @@ import {
   readObserverCursor,
   writeObserverCursor,
   readTasksBySession,
+  latestContextSnapshotForTask,
   reconcileDetachedActiveTasks,
   recordTerminalChangedFiles,
   searchTasks,
@@ -1099,6 +1101,48 @@ server.registerTool(
       available_kinds: await listTaskEventKinds(task_id),
       events: trimmed
     });
+  }
+);
+
+server.registerTool(
+  "get_context_snapshot_meta",
+  {
+    title: "Get worker context snapshot metadata",
+    description: "Read the latest worker-only context snapshot metadata for one task. Returns fact IDs, token estimate and excluded categories, never the capsule text or raw history.",
+    inputSchema: { task_id: z.string().min(1) }
+  },
+  async ({ task_id }) => {
+    const task = await getTask(task_id);
+    if (!task) return textResult({ error: "task_not_found", task_id });
+    const snapshot = await latestContextSnapshotForTask(task_id);
+    if (!snapshot) return textResult({ task_id, snapshot: null });
+    return textResult({
+      task_id,
+      snapshot: {
+        id: snapshot.id,
+        run_id: snapshot.run_id,
+        recipient: snapshot.recipient,
+        fact_ids: JSON.parse(snapshot.fact_versions),
+        base_sha: snapshot.base_sha,
+        prompt_sha256: snapshot.prompt_sha256,
+        estimated_tokens: snapshot.estimated_tokens,
+        excluded: JSON.parse(snapshot.excluded_json),
+        created_at: snapshot.created_at
+      }
+    });
+  }
+);
+
+server.registerTool(
+  "get_fact",
+  {
+    title: "Get one verified or candidate fact",
+    description: "Read one fact by ID for audit. Facts are never automatically expanded into the main thread's context.",
+    inputSchema: { fact_id: z.string().uuid() }
+  },
+  async ({ fact_id }) => {
+    const fact = await getFact(fact_id);
+    return textResult(fact ? { fact } : { error: "fact_not_found", fact_id });
   }
 );
 

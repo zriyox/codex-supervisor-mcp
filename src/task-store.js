@@ -234,6 +234,7 @@ const CONTROL_DDL = `
       state TEXT NOT NULL,
       source_event_id INTEGER,
       valid_for_sha TEXT,
+      watched_paths TEXT NOT NULL DEFAULT '[]',
       expires_at TEXT,
       supersedes_id TEXT,
       created_at TEXT NOT NULL,
@@ -346,6 +347,9 @@ function initializeSchema(dbInstance) {
       dbInstance.exec(TASK_EVENTS_INDEX_DDL);
       dbInstance.exec(TASKS_SESSION_INDEX_DDL);
       dbInstance.exec(CONTROL_DDL);
+      if (!tableColumns(dbInstance, "facts").some((column) => column.name === "watched_paths")) {
+        dbInstance.exec("ALTER TABLE facts ADD COLUMN watched_paths TEXT NOT NULL DEFAULT '[]'");
+      }
       dbInstance.exec(SESSIONS_DDL);
       for (const [name, definition] of [
         ["objective", "TEXT"], ["default_acceptance", "TEXT"],
@@ -977,6 +981,116 @@ export async function readTaskEventRecords(taskId, limit = 100) {
     ...row,
     event: JSON.parse(row.payload)
   }));
+}
+
+export async function getWorkItemForTask(taskId) {
+  await ensureFilesystem();
+  return openDb().prepare("SELECT * FROM work_items WHERE task_id = ?").get(taskId) ?? null;
+}
+
+export async function recordFact({
+  workItemId,
+  scopeType,
+  scopeId,
+  key,
+  value,
+  state = "candidate",
+  sourceEventId = null,
+  validForSha = null,
+  watchedPaths = [],
+  expiresAt = null,
+  supersedesId = null,
+  verifiedAt = null
+}) {
+  await ensureFilesystem();
+  if (!workItemId || !scopeType || !scopeId || !key) throw new Error("fact requires workItemId, scopeType, scopeId and key");
+  if (!["candidate", "verified", "expired", "revoked"].includes(state)) throw new Error("invalid fact state");
+  if (!Array.isArray(watchedPaths) || watchedPaths.some((path) => typeof path !== "string")) throw new Error("watchedPaths must be a string list");
+  const now = new Date().toISOString();
+  const id = randomUUID();
+  openDb().prepare(`
+    INSERT INTO facts (id, work_item_id, scope_type, scope_id, key, value_json, state, source_event_id, valid_for_sha, watched_paths, expires_at, supersedes_id, created_at, verified_at)
+    VALUES (@id, @work_item_id, @scope_type, @scope_id, @key, @value_json, @state, @source_event_id, @valid_for_sha, @watched_paths, @expires_at, @supersedes_id, @created_at, @verified_at)
+  `).run({
+    id,
+    work_item_id: workItemId,
+    scope_type: scopeType,
+    scope_id: scopeId,
+    key,
+    value_json: JSON.stringify(value),
+    state,
+    source_event_id: sourceEventId,
+    valid_for_sha: validForSha,
+    watched_paths: JSON.stringify(watchedPaths.map((path) => resolve(path))),
+    expires_at: expiresAt,
+    supersedes_id: supersedesId,
+    created_at: now,
+    verified_at: verifiedAt ?? (state === "verified" ? now : null)
+  });
+  return { id, work_item_id: workItemId, scope_type: scopeType, scope_id: scopeId, key, value, state, valid_for_sha: validForSha, watched_paths: watchedPaths, created_at: now };
+}
+
+function pathsOverlap(left, right) {
+  const normalize = (path) => process.platform === "win32" ? path.replace(/\\/g, "/").toLowerCase() : path;
+  const a = normalize(left).replace(/\/$/, "");
+  const b = normalize(right).replace(/\/$/, "");
+  return a === b || a.startsWith(`${b}/`) || b.startsWith(`${a}/`);
+}
+
+export async function listContextFacts({ taskId, baseSha, ownedPaths = [], dependencyTaskIds = [] }) {
+  await ensureFilesystem();
+  const workItem = await getWorkItemForTask(taskId);
+  if (!workItem) return [];
+  const dependencyItems = dependencyTaskIds.length === 0
+    ? []
+    : openDb().prepare(`SELECT id FROM work_items WHERE task_id IN (${dependencyTaskIds.map(() => "?").join(",")})`).all(...dependencyTaskIds).map((row) => row.id);
+  const rows = openDb().prepare("SELECT * FROM facts WHERE state = 'verified' ORDER BY created_at ASC").all();
+  const now = Date.now();
+  return rows.filter((row) => {
+    if (row.expires_at && Date.parse(row.expires_at) <= now) return false;
+    if (row.valid_for_sha && row.valid_for_sha !== baseSha) return false;
+    if (row.scope_type === "work_item") return row.scope_id === workItem.id;
+    if (row.scope_type === "dependency") return dependencyItems.includes(row.scope_id);
+    if (row.scope_type !== "repo_verified" || row.scope_id !== workItem.repo_id) return false;
+    const watched = decodeJson(row.watched_paths, []);
+    return watched.length > 0 && watched.some((path) => ownedPaths.some((owned) => pathsOverlap(path, owned)));
+  }).map((row) => ({
+    ...row,
+    value: decodeJson(row.value_json, null),
+    watched_paths: decodeJson(row.watched_paths, [])
+  }));
+}
+
+export async function createContextSnapshot({ runId, recipient = "worker", factIds = [], baseSha = null, prompt, estimatedTokens, excluded = {} }) {
+  await ensureFilesystem();
+  if (!runId || typeof prompt !== "string") throw new Error("context snapshot requires runId and prompt");
+  const now = new Date().toISOString();
+  const id = randomUUID();
+  openDb().prepare(`
+    INSERT INTO context_snapshots (id, run_id, recipient, fact_versions, base_sha, prompt_sha256, estimated_tokens, excluded_json, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(id, runId, recipient, JSON.stringify(factIds), baseSha,
+    createHash("sha256").update(prompt).digest("hex"), estimatedTokens, JSON.stringify(excluded), now);
+  return { id, run_id: runId, recipient, fact_versions: factIds, base_sha: baseSha, estimated_tokens: estimatedTokens, created_at: now };
+}
+
+export async function latestContextSnapshotForTask(taskId) {
+  await ensureFilesystem();
+  return openDb().prepare(`
+    SELECT s.* FROM context_snapshots s JOIN runs r ON r.id = s.run_id
+    WHERE r.task_id = ? ORDER BY s.created_at DESC LIMIT 1
+  `).get(taskId) ?? null;
+}
+
+export async function getFact(factId) {
+  await ensureFilesystem();
+  const row = openDb().prepare("SELECT * FROM facts WHERE id = ?").get(factId);
+  if (!row) return null;
+  return {
+    ...row,
+    value: decodeJson(row.value_json, null),
+    watched_paths: decodeJson(row.watched_paths, [])
+  };
 }
 
 export async function listTaskEventKinds(taskId) {

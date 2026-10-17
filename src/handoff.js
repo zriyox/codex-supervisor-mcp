@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { readFile, lstat } from "node:fs/promises";
 import { isAbsolute } from "node:path";
 
-export async function buildHandoff({ goal, todo, peers = [], contracts = [], context = [] }, { maxLines = 16, maxChars = 1800 } = {}) {
+export async function buildHandoff({ goal, todo, contracts = [], context = [] }, { maxLines = 16, maxChars = 1800 } = {}) {
   if (!Array.isArray(context) || context.length > 20 || !Array.isArray(contracts)
     || contracts.some((value) => typeof value !== "string") || JSON.stringify({ context, contracts }).length > 6000) throw new Error("context and contracts exceed the 6000 character input budget");
   const refs = [];
@@ -17,8 +17,7 @@ export async function buildHandoff({ goal, todo, peers = [], contracts = [], con
   const line = (value) => String(value ?? "").replace(/\s+/g, " ").trim();
   const candidates = ["Handoff (source refs are inputs, not write permission):", `Goal: ${line(goal)}`, `Todo: ${line(todo)}`,
     ...refs.map((ref) => `Input: ${ref.path} sha256=${ref.sha256}`),
-    ...contracts.map((value) => `Contract: ${line(value)}`),
-    ...peers.map((peer) => `Peer: ${line(peer.title)} | ${line(peer.status)} | ${line(peer.last_message).slice(0, 160)}`)];
+    ...contracts.map((value) => `Contract: ${line(value)}`)];
   const marker = "[handoff truncated; required task/guard/acceptance follow separately]";
   const lines = []; let size = 0;
   for (const candidate of candidates) {

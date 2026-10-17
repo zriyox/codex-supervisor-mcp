@@ -10,7 +10,6 @@ import {
   getSession,
   readActiveTasks,
   readTasks,
-  readTasksBySession,
   readTaskEvents,
   taskRunPath,
   upsertSession,
@@ -34,6 +33,7 @@ import { defaultBinDirs, findBinaryPath, resolveCommand, shimMessage } from "./b
 import { findOutsideOwnedChanges } from "./owned-changes.js";
 import { parseWorkerReport, workerReportSchemaPath } from "./worker-report.js";
 import { buildHandoff } from "./handoff.js";
+import { compileWorkerContext } from "./context-compiler.js";
 import { captureExternalOutputs, compareExternalOutputs } from "./external-output.js";
 import { buildRuntimeContract, createPreflightMetadata, readPreflightResult, runtimeContractHash } from "./worker-preflight.js";
 import { supervisorMcpDisableArgs } from "./mcp-config.js";
@@ -532,13 +532,19 @@ async function trackRunInHost({ record, args, prompt, logPath, spawnOptions = {}
 // streams, exit write and acceptance until all three settle; IPC is only a
 // startup handshake and never the channel carrying worker results.
 async function startTrackedRun(job) {
-  const session = job.record.session_id ? await getSession(job.record.session_id) : null;
-  if (session) job.prompt = `Current session objective (revision ${session.policy_revision}): ${session.objective ?? "not specified"}. Follow this latest scope; do not revive earlier session requirements. Approval state: ${session.approval_state}.\n\n${job.prompt}`;
-  const peers = job.record.session_id ? (await readTasksBySession(job.record.session_id)).filter((task) => task.id !== job.record.id) : [];
-  const handoff = await buildHandoff({ goal: job.record.goal_objective, todo: job.record.title,
-    peers, contracts: job.record.input_context?.contracts ?? [], context: job.record.input_context?.context ?? [] });
-  job.record = { ...job.record, input_context: { ...job.record.input_context, context: handoff.source_refs, source_refs: handoff.source_refs } };
-  job.prompt = `${handoff.text}\n\n${job.prompt}\n\nRequired input refs (read-only): ${JSON.stringify(handoff.source_refs)}\nRequired contracts: ${JSON.stringify(job.record.input_context.contracts ?? [])}`;
+  const compiled = await compileWorkerContext(job.record, { attempt: (job.record.run_count ?? 0) + 1 });
+  job.record = {
+    ...job.record,
+    input_context: {
+      ...job.record.input_context,
+      context: compiled.sourceRefs,
+      source_refs: compiled.sourceRefs,
+      context_snapshot_id: compiled.snapshot.id,
+      context_snapshot_tokens: compiled.snapshot.estimated_tokens,
+      context_fact_count: compiled.factCount
+    }
+  };
+  job.prompt = `${compiled.text}\n\n${job.prompt}\n\nRequired input refs (read-only): ${JSON.stringify(compiled.sourceRefs)}\nRequired contracts: ${JSON.stringify(job.record.input_context.contracts ?? [])}`;
   const host = spawn(process.execPath, [fileURLToPath(import.meta.url), "--run-host"], {
     detached: true, stdio: ["ignore", "ignore", "ignore", "ipc"],
     env: process.env, windowsHide: true
