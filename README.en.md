@@ -144,7 +144,7 @@ Light and dark follow the system. No external resources.
 
 ## Tools
 
-Thirty-five.
+Thirty-nine.
 
 | Tool | Arguments | What it does |
 |---|---|---|
@@ -176,6 +176,10 @@ Thirty-five.
 | `get_artifact` | `artifact_id`, `maxChars` | Read one supervisor-managed evidence artifact without expanding a worker capsule into main context |
 | `promote_worker_fact` | `fact_id`, `scope`, `watchedPaths`, `expiresAt` | Explicitly promote a candidate to a new verified fact after main-thread review; repo scope requires watched paths |
 | `revoke_worker_fact` | `fact_id`, `reason` | Revoke a candidate or verified fact after audit; it is excluded from search and future worker capsules |
+| `create_independent_verifier` | `task_id`, `title` | Create a fresh read-only, no-network verifier for a settled worker; it receives the objective and current worktree, never the target report or candidate facts |
+| `record_independent_finding` | `verifier_task_id`, `verdict`, `reason` | Persist an independent passes/fails/inconclusive finding with a subject event and retained evidence artifact |
+| `resolve_independent_finding` | `verifier_task_id`, `resolution` | Record how a finding was resolved without deleting the finding or evidence |
+| `get_independent_review` | `verifier_task_id` | Read the persistent subject/verifier/finding/resolution relation |
 | `get_worker_goal` | `task_id` | The goal recorded at dispatch plus the native Codex goal (tokens, time) |
 | `list_codex_workers` | `status`, `includeHistory`, `includeDetails` | List workers, active ones by default |
 | `get_session_works` | `session_id` | Every worker of one session. The way back after a main-thread restart |

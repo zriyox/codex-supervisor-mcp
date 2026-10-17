@@ -276,6 +276,25 @@ const CONTROL_DDL = `
       created_at TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_artifacts_run ON artifacts(run_id, created_at);
+    CREATE TABLE IF NOT EXISTS review_findings (
+      id TEXT PRIMARY KEY,
+      subject_task_id TEXT NOT NULL,
+      verifier_task_id TEXT NOT NULL UNIQUE,
+      subject_run_id TEXT,
+      subject_base_sha TEXT,
+      subject_fingerprint TEXT,
+      status TEXT NOT NULL,
+      verdict TEXT,
+      reason TEXT,
+      evidence_artifact_id TEXT,
+      finding_event_id INTEGER,
+      resolved_at TEXT,
+      resolved_by TEXT,
+      resolution TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_review_findings_subject ON review_findings(subject_task_id, created_at);
     CREATE TABLE IF NOT EXISTS context_snapshots (
       id TEXT PRIMARY KEY,
       run_id TEXT NOT NULL,
@@ -1320,6 +1339,47 @@ export async function listArtifactsForTask(taskId, limit = 50) {
     SELECT a.* FROM artifacts a JOIN runs r ON r.id = a.run_id
     WHERE r.task_id = ? ORDER BY a.created_at DESC LIMIT ?
   `).all(taskId, limit);
+}
+
+export async function createReviewAssignment({ subjectTaskId, verifierTaskId, subjectRunId = null, subjectBaseSha = null, subjectFingerprint = null }) {
+  await ensureFilesystem();
+  const now = new Date().toISOString();
+  const id = randomUUID();
+  openDb().prepare(`
+    INSERT INTO review_findings (id, subject_task_id, verifier_task_id, subject_run_id, subject_base_sha, subject_fingerprint, status, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?)
+  `).run(id, subjectTaskId, verifierTaskId, subjectRunId, subjectBaseSha, subjectFingerprint, now, now);
+  return { id, subject_task_id: subjectTaskId, verifier_task_id: verifierTaskId, subject_run_id: subjectRunId, subject_base_sha: subjectBaseSha, subject_fingerprint: subjectFingerprint, status: "pending", created_at: now, updated_at: now };
+}
+
+export async function getReviewByVerifierTask(verifierTaskId) {
+  await ensureFilesystem();
+  return openDb().prepare("SELECT * FROM review_findings WHERE verifier_task_id = ?").get(verifierTaskId) ?? null;
+}
+
+export async function recordReviewFinding({ verifierTaskId, verdict, reason, evidenceArtifactId = null, findingEventId = null }) {
+  await ensureFilesystem();
+  if (!['passes', 'fails', 'inconclusive'].includes(verdict)) throw new Error("review verdict must be passes, fails or inconclusive");
+  const now = new Date().toISOString();
+  const result = openDb().prepare(`
+    UPDATE review_findings
+    SET status = 'recorded', verdict = ?, reason = ?, evidence_artifact_id = ?, finding_event_id = ?, updated_at = ?
+    WHERE verifier_task_id = ? AND status = 'pending'
+  `).run(verdict, reason, evidenceArtifactId, findingEventId, now, verifierTaskId);
+  if (result.changes === 0) return null;
+  return getReviewByVerifierTask(verifierTaskId);
+}
+
+export async function resolveReviewFinding({ verifierTaskId, resolution, resolvedBy = 'main_thread' }) {
+  await ensureFilesystem();
+  const now = new Date().toISOString();
+  const result = openDb().prepare(`
+    UPDATE review_findings
+    SET status = 'resolved', resolution = ?, resolved_at = ?, resolved_by = ?, updated_at = ?
+    WHERE verifier_task_id = ? AND status = 'recorded'
+  `).run(resolution, now, resolvedBy, now, verifierTaskId);
+  if (result.changes === 0) return null;
+  return getReviewByVerifierTask(verifierTaskId);
 }
 
 export async function updateWorkItemDelivery(taskId, deliveryState) {

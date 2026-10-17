@@ -96,7 +96,7 @@ Codex需0.162+支持hooks/output-schema，能力不够派单start_failed先修CL
 
 一批活全部到终态后：`get_orchestration_overview` 确认没有 `needs_attention`、`acceptance_failed` 为空，再逐路走上面几步。合不合、怎么合由主线程定。
 
-高风险的步（迁移、改公共接口、"做完了"写不成命令的）再派一路 verifier：`sandbox: "read-only"`、`ownedPaths: []`，task 只给这一步的目标和原 worker 的 `worktree_path`，不给它的汇报，不说你怀疑什么，让它答"目标达成没有，证据是哪几行"。它不改东西，只读只跑。两路说法对不上，两边都别信，自己看 diff。
+高风险的步（迁移、改公共接口、"做完了"写不成命令的）用 `create_independent_verifier(task_id)`：它建独立 thread、`read_only_in_place`、无网络、无原 report/candidate facts，只给目标和当前 worktree。verifier 结算后主线程调用 `record_independent_finding` 记 passes/fails/inconclusive，必要时 `resolve_independent_finding` 收口；两路说法对不上，两边都别信，自己看 diff。
 
 
 ## 收工口径：活儿必须落地

@@ -146,7 +146,7 @@ land_codex_worker       核过了，落进集成分支
 
 ## 工具
 
-35 个。
+39 个。
 
 | 工具 | 入参 | 作用 |
 |---|---|---|
@@ -178,6 +178,10 @@ land_codex_worker       核过了，落进集成分支
 | `get_artifact` | `artifact_id`, `maxChars` | 读取一个 supervisor-managed evidence artifact；不影响 worker capsule 或主线程自动上下文 |
 | `promote_worker_fact` | `fact_id`, `scope`, `watchedPaths`, `expiresAt` | 主线程显式把 candidate 追加为 verified fact；repo scope 必须声明 watchedPaths，worker 不能自升真相 |
 | `revoke_worker_fact` | `fact_id`, `reason` | 主线程审计后撤销 candidate / verified fact，追加事件并从 search / capsule 排除 |
+| `create_independent_verifier` | `task_id`, `title` | 为已结算 worker 创建独立 read-only / 无网络 verifier；只给目标与当前 worktree，不给原 report/candidate facts |
+| `record_independent_finding` | `verifier_task_id`, `verdict`, `reason` | 记录独立 verifier 的 passes/fails/inconclusive finding，写 subject event 和 retained artifact |
+| `resolve_independent_finding` | `verifier_task_id`, `resolution` | 记录 finding 的收口方式，保留原 finding 与证据 |
+| `get_independent_review` | `verifier_task_id` | 查询 subject / verifier / finding / resolution 的持久关联 |
 | `get_worker_goal` | `task_id` | 派单时记的 goal + Codex 原生 goal（token、用时） |
 | `list_codex_workers` | `status`, `includeHistory`, `includeDetails` | 列 worker，默认只看在跑的 |
 | `get_session_works` | `session_id` | 一个 session 的全部 worker。主线程重启后靠它找回那批活 |
