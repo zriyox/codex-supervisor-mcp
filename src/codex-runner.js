@@ -48,6 +48,7 @@ const cancelledTasks = new Set();
 const CODEX_NPM_ENTRY = { pkg: "@openai/codex", bin: "bin/codex.js" };
 const defaultGitBin = process.env.GIT_BIN?.trim() || "git";
 const allowedReasoningEfforts = new Set(["minimal", "low", "medium", "high"]);
+const MAX_RUN_HOST_PROMPT_BYTES = 4 * 1024 * 1024;
 
 async function recordOutcomeFacts({ task, runId, report, reportEventId = null, acceptanceEventId = null, acceptancePassed = false }) {
   if (!report?.valid) return;
@@ -582,6 +583,11 @@ async function trackRunInHost({ record, args, prompt, logPath, spawnOptions = {}
 // streams, exit write and acceptance until all three settle; IPC is only a
 // startup handshake and never the channel carrying worker results.
 async function startTrackedRun(job) {
+  if (Buffer.byteLength(String(job.prompt ?? ""), "utf8") > MAX_RUN_HOST_PROMPT_BYTES) {
+    const result = failedStart(job.record, `worker prompt is too large for the detached run host IPC channel (maximum ${MAX_RUN_HOST_PROMPT_BYTES} bytes); reduce task text and move materials to context files`);
+    await upsertTask(result.record);
+    return result;
+  }
   const compiled = await compileWorkerContext(job.record, { attempt: (job.record.run_count ?? 0) + 1 });
   job.record = {
     ...job.record,

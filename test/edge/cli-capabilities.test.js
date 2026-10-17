@@ -15,3 +15,17 @@ test("a CLI missing hooks/schema fails before model dispatch and its wait is set
     assert.match(row.error,/lacks required/);
   });
 });
+
+test("an oversized prompt fails before detached host IPC and leaves the MCP server usable", async () => {
+  const home = await tempHome("supervisor-oversized-prompt-");
+  await withMcp({ SUPERVISOR_HOME: home, FAKE_CODEX_SCENARIO: "exit-immediately" }, async ({ call }) => {
+    const task = await call("create_codex_worker", {
+      ...dispatchArgs("oversized", join(home, "workspace")),
+      task: "x".repeat(8 * 1024 * 1024)
+    });
+    assert.equal(task.status, "failed");
+    assert.match(task.error, /prompt is too large/);
+    const overview = await call("get_orchestration_overview", {});
+    assert.ok(overview.workers.some((worker) => worker.id === task.id));
+  });
+});
