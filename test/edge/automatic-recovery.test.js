@@ -32,10 +32,13 @@ test("check_workers recovers an empty write run once and two observers cannot st
     const replies = await Promise.all([first("check_workers", {}), second("check_workers", {})]);
     assert.equal(replies.flatMap((reply) => reply.recoveries).length, 1);
     const final = await waitFor(first, id, (row) => row.run_count === 2 && row.exit_code === 0);
-    assert.equal(final.attention_reason, "no_work");
+    assert.equal(final.attention_reason, "two_stall");
     const after = await first("check_workers", {});
     assert.equal(after.recoveries.length, 0);
-    assert.ok(after.attention.some((entry) => entry.reason === "no_work"));
+    assert.ok(after.attention.some((entry) => entry.reason === "two_stall"));
+    const db = new DatabaseSync(join(home, "data", "supervisor.sqlite"));
+    assert.equal(db.prepare("SELECT delivery_state FROM work_items WHERE task_id = ?").get(id).delivery_state, "needs_attention");
+    db.close();
     const events = await first("get_codex_worker_events", { task_id: id, limit: 50 });
     assert.equal(events.events.filter((event) => event.type === "supervisor.recovery").length, 1);
   }));

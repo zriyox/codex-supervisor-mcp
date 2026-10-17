@@ -216,7 +216,7 @@ wait 默认预算60秒、默认compact；includeEvents会选择详细结果（�
 
 守卫按 worker 形状放权：`git_worktree` 编辑 worker 只放声明过的命令和简单读取；`read_only_in_place` 无写入无网络；`scratch` 的联网草稿只能写在 `SUPERVISOR_HOME/scratch/<taskId>`；`in_place_write` 必须有显式授权、ownedPaths 与 acceptance，并保存前后 manifest。非 Git `workspace-write` 没写 `workspaceKind` 会拒绝，绝不默认写用户目录。
 
-check_workers在状态协调后，对已结束的第1轮lost/no_work/invalid_report原子resume一次（invalid_report只要求重发裸JSON，不重做活）；第2轮仍有问题则保留证据等处理。审批、认证、权限和quota等待不重试，返回recoveries记录。worker最终输出强制JSON result/verification/not_done；get_worker_result的structured_report给格式校验，独立命令与acceptance仍为实际证据。非法JSON标failed/invalid_report并拒绝land；旧历史标legacy_text。
+check_workers在状态协调后，对已结束的第1轮lost/no_work/invalid_report原子resume一次（invalid_report只要求重发裸JSON，不重做活）。两轮同 fingerprint 的无输出/无命令会升级为 `two_stall` 和 `needs_attention`，不再自动重试；审批、认证、权限和quota等待也不重试，返回recoveries记录。worker最终输出强制JSON result/verification/not_done；get_worker_result的structured_report给格式校验，独立命令与acceptance仍为实际证据。非法JSON标failed/invalid_report并拒绝land；旧历史标legacy_text。
 
 context用绝对文件路径与可选sha256声明材料，最多20份、与contracts合计6000字；文件不超过5 MB。首次派单记录实际哈希，resume校验原材料未变，需要新材料时显式传context。handoff最多1800字/16行，截断明确标记；完整约束和引用单独保留，材料不授予写权限。
 

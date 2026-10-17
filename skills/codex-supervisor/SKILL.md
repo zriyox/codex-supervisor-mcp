@@ -65,7 +65,7 @@ worker不止改代码，按这路要什么选形状：
 
 read-only 下 `networkAccess: true` 会被拒（实测该沙箱连 DNS 都不通，配了也没用）；要联网就按 `scratch` 研究 worker 派。非 Git `workspace-write` 不写 `workspaceKind` 会拒绝，绝不偷偷落到用户目录。研究 worker 的 shell 不受 allowedCommands 限制，forbid 红线照旧。读共享文件永远不排他，只有写按 ownedPaths 排他。
 
-check_workers可对已死的第1轮lost/no_work/invalid_report自动resume一次，recoveries记动作；invalid_report只让它重发裸JSON、不重做活，第2轮仍失败看证据处理，审批/认证/权限/quota不盲重试。最终报告强制JSON，structured_report仅验证格式；invalid_report拒land，resume让模型提交合法JSON，命令和acceptance另外核对。
+check_workers可对已死的第1轮lost/no_work/invalid_report自动resume一次，recoveries记动作；invalid_report只让它重发裸JSON、不重做活，审批/认证/权限/quota不盲重试。连续两轮同 fingerprint 的无输出/无命令会变 `two_stall` + `needs_attention`，禁止再自动 resume；看 evidence 决定主线程接管、修工具或重派。最终报告强制JSON，structured_report仅验证格式；invalid_report拒land，resume让模型提交合法JSON，命令和acceptance另外核对。
 
 未提交材料用context:[{path:绝对路径,sha256:可选}]；首次记哈希，resume材料变了要显式换context。context/contracts总6000字、最多20份文件，每份≤5 MB；handoff1800字/16行可裁，完整约束和refs另传。输入路径不等于写授权。
 

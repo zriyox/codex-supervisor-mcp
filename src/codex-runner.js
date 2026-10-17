@@ -1,6 +1,6 @@
 import { createWriteStream, existsSync } from "node:fs";
 import { mkdir, rm, stat } from "node:fs/promises";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { execFileSync, spawn } from "node:child_process";
 import { join, resolve, sep, dirname, isAbsolute } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -319,6 +319,7 @@ async function trackRunInHost({ record, args, prompt, logPath, spawnOptions = {}
   // A new run starts clean. A resumed worker used to carry the error from
   // the run that was lost, so a worker that was plainly running still showed
   // "process disappeared" until it finished.
+  const priorAttemptFingerprint = record.run_evidence?.attempt_fingerprint ?? null;
   let live = {
     ...record,
     status: "running",
@@ -503,9 +504,19 @@ async function trackRunInHost({ record, args, prompt, logPath, spawnOptions = {}
     next.run_evidence.external_outputs = externalChanges;
     if (externalChanges.some((entry) => entry.changed)) next.run_evidence.output_changed = true;
     next.changed_files = [...new Set([...next.changed_files, ...externalChanges.filter((entry) => entry.changed).map((entry) => entry.path)])];
+    next.run_evidence.attempt_fingerprint = createHash("sha256").update(JSON.stringify({
+      output_changed: next.run_evidence.output_changed,
+      commands_run: live.commands.length,
+      changed_files: next.changed_files,
+      acceptance_configured: Array.isArray(live.acceptance) && live.acceptance.length > 0,
+      workspace_manifest_changed: next.run_evidence.workspace?.manifest_changed ?? null
+    })).digest("hex");
     if (status === "completed" && code === 0 && live.sandbox !== "read-only"
       && !next.run_evidence.output_changed && next.run_evidence.output_changed !== null
-      && live.commands.length === 0) next.attention_reason = "no_work";
+      && live.commands.length === 0) {
+      next.attention_reason = priorAttemptFingerprint === next.run_evidence.attempt_fingerprint ? "two_stall" : "no_work";
+      if (next.attention_reason === "two_stall") next.current_action = "No progress in two consecutive runs; needs attention";
+    }
     if (status === "completed" && !next.run_evidence.structured_report.valid) {
       next.status = "failed";
       next.attention_reason = "invalid_report";
@@ -573,6 +584,7 @@ async function trackRunInHost({ record, args, prompt, logPath, spawnOptions = {}
         acceptanceEventId: acceptanceEvent?.id ?? null,
         acceptancePassed: results.passed === true
       });
+      if (finalRecord.attention_reason === "two_stall") await updateWorkItemDelivery(finalRecord.id, "needs_attention");
     } else {
       const finalRecord = acceptance ? { ...next, acceptance_results: null } : next;
       await persist(finalRecord);
@@ -583,6 +595,7 @@ async function trackRunInHost({ record, args, prompt, logPath, spawnOptions = {}
         report: finalRecord.run_evidence?.structured_report,
         reportEventId: rawReportEventId
       });
+      if (finalRecord.attention_reason === "two_stall") await updateWorkItemDelivery(finalRecord.id, "needs_attention");
     }
     cancelledTasks.delete(record.id);
   });
