@@ -107,7 +107,7 @@ Codex需0.162+支持hooks/output-schema，能力不够派单start_failed先修CL
 2. **主线程自己的改动必须 add + commit + push**：`git add <paths> && git commit -m ... && git push`。跳过任何一步都要显式说明，不允许说"改好了"然后留在工作区。
 3. **上线前核对远端，不认本地**：部署或重启服务前先 `git fetch`，再确认目标提交里真有那些改动 —— `git log --oneline origin/<branch> -1`、`git ls-tree -r --name-only origin/<branch> | rg <新文件>`、必要时 `git show origin/<branch>:<path>`。线上报 `NoSuchBeanDefinition`、找不到类/模块、404，先查这一条，再查代码逻辑。
 4. **交付报告三件套**：本地改动 → commit SHA → push 后的远端 SHA（以及部署状态）。缺远端 SHA 就不算完成。
-5. **push 后计划清理**：`land_codex_worker` 只到本地集成；用户 push 后先 `verify_delivery_push`，它会生成 15 分钟有效的 `cleanup_plan`。只对「push_verified + worktree 干净 + 无活跃依赖 + Git 注册/归属可证明」标 SAFE，并进 `cleanup_eligible`；主线程复核 item 后才 `apply_cleanup(plan_id,item_ids)`。apply 前再验 fingerprint，只执行 `git worktree remove/prune`；**branch、task、event、JSONL、artifact 永远保留**。脏、未合、未 push、lost、failed、证明不足是 BLOCKED/REVIEW，禁止强删。`check_workers` 只提醒，不执行删除。
+5. **push 后计划清理**：`land_codex_worker` 只到本地集成；用户 push 后先 `verify_delivery_push`，它会生成 15 分钟有效的 `cleanup_plan`。SAFE 必须是「acceptance 明确 passed + push_verified + worktree 干净 + 无活跃进程/依赖 + Git 注册/归属可证明」；主线程复核 item 后才 `apply_cleanup(plan_id,item_ids)`。apply 前会重验 fingerprint，并重新 fetch remote 确认 landed SHA 仍可达；只执行 `git worktree remove/prune`。**branch、task、event、JSONL、artifact 永远保留**。脏、未验收、未合、未 push、force-push 回退、lost、failed、证明不足一律不删。`check_workers` 只提醒，不执行删除。
 
 `land_codex_worker` 只到本地集成 `landed`，不是远端交付。用户已经 push 后，主线程调 `verify_delivery_push({task_id,remote:"origin"})`，它只 fetch + 祖先校验、不替你 push/部署；通过才记 `push_verified`，后续才可进入安全 cleanup 候选。
 
@@ -120,7 +120,7 @@ Codex需0.162+支持hooks/output-schema，能力不够派单start_failed先修CL
 
 | 想干什么 | 用哪个 |
 |---|---|
-| 主线程日常增量 | `overview_delta`，保存 `next_cursor`；只看计数和变化 task 摘要 |
+| 主线程日常增量 | `overview_delta`，保存 `next_cursor`；只看计数、变化 task 摘要、短版阻塞原因和下一步 |
 | 全部 worker 的状态 | `get_orchestration_overview`，只在需要全量状态时用 |
 | 一路的完整结论 | `get_worker_result` |
 | 一路改了什么 | `get_worker_diff`；只要文件名用 `get_worker_result` 带 `includeFiles: true` |
@@ -161,7 +161,7 @@ overview、派单回执、`wait` 返回里出现 `update` 且 `update_available:
 - worktree 只隔离工作区，端口和数据库是共用的。
 - `resume_codex_worker` 不会再建 goal。`cancel_codex_worker` 跨进程靠 pid，要求那个 pid 的命令行里带 `codex`。
 
-收尾先 `cleanup_plan` 看 SAFE / REVIEW / BLOCKED；只有 push_verified、干净、无活跃依赖且 fingerprint 未变化的 SAFE item 才可 `apply_cleanup`。CLI 对应 `npm run cleanup -- --dry-run` / `--apply`。branch、task、event、JSONL、artifact 保留；脏、未合、未 push、lost/failed和证明不了的一律不删。
+收尾先 `cleanup_plan` 看 SAFE / REVIEW / BLOCKED；只有 acceptance passed、push_verified、干净、无活跃进程/依赖且 fingerprint 未变化的 SAFE item 才可 `apply_cleanup`。CLI 先 `npm run cleanup -- --dry-run`，再显式 `npm run cleanup -- --apply --plan <plan_id> --item <item_id>`；`--apply` 不带计划和 item 会拒绝。apply 会再 fetch remote 验 landed SHA，branch、task、event、JSONL、artifact 保留；脏、未验收、未合、未 push、force-push 回退、lost/failed和证明不了的一律不删。
 
 ## 看板
 

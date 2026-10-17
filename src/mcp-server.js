@@ -38,7 +38,6 @@ import {
   updateWorkItemDelivery,
   saveCleanupPlan,
   getCleanupPlan,
-  markCleanupPlanItemApplied,
   readCleanupHistory
 } from "./task-store.js";
 import { readNativeGoal, readNativeGoalState } from "./goal-store.js";
@@ -56,7 +55,7 @@ import { maybeAutoUpdate } from "./auto-update.js";
 import { askWorker, endSideSession, latestSideTurn } from "./side-chat.js";
 import { landWorker } from "./landing.js";
 import { cleanupHint } from "./cleanup-hint.js";
-import { createCleanupPlan, removePlannedWorktree } from "./cleanup-plan.js";
+import { applyCleanupPlan, createCleanupPlan } from "./cleanup-plan.js";
 import { buildOverviewDelta } from "./overview-delta.js";
 
 // Report the real package version. This string had drifted to 0.4.0 while the
@@ -566,7 +565,14 @@ server.registerTool(
       await reconcileDetachedActiveTasks();
       const tasks = await readTasks();
       const previous = cursor ?? await readObserverCursor(deltaObserverId);
-      const result = buildOverviewDelta(tasks, previous);
+      const candidateIds = tasks.filter((task) => task.delivery_state === "cleanup_eligible").map((task) => task.id);
+      const cleanupReadiness = candidateIds.length > 0
+        ? await createCleanupPlan({ taskIds: candidateIds, revalidateRemote: false })
+        : null;
+      const readyToCleanTaskIds = cleanupReadiness
+        ? new Set(cleanupReadiness.items.filter((item) => item.verdict === "safe").map((item) => item.task_id))
+        : new Set();
+      const result = buildOverviewDelta(tasks, previous, { readyToCleanTaskIds });
       await writeObserverCursor(deltaObserverId, result.cursor);
       const { cursor: nextCursor, ...reply } = result;
       return textResult({ ...reply, next_cursor: nextCursor });
@@ -1486,7 +1492,7 @@ server.registerTool(
         });
       }
       const now = new Date().toISOString();
-      const verified = { ...task, push_verified_at: now, push_remote: remote, push_branch: targetBranch, updated_at: now };
+      const verified = { ...task, push_verified_at: now, push_remote: remote, push_branch: targetBranch, push_remote_head: remoteHead, updated_at: now };
       await upsertTask(verified);
       await updateWorkItemDelivery(task_id, "push_verified");
       const event = await appendTaskEvent(task_id, {
@@ -1570,34 +1576,7 @@ server.registerTool(
     const plan = await getCleanupPlan(plan_id);
     if (!plan) return textResult({ error: "cleanup_plan_not_found", plan_id });
     if (Date.parse(plan.expires_at) <= Date.now()) return textResult({ error: "cleanup_plan_expired", plan_id, expires_at: plan.expires_at });
-    const selected = plan.items.filter((item) => item_ids.includes(item.id));
-    if (selected.length !== item_ids.length) return textResult({ error: "cleanup_plan_item_not_found", plan_id });
-    const applied = [];
-    const skipped = [];
-    for (const item of selected) {
-      if (item.verdict !== "safe") {
-        skipped.push({ item_id: item.id, task_id: item.task_id, reason: "only SAFE plan items may be applied" });
-        continue;
-      }
-      const task = await getTask(item.task_id);
-      if (!task) {
-        skipped.push({ item_id: item.id, task_id: item.task_id, reason: "task no longer exists" });
-        continue;
-      }
-      try {
-        await removePlannedWorktree(task, item.fingerprint);
-        const now = await markCleanupPlanItemApplied(item.id);
-        await updateWorkItemDelivery(task.id, "cleanup_removed");
-        await appendTaskEvent(task.id, { type: "supervisor.cleanup_removed", plan_id, item_id: item.id, removed_at: now, retained: ["branch", "task", "events", "jsonl", "artifacts"] }, {
-          runId: runIdFor(task.id, task.run_count ?? 1),
-          actor: "supervisor"
-        });
-        applied.push({ item_id: item.id, task_id: task.id, worktree_path: task.worktree_path, removed_at: now });
-      } catch (error) {
-        skipped.push({ item_id: item.id, task_id: item.task_id, reason: error.message.split("\n")[0] });
-      }
-    }
-    return textResult({ plan_id, applied, skipped, retained: ["branch", "task", "events", "jsonl", "artifacts"] });
+    return textResult(await applyCleanupPlan({ plan, itemIds: item_ids, actor: "main_thread" }));
   }
 );
 

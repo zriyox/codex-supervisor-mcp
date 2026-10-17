@@ -22,8 +22,9 @@ export async function cleanupHint({ list = readdir, root = supervisorRoot, dir =
     worktrees: entries,
     threshold,
     command: `SUPERVISOR_HOME=${root} npm run cleanup -- --dry-run`,
-    apply: `SUPERVISOR_HOME=${root} npm run cleanup -- --apply`,
-    note: "only push-verified, clean worktrees become SAFE; apply retains branches and evidence"
+    apply: null,
+    next_step: "Review the dry-run plan_id and a SAFE item id, then call apply_cleanup; CLI apply also requires --plan and --item.",
+    note: "only acceptance-passed, push-verified, clean worktrees without active processes or dependents become SAFE; apply retains branches and evidence"
   };
 }
 

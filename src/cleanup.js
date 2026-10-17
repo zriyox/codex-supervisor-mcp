@@ -1,9 +1,9 @@
 #!/usr/bin/env node
-import { createCleanupPlan, removePlannedWorktree } from "./cleanup-plan.js";
-import { appendTaskEvent, getTask, markCleanupPlanItemApplied, saveCleanupPlan, updateWorkItemDelivery, runIdFor } from "./task-store.js";
+import { applyCleanupPlan, createCleanupPlan } from "./cleanup-plan.js";
+import { getCleanupPlan, saveCleanupPlan } from "./task-store.js";
 
 function parseArgs(argv) {
-  const options = { apply: false, taskIds: [] };
+  const options = { apply: false, taskIds: [], itemIds: [], planId: null };
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
     if (arg === "--apply") options.apply = true;
@@ -11,10 +11,19 @@ function parseArgs(argv) {
     else if (arg === "--task") {
       options.taskIds.push(argv[index + 1]);
       index += 1;
+    } else if (arg === "--plan") {
+      options.planId = argv[index + 1];
+      index += 1;
+    } else if (arg === "--item") {
+      options.itemIds.push(argv[index + 1]);
+      index += 1;
     } else if (arg === "--help" || arg === "-h") options.help = true;
     else throw new Error(`Unknown argument: ${arg}`);
   }
   if (options.taskIds.some((id) => !id)) throw new Error("--task requires a task id");
+  if (options.itemIds.some((id) => !id)) throw new Error("--item requires a cleanup plan item id");
+  if (options.apply && (!options.planId || options.itemIds.length === 0)) throw new Error("--apply requires --plan <plan_id> and one or more --item <item_id>");
+  if (!options.apply && (options.planId || options.itemIds.length)) throw new Error("--plan and --item are only valid with --apply");
   return options;
 }
 
@@ -23,50 +32,49 @@ function printHelp() {
 
 Options:
   --dry-run          Create and print a SAFE / REVIEW / BLOCKED plan. Default.
-  --apply            Remove every SAFE worktree in the generated plan.
+  --apply            Apply selected SAFE items from an existing plan.
   --task <task_id>   Limit the plan to one task; repeatable.
+  --plan <plan_id>   Existing cleanup plan to apply (required with --apply).
+  --item <item_id>   SAFE item to apply; repeatable (required with --apply).
   -h, --help         Show help.
 
 Cleanup never removes branches, task rows, events, JSONL logs or artifacts.
 `);
 }
 
-const options = parseArgs(process.argv.slice(2));
-if (options.help) {
-  printHelp();
-  process.exit(0);
-}
-
-const plan = await createCleanupPlan({ taskIds: options.taskIds.length ? options.taskIds : null });
-await saveCleanupPlan(plan);
-const applied = [];
-const skipped = [];
-if (options.apply) {
-  for (const item of plan.items.filter((entry) => entry.verdict === "safe")) {
-    const task = await getTask(item.task_id);
-    try {
-      await removePlannedWorktree(task, item.fingerprint);
-      const now = await markCleanupPlanItemApplied(item.id, "cleanup_cli");
-      await updateWorkItemDelivery(task.id, "cleanup_removed");
-      await appendTaskEvent(task.id, { type: "supervisor.cleanup_removed", plan_id: plan.id, item_id: item.id, removed_at: now, retained: ["branch", "task", "events", "jsonl", "artifacts"] }, {
-        runId: runIdFor(task.id, task.run_count ?? 1), actor: "supervisor"
-      });
-      applied.push({ task_id: task.id, worktree_path: task.worktree_path, removed_at: now });
-    } catch (error) {
-      skipped.push({ task_id: item.task_id, reason: error.message.split("\n")[0] });
-    }
+async function main() {
+  const options = parseArgs(process.argv.slice(2));
+  if (options.help) {
+    printHelp();
+    return;
   }
+
+  const plan = options.apply
+    ? await getCleanupPlan(options.planId)
+    : await createCleanupPlan({ taskIds: options.taskIds.length ? options.taskIds : null });
+  if (!plan) throw new Error(`cleanup plan not found: ${options.planId}`);
+  if (!options.apply) await saveCleanupPlan(plan);
+  const outcome = options.apply
+    ? await applyCleanupPlan({ plan, itemIds: options.itemIds, actor: "cleanup_cli" })
+    : { applied: [], skipped: [] };
+
+  console.log(JSON.stringify({
+    dry_run: !options.apply,
+    plan_id: plan.id,
+    generated_at: plan.generated_at,
+    expires_at: plan.expires_at,
+    policy: plan.policy,
+    summary: plan.summary,
+    items: plan.items,
+    applied: outcome.applied,
+    skipped: outcome.skipped,
+    retained: ["branch", "task", "events", "jsonl", "artifacts"]
+  }, null, 2));
 }
 
-console.log(JSON.stringify({
-  dry_run: !options.apply,
-  plan_id: plan.id,
-  generated_at: plan.generated_at,
-  expires_at: plan.expires_at,
-  policy: plan.policy,
-  summary: plan.summary,
-  items: plan.items,
-  applied,
-  skipped,
-  retained: ["branch", "task", "events", "jsonl", "artifacts"]
-}, null, 2));
+try {
+  await main();
+} catch (error) {
+  console.error(error.message);
+  process.exitCode = 1;
+}

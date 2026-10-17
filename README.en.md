@@ -32,7 +32,7 @@ Point several agents at one repository and they overwrite each other, nobody can
 | "Failed" and "process gone" look alike | The state machine keeps `failed` and `lost` apart |
 | No view of where a batch is | `codex-supervisor-web`, a board that shows every worker by session |
 | Work sits uncommitted or unpushed | Collecting a worker means `land_codex_worker` by default; the main thread commits and pushes its own edits; before deploying, check the remote SHA really contains the files |
-| Worktrees and branches pile up | Clean up as you merge: `npm run cleanup -- --days 0 --dry-run` lists the candidates (merged and clean only), then `--apply`; `check_workers` returns a `cleanup` hint with both commands once the store passes the threshold |
+| Worktrees and branches pile up | `verify_delivery_push` creates a cleanup plan. Only acceptance-passed, remotely verified, clean worktrees can be SAFE; review an item before explicitly applying it, while branches and evidence stay retained |
 
 Workers run `codex exec` with `model` passed through: the main thread stays on Claude, workers can run DeepSeek or any model Codex has a provider for, and the bills stay separate.
 
@@ -149,8 +149,10 @@ Thirty.
 | Tool | Arguments | What it does |
 |---|---|---|
 | `check_workers` | none | Report newly settled runs and actionable changes; recover a new-format first lost/no_work run once. Unchanged state is quiet. Call from a host-scheduled loop and use a distinct CODEX_SUPERVISOR_OBSERVER_ID for each reconnecting main thread |
+| `overview_delta` | `cursor` | Main-thread incremental view: counters, changed summaries, short attention reason / next action and next_cursor; no prompt, diff, event or capsule history |
 | `check_acceptance` | `cwd`, `acceptance`, `baseRef`, `timeoutMs` | Execute supplied checks before dispatch, without creating a worker or proving completion; warns that failure-count greps do not establish an approved failure list or required execution |
 | `preflight_codex_worker` | `cwd`, `workspaceKind`, `inPlaceAuthorization`, `ownedPaths`, `probeCommands`, `baseRef`, `sandbox`, `allowedCommands`, `context`, `contracts`, `networkAccess`, `writableRoots` | Run a short probe worker under the exact workspace/base/sandbox/guard contract intended for the later worker; wait for `get_worker_preflight` to report passed before dispatch |
+| `get_worker_preflight` | `task_id` | Read probe command evidence and the immutable runtime contract hash |
 | `create_codex_worker` | `task`, `cwd`, `workspaceKind`, `inPlaceAuthorization`, **`ownedPaths`**, **`goal`**, `forbid`, `allowedCommands`, `context`, `contracts`, `externalOutputs`, `networkAccess`, `writableRoots`, `maxRunMs`, `maxTotalMs`, `acceptance`, `session_id`, `session_title`, `session_note`, `dependsOn`, `baseRef`, `sandbox`, `model`, `reasoningEffort`, `title`, `skipGitRepoCheck` | Git defaults to an isolated worktree. A non-Git write must choose `scratch`, or an authorized `in_place_write` with paths and acceptance. |
 | `create_codex_followup_worker` | `task_id`, `followup_prompt`, `session_id`, plus the above | A new session seeded with the old worker's prompt, status and recent events |
 | `resume_codex_worker` | `task_id`, `prompt`, `rebaseOnto`, `acceptance`, `context` | Continue the same Codex conversation; `thread_id` stays. `rebaseOnto` first moves the worktree onto the project's newer commit (stash, skip integrated patches, replay new commits, unstash); a conflict puts it back and does not start the worker |
@@ -160,9 +162,15 @@ Thirty.
 | `get_worker_diff` | `task_id`, `maxChars`, `paths` | What the worker actually changed: patches from the worktree's start to its working tree, committed or not. `maxChars` bounds the answer; files past it are listed without a patch |
 | `ask_codex_worker` | `task_id`, `question`, `timeoutMs`, `maxChars`, `fresh`, `end` | Ask the worker on the side. Its thread is forked into a read-only session with no network and no MCP tools; the worker itself is untouched. A resumed worker gets a new fork by itself, `fresh` forces one, `end` deletes it |
 | `land_codex_worker` | `task_id`, `onto`, `commitMessage`, `ignoreAcceptance`, `allowOutsideOwned` | Cherry-pick the worker's `codex/<id>` commits onto the current branch of the dispatch directory: clean target only, a conflict rolls back, a failed acceptance is refused. `commitMessage` first commits its uncommitted edits as one commit; `ignoreAcceptance` lands anyway |
+| `verify_delivery_push` | `task_id`, `remote`, `branch` | Fetch a remote branch and prove landed_head is reachable; records push_verified and creates a cleanup plan without pushing or deploying |
+| `cleanup_plan` | `task_ids`, `project_root` | Create a 15-minute SAFE / REVIEW / BLOCKED plan with reasons and fingerprints; SAFE requires explicit acceptance, delivery proof, clean state and no active process/dependency |
+| `apply_cleanup` | `plan_id`, `item_ids` | Revalidate selected SAFE items, fetch the remote and prove landed SHA reachability, then run only git worktree remove/prune |
+| `cleanup_history` | `task_id`, `limit` | Read cleanup decisions and applied removals; never deletes anything |
 | `get_worker_summary` | `task_id` | One paragraph: goal, status, changes, last command and message |
 | `get_codex_worker_status` | `task_id`, `includePrompt`, `promptMaxChars` | One worker in detail |
 | `get_codex_worker_events` | `task_id`, `limit`, `maxChars`, `kinds` | The raw event stream |
+| `get_context_snapshot_meta` | `task_id` | Worker-only context snapshot metadata: fact IDs, token count and excluded categories, never capsule text |
+| `get_fact` | `fact_id` | Read one fact by ID for audit without injecting it into main-thread context |
 | `get_worker_goal` | `task_id` | The goal recorded at dispatch plus the native Codex goal (tokens, time) |
 | `list_codex_workers` | `status`, `includeHistory`, `includeDetails` | List workers, active ones by default |
 | `get_session_works` | `session_id` | Every worker of one session. The way back after a main-thread restart |
@@ -207,7 +215,7 @@ Dispatch checks required hooks/output-schema support (Codex 0.162+); unsupported
 
 Ownership reservation and task insertion are atomic across MCP dispatch/resume processes; ownership remains reserved during acceptance or exit settlement. Failure to create an isolated Git checkout is explicit and never falls back to executing in the project directory.
 
-Cleanup previews by default: `npm run cleanup -- --dry-run`. `--apply` removes only integrated, clean completed worktrees with no active dependents and verified Git registration/ownership. Dirty, unlanded, lost/failed or unproven work is preserved with a reason.
+Cleanup previews by default: `npm run cleanup -- --dry-run`. Apply only selected existing items: `npm run cleanup -- --apply --plan <plan_id> --item <item_id>`. SAFE requires acceptance passed, remote delivery proof, a clean worktree, no active process/dependent and verified Git registration/ownership; apply re-fetches the remote and proves the landed SHA remains reachable. Dirty, unaccepted, unlanded, force-pushed-away, lost/failed or unproven work is preserved with a reason.
 
 ## How this differs from Claude Code subagents
 

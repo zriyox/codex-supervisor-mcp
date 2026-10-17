@@ -12,7 +12,8 @@ test("the hint appears only once the store holds enough worktrees", async () => 
   assert.equal(hint.worktrees, 3);
   assert.equal(hint.threshold, 3);
   assert.match(hint.command, /SUPERVISOR_HOME=\/store npm run cleanup -- --dry-run/);
-  assert.match(hint.apply, /npm run cleanup -- --apply/);
+  assert.equal(hint.apply, null);
+  assert.match(hint.next_step, /requires --plan and --item/);
   assert.match(hint.note, /push-verified/);
   assert.equal(await cleanupHint({ list: () => Promise.reject(new Error("gone")), threshold: 1 }), null, "a missing directory is not an error");
   assert.equal(cleanupThreshold("0"), 0, "0 disables the hint");

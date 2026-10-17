@@ -26,7 +26,11 @@ test("cleanup plan only removes verified-safe worktrees and preserves the eviden
   const workers = {};
   await withMcp({ SUPERVISOR_HOME: home }, async ({ call }) => {
     for (const title of ["safe", "dirty", "unverified"]) {
-      const worker = await call("create_codex_worker", dispatchArgs(title, dir, { sandbox: "workspace-write", ownedPaths: [`${title}.txt`] }));
+      const worker = await call("create_codex_worker", dispatchArgs(title, dir, {
+        sandbox: "workspace-write",
+        ownedPaths: [`${title}.txt`],
+        acceptance: ["node -e \"process.exit(0)\""]
+      }));
       await waitFor(call, worker.id, (task) => task.status === "completed" && task.exit_code === 0);
       await writeFile(join(worker.worktree_path, `${title}.txt`), `${title}\n`);
       git(worker.worktree_path, ["add", "-A"]);
@@ -52,7 +56,8 @@ test("cleanup plan only removes verified-safe worktrees and preserves the eviden
   assert.equal(dirty.verdict, "blocked");
   assert.equal(unverified.verdict, "blocked");
   assert.match(unverified.reasons.join(" "), /remote delivery/);
-  const applied = runCleanup(home, ["--apply", "--task", workers.safe.id]);
+  assert.throws(() => runCleanup(home, ["--apply", "--task", workers.safe.id]), /--apply requires --plan/);
+  const applied = runCleanup(home, ["--apply", "--plan", preview.plan_id, "--item", safe.id]);
   assert.equal(applied.applied.length, 1, JSON.stringify(applied));
   assert(!existsSync(workers.safe.worktree_path));
   assert(existsSync(workers.dirty.worktree_path));

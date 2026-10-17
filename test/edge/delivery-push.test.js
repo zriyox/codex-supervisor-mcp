@@ -19,7 +19,8 @@ test("land and remote push verification are distinct delivery states", async () 
   await withMcp({ SUPERVISOR_HOME: home, FAKE_CODEX_SCENARIO: "commit-in-worktree" }, async ({ call }) => {
     worker = await call("create_codex_worker", dispatchArgs("delivery", dir, {
       sandbox: "workspace-write",
-      ownedPaths: ["committed.txt", "uncommitted.txt"]
+      ownedPaths: ["committed.txt", "uncommitted.txt"],
+      acceptance: ["node -e \"process.exit(0)\""]
     }));
     await waitFor(call, worker.id, (task) => task.status === "completed" && task.exit_code === 0);
     const landed = await call("land_codex_worker", { task_id: worker.id, commitMessage: "land delivery draft" });
@@ -32,10 +33,11 @@ test("land and remote push verification are distinct delivery states", async () 
   });
 
   const db = new DatabaseSync(join(home, "data", "supervisor.sqlite"));
-  const task = db.prepare("SELECT landed_head, landed_branch, push_verified_at, push_remote, push_branch FROM tasks WHERE id = ?").get(worker.id);
+  const task = db.prepare("SELECT landed_head, landed_branch, push_verified_at, push_remote, push_branch, push_remote_head FROM tasks WHERE id = ?").get(worker.id);
   assert.equal(task.landed_branch, "main");
   assert.equal(task.push_remote, "origin");
   assert.equal(task.push_branch, "main");
+  assert.match(task.push_remote_head, /^[a-f0-9]{40}$/);
   assert.ok(task.push_verified_at);
   assert.equal(db.prepare("SELECT delivery_state FROM work_items WHERE task_id = ?").get(worker.id).delivery_state, "cleanup_eligible");
   const keys = db.prepare("SELECT key FROM facts WHERE work_item_id = (SELECT id FROM work_items WHERE task_id = ?) ORDER BY created_at").all(worker.id).map((row) => row.key);

@@ -32,7 +32,7 @@
 | worker 说做完了其实没有 | 派单给 `acceptance` 验收命令，worker 退出后 supervisor 在它的 worktree 里跑，失败 `land` 拒绝 |
 | 看不见一批活现在到哪了 | `codex-supervisor-web` 开一个看板，按 session 看每路 worker 在干什么 |
 | 改动留在本地没上线 | 收活默认 `land_codex_worker` 合回主分支；主线程自己的改动必须 commit + push；部署前用远端 SHA 核对文件真的在线上 |
-| worktree / 分支越堆越多 | `verify_delivery_push` 后自动生成 cleanup plan；只对 `push_verified + clean` 判 SAFE，主线程显式 `apply_cleanup` 才删 worktree，branch/证据永远保留 |
+| worktree / 分支越堆越多 | `verify_delivery_push` 后自动生成 cleanup plan；只对 `acceptance passed + push_verified + clean` 判 SAFE，主线程显式 `apply_cleanup` 才删 worktree，branch/证据永远保留 |
 
 worker 跑的是 `codex exec`，`model` 透传：主线程留在 Claude，worker 可以挂 DeepSeek 或任何 Codex 配了 provider 的模型，账单分开算。
 
@@ -151,7 +151,7 @@ land_codex_worker       核过了，落进集成分支
 | 工具 | 入参 | 作用 |
 |---|---|---|
 | `check_workers` | 无参 | 交付新终态、验收失败和需处理goal；新格式第1轮lost/no_work自动恢复一次，未变返回quiet；用宿主定时唤醒调用，每个主线程设独立CODEX_SUPERVISOR_OBSERVER_ID可在重启后接回 |
-| `overview_delta` | `cursor` | 主线程默认轮询入口：只返回 active / needs_attention / ready_to_land / ready_to_clean、cursor 后变化和 next_cursor；不返回全量历史、prompt、diff、event 或 worker capsule |
+| `overview_delta` | `cursor` | 主线程默认轮询入口：只返回 active / needs_attention / ready_to_land / ready_to_clean、cursor 后变化、短版 attention_reason / next_action 和 next_cursor；不返回全量历史、prompt、diff、event 或 worker capsule |
 | `check_acceptance` | `cwd`, `acceptance`, `baseRef`, `timeoutMs` | 派单前实际运行给定验收命令，不建 worker，不证明 worker 完成；数量 grep 会提示不能证明失败名单和必跑执行 |
 | `preflight_codex_worker` | `cwd`, `workspaceKind`, `inPlaceAuthorization`, `ownedPaths`, `probeCommands`, `baseRef`, `sandbox`, `allowedCommands`, `context`, `contracts`, `networkAccess`, `writableRoots` | 用与目标 worker 相同的 workspace/base/sandbox/guard 起短 probe worker；它必须实际跑完每条 probe command。等终态后读 `get_worker_preflight` |
 | `get_worker_preflight` | `task_id` | 返回 probe 的实际 command evidence、运行环境 contract hash 和 `running/passed/failed`；只有 `passed` 才能复用 |
@@ -165,8 +165,8 @@ land_codex_worker       核过了，落进集成分支
 | `ask_codex_worker` | `task_id`, `question`, `timeoutMs`, `maxChars`, `fresh`, `end` | 旁路问 worker 一句。线程 fork 成只读侧会话，没网络、没 MCP 工具，worker 本身不动。worker 被 resume 过会自动换新 fork，`fresh` 强制换，`end` 删 |
 | `land_codex_worker` | `task_id`, `onto`, `commitMessage`, `ignoreAcceptance`, `allowOutsideOwned` | 把 worker 在 `codex/<id>` 上的提交 cherry-pick 到派单目录的当前分支。目标要干净，冲突回滚，验收 `failed` 拒绝。`commitMessage` 先替它把未提交的改动提交成一笔，`ignoreAcceptance` 放行 |
 | `verify_delivery_push` | `task_id`, `remote`, `branch` | fetch 指定 remote branch 并证明 `landed_head` 已可达；只读验证，不会 push 或部署。通过后记录 `push_verified` 并生成 cleanup plan |
-| `cleanup_plan` | `task_ids`, `project_root` | 生成 15 分钟有效的 SAFE / REVIEW / BLOCKED 计划，含原因、fingerprint 与回收空间估算；SAFE 会进入 `cleanup_eligible` |
-| `apply_cleanup` | `plan_id`, `item_ids` | 只在未过期计划上二次校验 SAFE item 后执行 `git worktree remove/prune`；保留 branch、task、events、JSONL、artifacts |
+| `cleanup_plan` | `task_ids`, `project_root` | 生成 15 分钟有效的 SAFE / REVIEW / BLOCKED 计划，含原因、fingerprint 与回收空间估算；SAFE 必须 acceptance passed、push verified、干净且无活跃依赖/进程 |
+| `apply_cleanup` | `plan_id`, `item_ids` | 只在未过期计划上二次校验 SAFE item、重新 fetch remote 并确认 landed SHA 仍可达后执行 `git worktree remove/prune`；保留 branch、task、events、JSONL、artifacts |
 | `cleanup_history` | `task_id`, `limit` | 查询 cleanup 的计划、理由、fingerprint 和实际回收记录 |
 | `get_worker_summary` | `task_id` | 一段话：goal、状态、改动、最后一条命令和消息 |
 | `get_codex_worker_status` | `task_id`, `includePrompt`, `promptMaxChars` | 单个 worker 的状态细节 |
@@ -225,7 +225,7 @@ workspace-write默认networkAccess:false；需要ssh/联网验证显式true，�
 
 ownedPaths预留和任务入库在同一事务内，跨MCP并发派单/恢复不能抢同一输出；验收或退出尚未结算时仍保留归属。Git工作区隔离创建失败明确报错，不退回主目录执行；非 Git `scratch` 也不落回原目录。
 
-清理先 `cleanup_plan`（CLI 对应 `npm run cleanup -- --dry-run`）分类 SAFE / REVIEW / BLOCKED；SAFE 要求 `push_verified`、干净、无活跃依赖、Git 注册和路径归属可证明。`apply_cleanup`（CLI `--apply`）会在删除前重验 fingerprint，只执行 `git worktree remove`/`prune`。branch、task row、event、JSONL、artifact 永远保留；脏、未合、未 push、lost/failed 和证明不足的一律不删。
+清理先 `cleanup_plan`（CLI 对应 `npm run cleanup -- --dry-run`）分类 SAFE / REVIEW / BLOCKED；SAFE 要求 acceptance 明确 passed、`push_verified`、干净、无活跃进程/依赖、Git 注册和路径归属可证明。`apply_cleanup` 会在删除前重验 fingerprint 并 fetch remote 再验 landed SHA；CLI 只能 `npm run cleanup -- --apply --plan <plan_id> --item <item_id>` 显式选项执行。branch、task row、event、JSONL、artifact 永远保留；脏、未验收、未合、未 push、force-push 回退、lost/failed 和证明不足的一律不删。
 
 ## 和 Claude Code 的 subagent 有什么区别
 

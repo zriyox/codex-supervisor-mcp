@@ -43,7 +43,8 @@ const POST_V1_COLUMNS = [
   ["landed_branch", "TEXT"],
   ["push_verified_at", "TEXT"],
   ["push_remote", "TEXT"],
-  ["push_branch", "TEXT"]
+  ["push_branch", "TEXT"],
+  ["push_remote_head", "TEXT"]
 ];
 
 const TASK_EXTRA_COLUMNS = [
@@ -116,6 +117,7 @@ const TASKS_DDL = `
       push_verified_at TEXT,
       push_remote TEXT,
       push_branch TEXT,
+      push_remote_head TEXT,
       run_log TEXT NOT NULL
     );
 `;
@@ -128,7 +130,7 @@ const TASK_COLUMNS = [
   "current_command", "error", "followup_of", "resumed_from", "session_id", "thread_id", "owned_paths",
   "depends_on", "goal_objective", "goal_token_budget", "goal_status", "goal_tokens_used",
   "goal_time_used_seconds", "goal_updated_at", "run_count", "cancel_requested_at",
-  "notices", "worktree_path", "base_commit", "acceptance", "acceptance_local", "session_policy_revision", "acceptance_timeout_ms", "acceptance_results", "landed_at", "landed_head", "landed_branch", "push_verified_at", "push_remote", "push_branch", "run_log"
+  "notices", "worktree_path", "base_commit", "acceptance", "acceptance_local", "session_policy_revision", "acceptance_timeout_ms", "acceptance_results", "landed_at", "landed_head", "landed_branch", "push_verified_at", "push_remote", "push_branch", "push_remote_head", "run_log"
 ];
 
 function tableColumns(dbInstance, tableName) {
@@ -1167,6 +1169,9 @@ export async function saveCleanupPlan(plan) {
       insert.run(item.id, plan.id, item.task_id, item.verdict, JSON.stringify(item.reasons), item.fingerprint, item.reclaimable_bytes, item.eligible_after);
       if (item.verdict === "safe") {
         dbInstance.prepare("UPDATE work_items SET delivery_state = 'cleanup_eligible', updated_at = ? WHERE task_id = ? AND delivery_state = 'push_verified'")
+          .run(new Date().toISOString(), item.task_id);
+      } else {
+        dbInstance.prepare("UPDATE work_items SET delivery_state = 'push_verified', updated_at = ? WHERE task_id = ? AND delivery_state = 'cleanup_eligible'")
           .run(new Date().toISOString(), item.task_id);
       }
     }
