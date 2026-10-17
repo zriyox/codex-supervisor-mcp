@@ -170,12 +170,12 @@ Thirty-nine.
 | `get_codex_worker_status` | `task_id`, `includePrompt`, `promptMaxChars` | One worker in detail |
 | `get_codex_worker_events` | `task_id`, `limit`, `maxChars`, `kinds` | The raw event stream |
 | `get_context_snapshot_meta` | `task_id` | Worker-only context snapshot metadata: fact IDs, token count and excluded categories, never capsule text |
-| `get_fact` | `fact_id` | Read one fact by ID for audit without injecting it into main-thread context |
+| `get_fact` | `fact_id` | Read one historical fact version and its `effective_state` without injecting it into main-thread context |
 | `search_worker_facts` | `task_id`, `query`, `limit`, `cursor` | Search only verified facts scoped to the current work, explicit dependencies and path-matched repository facts; returns coverage and next_cursor, never raw history |
 | `get_worker_evidence` | `task_id`, `limit` | Bounded event metadata and retained artifact IDs for one worker; select an artifact or event explicitly for detail |
 | `get_artifact` | `artifact_id`, `maxChars` | Read one supervisor-managed evidence artifact without expanding a worker capsule into main context |
 | `promote_worker_fact` | `fact_id`, `scope`, `watchedPaths`, `expiresAt` | Explicitly promote a candidate to a new verified fact after main-thread review; repo scope requires watched paths |
-| `revoke_worker_fact` | `fact_id`, `reason` | Revoke a candidate or verified fact after audit; it is excluded from search and future worker capsules |
+| `revoke_worker_fact` | `fact_id`, `reason` | Append a revocation version and audit event without overwriting the original; the fact is excluded from search and future capsules |
 | `create_independent_verifier` | `task_id`, `title` | Create a fresh read-only, no-network verifier for a settled worker; it receives the objective and current worktree, never the target report or candidate facts |
 | `record_independent_finding` | `verifier_task_id`, `verdict`, `reason` | Persist an independent passes/fails/inconclusive finding with a subject event and retained evidence artifact |
 | `resolve_independent_finding` | `verifier_task_id`, `resolution` | Record how a finding was resolved without deleting the finding or evidence |

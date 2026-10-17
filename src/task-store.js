@@ -1178,7 +1178,12 @@ export async function listContextFacts({ taskId, baseSha, ownedPaths = [], depen
   const dependencyItems = dependencyTaskIds.length === 0
     ? []
     : openDb().prepare(`SELECT id FROM work_items WHERE task_id IN (${dependencyTaskIds.map(() => "?").join(",")})`).all(...dependencyTaskIds).map((row) => row.id);
-  const rows = openDb().prepare("SELECT * FROM facts WHERE state = 'verified' ORDER BY created_at ASC").all();
+  const rows = openDb().prepare(`
+    SELECT facts.* FROM facts
+    WHERE state = 'verified'
+      AND NOT EXISTS (SELECT 1 FROM facts AS transition WHERE transition.supersedes_id = facts.id AND transition.state = 'revoked')
+    ORDER BY created_at ASC
+  `).all();
   const now = Date.now();
   const workspaceManifest = await currentWorkspaceManifest(task);
   const visible = [];
@@ -1216,7 +1221,11 @@ export async function listContextFacts({ taskId, baseSha, ownedPaths = [], depen
 
 export async function countVerifiedFacts() {
   await ensureFilesystem();
-  return openDb().prepare("SELECT COUNT(*) AS count FROM facts WHERE state = 'verified'").get().count;
+  return openDb().prepare(`
+    SELECT COUNT(*) AS count FROM facts
+    WHERE state = 'verified'
+      AND NOT EXISTS (SELECT 1 FROM facts AS transition WHERE transition.supersedes_id = facts.id AND transition.state = 'revoked')
+  `).get().count;
 }
 
 export async function createContextSnapshot({ runId, recipient = "worker", factIds = [], baseSha = null, prompt, estimatedTokens, excluded = {} }) {
@@ -1256,10 +1265,20 @@ export async function getTaskForWorkItem(workItemId) {
   return openDb().prepare("SELECT * FROM tasks WHERE id = (SELECT task_id FROM work_items WHERE id = ?)").get(workItemId) ?? null;
 }
 
+export async function isFactRevoked(factId) {
+  await ensureFilesystem();
+  return Boolean(openDb().prepare("SELECT 1 FROM facts WHERE supersedes_id = ? AND state = 'revoked'").get(factId));
+}
+
 export async function promoteCandidateFact({ factId, scopeType = "work_item", watchedPaths = null, expiresAt = null, sourceEventId = null, verifiedBy = "main_thread" }) {
   await ensureFilesystem();
   const source = await getFact(factId);
   if (!source) throw new Error(`fact not found: ${factId}`);
+  if (await isFactRevoked(factId)) {
+    const error = new Error(`fact ${factId} is already revoked`);
+    error.code = "fact_already_revoked";
+    throw error;
+  }
   if (source.state !== "candidate") {
     const error = new Error(`only candidate facts may be promoted; ${factId} is ${source.state}`);
     error.code = "fact_not_candidate";
@@ -1297,8 +1316,33 @@ export async function revokeFact(factId) {
   await ensureFilesystem();
   const source = await getFact(factId);
   if (!source) return null;
-  openDb().prepare("UPDATE facts SET state = 'revoked' WHERE id = ? AND state IN ('candidate', 'verified')").run(factId);
-  return { ...source, state: "revoked" };
+  if (!["candidate", "verified"].includes(source.state)) {
+    const error = new Error(`only candidate or verified facts may be revoked; ${factId} is ${source.state}`);
+    error.code = "fact_not_revocable";
+    throw error;
+  }
+  if (await isFactRevoked(factId)) {
+    const error = new Error(`fact ${factId} is already revoked`);
+    error.code = "fact_already_revoked";
+    throw error;
+  }
+  return recordFact({
+    workItemId: source.work_item_id,
+    scopeType: source.scope_type,
+    scopeId: source.scope_id,
+    key: source.key,
+    value: source.value,
+    state: "revoked",
+    sourceEventId: source.source_event_id,
+    sourceArtifactId: source.source_artifact_id,
+    validForSha: source.valid_for_sha,
+    validForContentHash: source.valid_for_content_hash,
+    validForManifestHash: source.valid_for_manifest_hash,
+    watchedPaths: source.watched_paths,
+    expiresAt: source.expires_at,
+    supersedesId: source.id,
+    verifiedBy: "main_thread"
+  });
 }
 
 export async function recordJsonArtifact({ runId, type, value, securityClass = "internal", retention = "permanent" }) {

@@ -16,6 +16,7 @@ import {
   getSession,
   getArtifact,
   getFact,
+  isFactRevoked,
   getReviewByVerifierTask,
   getTaskForWorkItem,
   getWorkItemForTask,
@@ -1212,7 +1213,8 @@ server.registerTool(
   },
   async ({ fact_id }) => {
     const fact = await getFact(fact_id);
-    return textResult(fact ? { fact } : { error: "fact_not_found", fact_id });
+    if (!fact) return textResult({ error: "fact_not_found", fact_id });
+    return textResult({ fact, effective_state: await isFactRevoked(fact_id) ? "revoked" : fact.state });
   }
 );
 
@@ -1246,6 +1248,7 @@ server.registerTool(
     try {
       const source = await getFact(fact_id);
       if (!source) return textResult({ error: "fact_not_found", fact_id });
+      if (await isFactRevoked(fact_id)) return textResult({ error: "fact_already_revoked", fact_id });
       const task = await getTaskForWorkItem(source.work_item_id);
       if (!task) return textResult({ error: "fact_task_not_found", fact_id });
       const event = await appendTaskEvent(task.id, { type: "supervisor.fact_promoted", source_fact_id: fact_id, scope, watched_paths: watchedPaths ?? source.watched_paths ?? [], expires_at: expiresAt ?? null }, {
