@@ -146,7 +146,7 @@ land_codex_worker       核过了，落进集成分支
 
 ## 工具
 
-33 个。
+35 个。
 
 | 工具 | 入参 | 作用 |
 |---|---|---|
@@ -176,6 +176,8 @@ land_codex_worker       核过了，落进集成分支
 | `search_worker_facts` | `task_id`, `query`, `limit`, `cursor` | 只检索当前 work、显式依赖和路径命中 repo scope 的 verified facts；返回 coverage / next_cursor，不返回 raw history |
 | `get_worker_evidence` | `task_id`, `limit` | 返回某 worker 的有界 event 元数据和 retained artifact 索引；按需再点查 artifact / event |
 | `get_artifact` | `artifact_id`, `maxChars` | 读取一个 supervisor-managed evidence artifact；不影响 worker capsule 或主线程自动上下文 |
+| `promote_worker_fact` | `fact_id`, `scope`, `watchedPaths`, `expiresAt` | 主线程显式把 candidate 追加为 verified fact；repo scope 必须声明 watchedPaths，worker 不能自升真相 |
+| `revoke_worker_fact` | `fact_id`, `reason` | 主线程审计后撤销 candidate / verified fact，追加事件并从 search / capsule 排除 |
 | `get_worker_goal` | `task_id` | 派单时记的 goal + Codex 原生 goal（token、用时） |
 | `list_codex_workers` | `status`, `includeHistory`, `includeDetails` | 列 worker，默认只看在跑的 |
 | `get_session_works` | `session_id` | 一个 session 的全部 worker。主线程重启后靠它找回那批活 |

@@ -1097,7 +1097,7 @@ export async function recordFact({
     verified_at: verifiedAt ?? (state === "verified" ? now : null),
     verified_by: verifiedBy ?? (state === "verified" ? "supervisor" : null)
   });
-  return { id, work_item_id: workItemId, scope_type: scopeType, scope_id: scopeId, key, value, state, source_event_id: sourceEventId, source_artifact_id: sourceArtifactId, valid_for_sha: validForSha, valid_for_content_hash: validForContentHash, valid_for_manifest_hash: validForManifestHash, watched_paths: watchedPaths, verified_by: verifiedBy ?? (state === "verified" ? "supervisor" : null), created_at: now };
+  return { id, work_item_id: workItemId, scope_type: scopeType, scope_id: scopeId, key, value, state, source_event_id: sourceEventId, source_artifact_id: sourceArtifactId, valid_for_sha: validForSha, valid_for_content_hash: validForContentHash, valid_for_manifest_hash: validForManifestHash, watched_paths: watchedPaths, supersedes_id: supersedesId, verified_by: verifiedBy ?? (state === "verified" ? "supervisor" : null), created_at: now };
 }
 
 function pathsOverlap(left, right) {
@@ -1227,6 +1227,56 @@ export async function getFact(factId) {
     value: decodeJson(row.value_json, null),
     watched_paths: decodeJson(row.watched_paths, [])
   };
+}
+
+export async function getTaskForWorkItem(workItemId) {
+  await ensureFilesystem();
+  return openDb().prepare("SELECT * FROM tasks WHERE id = (SELECT task_id FROM work_items WHERE id = ?)").get(workItemId) ?? null;
+}
+
+export async function promoteCandidateFact({ factId, scopeType = "work_item", watchedPaths = null, expiresAt = null, sourceEventId = null, verifiedBy = "main_thread" }) {
+  await ensureFilesystem();
+  const source = await getFact(factId);
+  if (!source) throw new Error(`fact not found: ${factId}`);
+  if (source.state !== "candidate") {
+    const error = new Error(`only candidate facts may be promoted; ${factId} is ${source.state}`);
+    error.code = "fact_not_candidate";
+    throw error;
+  }
+  if (!['work_item', 'repo_verified'].includes(scopeType)) throw new Error("promotion scope must be work_item or repo_verified");
+  const workItem = openDb().prepare("SELECT * FROM work_items WHERE id = ?").get(source.work_item_id);
+  if (!workItem) throw new Error(`work item not found for fact: ${factId}`);
+  const paths = watchedPaths ?? source.watched_paths ?? [];
+  if (scopeType === "repo_verified" && paths.length === 0) {
+    const error = new Error("repo_verified promotion requires watchedPaths so unrelated work cannot inherit it");
+    error.code = "repo_fact_requires_paths";
+    throw error;
+  }
+  return recordFact({
+    workItemId: source.work_item_id,
+    scopeType,
+    scopeId: scopeType === "repo_verified" ? workItem.repo_id : workItem.id,
+    key: source.key,
+    value: source.value,
+    state: "verified",
+    sourceEventId,
+    sourceArtifactId: source.source_artifact_id ?? null,
+    validForSha: source.valid_for_sha ?? null,
+    validForContentHash: source.valid_for_content_hash ?? null,
+    validForManifestHash: source.valid_for_manifest_hash ?? null,
+    watchedPaths: paths,
+    expiresAt: expiresAt ?? source.expires_at ?? null,
+    supersedesId: source.id,
+    verifiedBy
+  });
+}
+
+export async function revokeFact(factId) {
+  await ensureFilesystem();
+  const source = await getFact(factId);
+  if (!source) return null;
+  openDb().prepare("UPDATE facts SET state = 'revoked' WHERE id = ? AND state IN ('candidate', 'verified')").run(factId);
+  return { ...source, state: "revoked" };
 }
 
 export async function recordJsonArtifact({ runId, type, value, securityClass = "internal", retention = "permanent" }) {

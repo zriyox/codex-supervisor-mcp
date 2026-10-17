@@ -144,7 +144,7 @@ Light and dark follow the system. No external resources.
 
 ## Tools
 
-Thirty-three.
+Thirty-five.
 
 | Tool | Arguments | What it does |
 |---|---|---|
@@ -174,6 +174,8 @@ Thirty-three.
 | `search_worker_facts` | `task_id`, `query`, `limit`, `cursor` | Search only verified facts scoped to the current work, explicit dependencies and path-matched repository facts; returns coverage and next_cursor, never raw history |
 | `get_worker_evidence` | `task_id`, `limit` | Bounded event metadata and retained artifact IDs for one worker; select an artifact or event explicitly for detail |
 | `get_artifact` | `artifact_id`, `maxChars` | Read one supervisor-managed evidence artifact without expanding a worker capsule into main context |
+| `promote_worker_fact` | `fact_id`, `scope`, `watchedPaths`, `expiresAt` | Explicitly promote a candidate to a new verified fact after main-thread review; repo scope requires watched paths |
+| `revoke_worker_fact` | `fact_id`, `reason` | Revoke a candidate or verified fact after audit; it is excluded from search and future worker capsules |
 | `get_worker_goal` | `task_id` | The goal recorded at dispatch plus the native Codex goal (tokens, time) |
 | `list_codex_workers` | `status`, `includeHistory`, `includeDetails` | List workers, active ones by default |
 | `get_session_works` | `session_id` | Every worker of one session. The way back after a main-thread restart |

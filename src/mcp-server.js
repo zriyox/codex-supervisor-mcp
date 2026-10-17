@@ -16,6 +16,7 @@ import {
   getSession,
   getArtifact,
   getFact,
+  getTaskForWorkItem,
   getWorkItemForTask,
   getTask,
   getTasks,
@@ -41,6 +42,8 @@ import {
   appendTaskEvent,
   recordFact,
   recordJsonArtifact,
+  promoteCandidateFact,
+  revokeFact,
   runIdFor,
   updateWorkItemDelivery,
   saveCleanupPlan,
@@ -1220,6 +1223,66 @@ server.registerTool(
     const artifact = await getArtifact(artifact_id);
     if (!artifact) return textResult({ error: "artifact_not_found", artifact_id });
     return textResult({ artifact: await readArtifact(artifact_id, maxChars) });
+  }
+);
+
+server.registerTool(
+  "promote_worker_fact",
+  {
+    title: "Promote a candidate worker fact",
+    description: "Explicitly promote one candidate fact after main-thread review. The worker cannot call this: promotion writes a new verified fact with an audit event; repo scope requires watched paths.",
+    inputSchema: {
+      fact_id: z.string().uuid(),
+      scope: z.enum(["work_item", "repo_verified"]).default("work_item"),
+      watchedPaths: z.array(z.string().min(1)).max(100).optional(),
+      expiresAt: z.string().datetime().optional()
+    }
+  },
+  async ({ fact_id, scope, watchedPaths, expiresAt }) => {
+    try {
+      const source = await getFact(fact_id);
+      if (!source) return textResult({ error: "fact_not_found", fact_id });
+      const task = await getTaskForWorkItem(source.work_item_id);
+      if (!task) return textResult({ error: "fact_task_not_found", fact_id });
+      const event = await appendTaskEvent(task.id, { type: "supervisor.fact_promoted", source_fact_id: fact_id, scope, watched_paths: watchedPaths ?? source.watched_paths ?? [], expires_at: expiresAt ?? null }, {
+        runId: runIdFor(task.id, task.run_count ?? 1), actor: "main_thread"
+      });
+      const fact = await promoteCandidateFact({
+        factId: fact_id,
+        scopeType: scope,
+        watchedPaths,
+        expiresAt: expiresAt ?? null,
+        sourceEventId: event.id,
+        verifiedBy: "main_thread"
+      });
+      return textResult({ fact, source_fact_id: fact_id });
+    } catch (error) {
+      return errorResult(error);
+    }
+  }
+);
+
+server.registerTool(
+  "revoke_worker_fact",
+  {
+    title: "Revoke a candidate or verified worker fact",
+    description: "Explicitly revoke one candidate or verified fact after audit. Revoked facts are excluded from search and worker capsules; the revocation is appended to the worker event log.",
+    inputSchema: { fact_id: z.string().uuid(), reason: z.string().min(1).max(2000) }
+  },
+  async ({ fact_id, reason }) => {
+    try {
+      const source = await getFact(fact_id);
+      if (!source) return textResult({ error: "fact_not_found", fact_id });
+      const task = await getTaskForWorkItem(source.work_item_id);
+      if (!task) return textResult({ error: "fact_task_not_found", fact_id });
+      const revoked = await revokeFact(fact_id);
+      await appendTaskEvent(task.id, { type: "supervisor.fact_revoked", fact_id, reason }, {
+        runId: runIdFor(task.id, task.run_count ?? 1), actor: "main_thread"
+      });
+      return textResult({ fact: revoked, reason });
+    } catch (error) {
+      return errorResult(error);
+    }
   }
 );
 

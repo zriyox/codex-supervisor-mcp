@@ -132,6 +132,8 @@ Codex需0.162+支持hooks/output-schema，能力不够派单start_failed先修CL
 | 一条共享事实的来源 | `get_fact`，按 ID 精确读；不要把一批 facts 全拉进主线程 |
 | 找当前任务的已验证事实 | `search_worker_facts`，传 task_id/query/cursor；只回 scope 内 verified summary + coverage，绝不拉 raw history |
 | 找某路的证据索引 | `get_worker_evidence`，再按需 `get_artifact` 或 `get_codex_worker_events` |
+| 主线程确认候选事实 | `promote_worker_fact`；只有主线程审过才会追加 verified，repo scope 必须给 watchedPaths |
+| 主线程推翻事实 | `revoke_worker_fact`；写明 reason，撤销后不会进入 search 或后续 capsule |
 
 默认读回来的长文本都是裁过的（`current_action` 300 字、`prompt` 300 字、`last_message` 400 字），别把裁剪当成活没干。全量在库里。别一次 `limit: 200` 拉全量事件。
 
