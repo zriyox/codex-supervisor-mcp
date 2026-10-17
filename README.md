@@ -32,7 +32,7 @@
 | worker 说做完了其实没有 | 派单给 `acceptance` 验收命令，worker 退出后 supervisor 在它的 worktree 里跑，失败 `land` 拒绝 |
 | 看不见一批活现在到哪了 | `codex-supervisor-web` 开一个看板，按 session 看每路 worker 在干什么 |
 | 改动留在本地没上线 | 收活默认 `land_codex_worker` 合回主分支；主线程自己的改动必须 commit + push；部署前用远端 SHA 核对文件真的在线上 |
-| worktree / 分支越堆越多 | 合并即清理：`npm run cleanup -- --days 0 --dry-run` 看候选（只删已合并+干净的），确认后 `--apply`；`check_workers` 超过阈值会带回 `cleanup` 提示和命令 |
+| worktree / 分支越堆越多 | `verify_delivery_push` 后自动生成 cleanup plan；只对 `push_verified + clean` 判 SAFE，主线程显式 `apply_cleanup` 才删 worktree，branch/证据永远保留 |
 
 worker 跑的是 `codex exec`，`model` 透传：主线程留在 Claude，worker 可以挂 DeepSeek 或任何 Codex 配了 provider 的模型，账单分开算。
 
@@ -146,7 +146,7 @@ land_codex_worker       核过了，落进集成分支
 
 ## 工具
 
-26 个。
+29 个。
 
 | 工具 | 入参 | 作用 |
 |---|---|---|
@@ -163,7 +163,10 @@ land_codex_worker       核过了，落进集成分支
 | `get_worker_diff` | `task_id`, `maxChars`, `paths` | worker 实际改了什么：从 worktree 起点到工作区的 patch，提交没提交都算。`maxChars` 管总量，超了的文件只列名 |
 | `ask_codex_worker` | `task_id`, `question`, `timeoutMs`, `maxChars`, `fresh`, `end` | 旁路问 worker 一句。线程 fork 成只读侧会话，没网络、没 MCP 工具，worker 本身不动。worker 被 resume 过会自动换新 fork，`fresh` 强制换，`end` 删 |
 | `land_codex_worker` | `task_id`, `onto`, `commitMessage`, `ignoreAcceptance`, `allowOutsideOwned` | 把 worker 在 `codex/<id>` 上的提交 cherry-pick 到派单目录的当前分支。目标要干净，冲突回滚，验收 `failed` 拒绝。`commitMessage` 先替它把未提交的改动提交成一笔，`ignoreAcceptance` 放行 |
-| `verify_delivery_push` | `task_id`, `remote`, `branch` | fetch 指定 remote branch 并证明 `landed_head` 已可达；只读验证，不会 push 或部署。通过后记录 `push_verified` |
+| `verify_delivery_push` | `task_id`, `remote`, `branch` | fetch 指定 remote branch 并证明 `landed_head` 已可达；只读验证，不会 push 或部署。通过后记录 `push_verified` 并生成 cleanup plan |
+| `cleanup_plan` | `task_ids`, `project_root` | 生成 15 分钟有效的 SAFE / REVIEW / BLOCKED 计划，含原因、fingerprint 与回收空间估算；SAFE 会进入 `cleanup_eligible` |
+| `apply_cleanup` | `plan_id`, `item_ids` | 只在未过期计划上二次校验 SAFE item 后执行 `git worktree remove/prune`；保留 branch、task、events、JSONL、artifacts |
+| `cleanup_history` | `task_id`, `limit` | 查询 cleanup 的计划、理由、fingerprint 和实际回收记录 |
 | `get_worker_summary` | `task_id` | 一段话：goal、状态、改动、最后一条命令和消息 |
 | `get_codex_worker_status` | `task_id`, `includePrompt`, `promptMaxChars` | 单个 worker 的状态细节 |
 | `get_codex_worker_events` | `task_id`, `limit`, `maxChars`, `kinds` | 原始事件流 |
@@ -187,7 +190,7 @@ land_codex_worker       核过了，落进集成分支
 
 worker 的最终 JSON 报告会先记录为该 run 的 `candidate` fact，不能跨 work 自动注入；supervisor acceptance 通过后才生成当前 work 的 `verified` outcome，并带 report/acceptance event 来源、base SHA 与 watched paths。验收失败、未配置验收或 worker 自报完成都不会升级成共享真相。
 
-交付状态分开：acceptance 通过只是 `verified`，`land_codex_worker` 只是 `landed`，仍不代表远端有这笔提交。需要显式 `verify_delivery_push` fetch 并校验 `landed_head` 已在目标 remote branch 上，才是 `push_verified`；该工具绝不代替用户执行 push 或部署。
+交付状态分开：acceptance 通过只是 `verified`，`land_codex_worker` 只是 `landed`，仍不代表远端有这笔提交。需要显式 `verify_delivery_push` fetch 并校验 `landed_head` 已在目标 remote branch 上，才是 `push_verified`；它会自动生成 cleanup plan，SAFE 项进入 `cleanup_eligible`，但永远不会自己删除。该工具绝不代替用户执行 push 或部署。
 
 验收命令的环境包含 `CODEX_SUPERVISOR_TASK_ID`、`CODEX_SUPERVISOR_BASE_COMMIT` 和 `CODEX_SUPERVISOR_RUN`；分别是当前任务、当前运行基线和运行次数，rebase/resume 后会更新。
 
@@ -221,7 +224,7 @@ workspace-write默认networkAccess:false；需要ssh/联网验证显式true，�
 
 ownedPaths预留和任务入库在同一事务内，跨MCP并发派单/恢复不能抢同一输出；验收或退出尚未结算时仍保留归属。Git工作区隔离创建失败明确报错，不退回主目录执行。
 
-清理默认只预览：`npm run cleanup -- --dry-run`。`--apply` 只删除已合入、干净、无活跃依赖、Git注册与目录归属可证明的 completed worktree；脏、未合、lost/failed 及证据不足的目录保留并给出原因。
+清理先 `cleanup_plan`（CLI 对应 `npm run cleanup -- --dry-run`）分类 SAFE / REVIEW / BLOCKED；SAFE 要求 `push_verified`、干净、无活跃依赖、Git 注册和路径归属可证明。`apply_cleanup`（CLI `--apply`）会在删除前重验 fingerprint，只执行 `git worktree remove`/`prune`。branch、task row、event、JSONL、artifact 永远保留；脏、未合、未 push、lost/failed 和证明不足的一律不删。
 
 ## 和 Claude Code 的 subagent 有什么区别
 

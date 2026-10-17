@@ -1,0 +1,57 @@
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
+import { mkdir, rm, writeFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { DatabaseSync } from "node:sqlite";
+import { join } from "node:path";
+import { dispatchArgs, git, makeRepo, tempHome, waitFor, withMcp } from "./helpers.js";
+
+async function readyWorker(call, repo, remote) {
+  const worker = await call("create_codex_worker", dispatchArgs("ready", repo, { sandbox: "workspace-write", ownedPaths: ["committed.txt", "uncommitted.txt"] }));
+  await waitFor(call, worker.id, (task) => task.status === "completed" && task.exit_code === 0);
+  const landed = await call("land_codex_worker", { task_id: worker.id, commitMessage: "land ready" });
+  assert.ok(!landed.error, JSON.stringify(landed));
+  git(repo, ["push", "-q", remote, "main"]);
+  const verified = await call("verify_delivery_push", { task_id: worker.id, remote });
+  assert.ok(verified.push_verified_at, JSON.stringify(verified));
+  return worker;
+}
+
+test("cleanup MCP plans, revalidates fingerprints and retains ledger history", async () => {
+  const home = await tempHome("supervisor-cleanup-plan-");
+  const { dir } = await makeRepo(join(home, "repo"));
+  const remotePath = join(home, "remote.git");
+  await mkdir(remotePath);
+  execFileSync("git", ["init", "--bare", "-q", remotePath]);
+  git(dir, ["remote", "add", "origin", remotePath]);
+  git(dir, ["push", "-q", "-u", "origin", "main"]);
+  await withMcp({ SUPERVISOR_HOME: home, FAKE_CODEX_SCENARIO: "commit-in-worktree" }, async ({ call }) => {
+    const worker = await readyWorker(call, dir, "origin");
+    const plan = await call("cleanup_plan", { task_ids: [worker.id] });
+    assert.equal(plan.summary.safe, 1);
+    const item = plan.items[0];
+    const db = new DatabaseSync(join(home, "data", "supervisor.sqlite"));
+    db.prepare("UPDATE cleanup_plans SET expires_at = ? WHERE id = ?").run(new Date(Date.now() - 1000).toISOString(), plan.plan_id);
+    db.close();
+    const expired = await call("apply_cleanup", { plan_id: plan.plan_id, item_ids: [item.id] });
+    assert.equal(expired.error, "cleanup_plan_expired");
+    const fresh = await call("cleanup_plan", { task_ids: [worker.id] });
+    const freshItem = fresh.items[0];
+    await writeFile(join(worker.worktree_path, "drift.txt"), "changed after plan\n");
+    const drifted = await call("apply_cleanup", { plan_id: fresh.plan_id, item_ids: [freshItem.id] });
+    assert.equal(drifted.applied.length, 0);
+    assert.match(drifted.skipped[0].reason, /no longer safe|changed since cleanup plan/);
+    assert(existsSync(worker.worktree_path));
+
+    await rm(join(worker.worktree_path, "drift.txt"));
+    const replanned = await call("cleanup_plan", { task_ids: [worker.id] });
+    const safe = replanned.items.find((entry) => entry.verdict === "safe");
+    assert.ok(safe, JSON.stringify(replanned));
+    const applied = await call("apply_cleanup", { plan_id: replanned.plan_id, item_ids: [safe.id] });
+    assert.equal(applied.applied.length, 1);
+    assert(!existsSync(worker.worktree_path));
+    const history = await call("cleanup_history", { task_id: worker.id });
+    assert.ok(history.items.some((entry) => entry.applied_at));
+  });
+});

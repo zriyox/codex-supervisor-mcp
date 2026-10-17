@@ -35,7 +35,11 @@ import {
   appendTaskEvent,
   recordFact,
   runIdFor,
-  updateWorkItemDelivery
+  updateWorkItemDelivery,
+  saveCleanupPlan,
+  getCleanupPlan,
+  markCleanupPlanItemApplied,
+  readCleanupHistory
 } from "./task-store.js";
 import { readNativeGoal, readNativeGoalState } from "./goal-store.js";
 import { collectWorkerChanges } from "./worker-changes.js";
@@ -52,6 +56,7 @@ import { maybeAutoUpdate } from "./auto-update.js";
 import { askWorker, endSideSession, latestSideTurn } from "./side-chat.js";
 import { landWorker } from "./landing.js";
 import { cleanupHint } from "./cleanup-hint.js";
+import { createCleanupPlan, removePlannedWorktree } from "./cleanup-plan.js";
 
 // Report the real package version. This string had drifted to 0.4.0 while the
 // package shipped 0.5.x, so the handshake named a version nobody was running.
@@ -1470,11 +1475,104 @@ server.registerTool(
           watchedPaths: task.owned_paths ?? []
         });
       }
-      return textResult({ task_id, remote, branch: targetBranch, landed_head: task.landed_head, remote_head: remoteHead, push_verified_at: now });
+      const cleanupPlan = await createCleanupPlan({ taskIds: [task_id] });
+      await saveCleanupPlan(cleanupPlan);
+      return textResult({
+        task_id,
+        remote,
+        branch: targetBranch,
+        landed_head: task.landed_head,
+        remote_head: remoteHead,
+        push_verified_at: now,
+        cleanup_plan: { id: cleanupPlan.id, summary: cleanupPlan.summary, expires_at: cleanupPlan.expires_at, next_step: "Review SAFE items, then call apply_cleanup with their item IDs; cleanup is never automatic." }
+      });
     } catch (error) {
       return textResult({ error: "push_verification_failed", task_id, remote, branch: targetBranch, reason: error.message.split("\n")[0] });
     }
   }
+);
+
+server.registerTool(
+  "cleanup_plan",
+  {
+    title: "Plan safe worktree cleanup",
+    description: "Classify managed worktrees as safe, review or blocked. The plan is read-only, expires after 15 minutes, estimates reclaimable bytes and never deletes branches, task rows, events, JSONL logs or artifacts.",
+    inputSchema: {
+      task_ids: z.array(z.string().min(1)).max(200).optional(),
+      project_root: z.string().min(1).optional()
+    }
+  },
+  async ({ task_ids, project_root }) => {
+    try {
+      const plan = await createCleanupPlan({ taskIds: task_ids ?? null, projectRoot: project_root ?? null });
+      await saveCleanupPlan(plan);
+      return textResult({
+        plan_id: plan.id,
+        generated_at: plan.generated_at,
+        expires_at: plan.expires_at,
+        policy: plan.policy,
+        summary: plan.summary,
+        items: plan.items
+      });
+    } catch (error) {
+      return errorResult(error);
+    }
+  }
+);
+
+server.registerTool(
+  "apply_cleanup",
+  {
+    title: "Apply a safe cleanup plan",
+    description: "Remove only selected SAFE worktrees from an unexpired cleanup plan after a second proof check. Uses git worktree remove and prune only; retains the branch, task row, event stream, JSONL log and artifacts.",
+    inputSchema: {
+      plan_id: z.string().uuid(),
+      item_ids: z.array(z.string().uuid()).min(1).max(200)
+    }
+  },
+  async ({ plan_id, item_ids }) => {
+    const plan = await getCleanupPlan(plan_id);
+    if (!plan) return textResult({ error: "cleanup_plan_not_found", plan_id });
+    if (Date.parse(plan.expires_at) <= Date.now()) return textResult({ error: "cleanup_plan_expired", plan_id, expires_at: plan.expires_at });
+    const selected = plan.items.filter((item) => item_ids.includes(item.id));
+    if (selected.length !== item_ids.length) return textResult({ error: "cleanup_plan_item_not_found", plan_id });
+    const applied = [];
+    const skipped = [];
+    for (const item of selected) {
+      if (item.verdict !== "safe") {
+        skipped.push({ item_id: item.id, task_id: item.task_id, reason: "only SAFE plan items may be applied" });
+        continue;
+      }
+      const task = await getTask(item.task_id);
+      if (!task) {
+        skipped.push({ item_id: item.id, task_id: item.task_id, reason: "task no longer exists" });
+        continue;
+      }
+      try {
+        await removePlannedWorktree(task, item.fingerprint);
+        const now = await markCleanupPlanItemApplied(item.id);
+        await updateWorkItemDelivery(task.id, "cleanup_removed");
+        await appendTaskEvent(task.id, { type: "supervisor.cleanup_removed", plan_id, item_id: item.id, removed_at: now, retained: ["branch", "task", "events", "jsonl", "artifacts"] }, {
+          runId: runIdFor(task.id, task.run_count ?? 1),
+          actor: "supervisor"
+        });
+        applied.push({ item_id: item.id, task_id: task.id, worktree_path: task.worktree_path, removed_at: now });
+      } catch (error) {
+        skipped.push({ item_id: item.id, task_id: item.task_id, reason: error.message.split("\n")[0] });
+      }
+    }
+    return textResult({ plan_id, applied, skipped, retained: ["branch", "task", "events", "jsonl", "artifacts"] });
+  }
+);
+
+server.registerTool(
+  "cleanup_history",
+  {
+    title: "Read cleanup history",
+    description: "Read cleanup plan decisions and applied worktree removals, including safe/review/blocked reasons. This is audit history, not a delete command.",
+    inputSchema: { task_id: z.string().min(1).optional(), limit: z.number().int().min(1).max(500).default(100) }
+  },
+  async ({ task_id, limit }) => textResult({ items: await readCleanupHistory(task_id ?? null, limit) })
 );
 
 server.registerTool(

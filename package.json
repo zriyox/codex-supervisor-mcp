@@ -55,6 +55,7 @@
     "src/paths.js",
     "src/prompt.js",
     "src/cleanup.js",
+    "src/cleanup-plan.js",
     "src/worker-preflight.js",
     "src/mcp-config.js",
     "src/context-compiler.js",

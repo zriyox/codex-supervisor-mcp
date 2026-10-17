@@ -104,7 +104,7 @@ Codex需0.162+支持hooks/output-schema，能力不够派单start_failed先修CL
 2. **主线程自己的改动必须 add + commit + push**：`git add <paths> && git commit -m ... && git push`。跳过任何一步都要显式说明，不允许说"改好了"然后留在工作区。
 3. **上线前核对远端，不认本地**：部署或重启服务前先 `git fetch`，再确认目标提交里真有那些改动 —— `git log --oneline origin/<branch> -1`、`git ls-tree -r --name-only origin/<branch> | rg <新文件>`、必要时 `git show origin/<branch>:<path>`。线上报 `NoSuchBeanDefinition`、找不到类/模块、404，先查这一条，再查代码逻辑。
 4. **交付报告三件套**：本地改动 → commit SHA → push 后的远端 SHA（以及部署状态）。缺远端 SHA 就不算完成。
-5. **合并即清理**：`land_codex_worker` 落地后，那路 worker 的 worktree 和 `codex/<id>` 分支就没用了 —— 清掉，别攒着。先 `SUPERVISOR_HOME=<store> npm run cleanup -- --days 0 --dry-run` 看候选（默认 14 天窗口会把最近两周的全都漏掉，所以必须带 `--days 0`），确认只删「已合并 + 干净 + 无活跃依赖」的，再 `--apply`。脏、未合、lost、failed 一律保留，并在报告里写清还剩什么、为什么。`check_workers` 在 worktree 数超过阈值（默认 50，`SUPERVISOR_CLEANUP_HINT` 可调，0 关闭）时会带回 `cleanup` 字段和两条命令。
+5. **push 后计划清理**：`land_codex_worker` 只到本地集成；用户 push 后先 `verify_delivery_push`，它会生成 15 分钟有效的 `cleanup_plan`。只对「push_verified + worktree 干净 + 无活跃依赖 + Git 注册/归属可证明」标 SAFE，并进 `cleanup_eligible`；主线程复核 item 后才 `apply_cleanup(plan_id,item_ids)`。apply 前再验 fingerprint，只执行 `git worktree remove/prune`；**branch、task、event、JSONL、artifact 永远保留**。脏、未合、未 push、lost、failed、证明不足是 BLOCKED/REVIEW，禁止强删。`check_workers` 只提醒，不执行删除。
 
 `land_codex_worker` 只到本地集成 `landed`，不是远端交付。用户已经 push 后，主线程调 `verify_delivery_push({task_id,remote:"origin"})`，它只 fetch + 祖先校验、不替你 push/部署；通过才记 `push_verified`，后续才可进入安全 cleanup 候选。
 
@@ -157,7 +157,7 @@ overview、派单回执、`wait` 返回里出现 `update` 且 `update_available:
 - worktree 只隔离工作区，端口和数据库是共用的。
 - `resume_codex_worker` 不会再建 goal。`cancel_codex_worker` 跨进程靠 pid，要求那个 pid 的命令行里带 `codex`。
 
-收尾先 `npm run cleanup -- --dry-run` 看清理候选；只有已合入、干净、无活跃依赖的目录才可apply。脏、未合、lost/failed和证明不了的保留，禁止强删未知成果。
+收尾先 `cleanup_plan` 看 SAFE / REVIEW / BLOCKED；只有 push_verified、干净、无活跃依赖且 fingerprint 未变化的 SAFE item 才可 `apply_cleanup`。CLI 对应 `npm run cleanup -- --dry-run` / `--apply`。branch、task、event、JSONL、artifact 保留；脏、未合、未 push、lost/failed和证明不了的一律不删。
 
 ## 看板
 

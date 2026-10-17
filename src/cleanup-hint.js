@@ -21,9 +21,9 @@ export async function cleanupHint({ list = readdir, root = supervisorRoot, dir =
   return {
     worktrees: entries,
     threshold,
-    command: `SUPERVISOR_HOME=${root} npm run cleanup -- --days 0 --dry-run`,
-    apply: `SUPERVISOR_HOME=${root} npm run cleanup -- --days 0 --apply`,
-    note: "merged and clean worktrees are removable; dirty, unmerged, lost and failed ones are kept on purpose"
+    command: `SUPERVISOR_HOME=${root} npm run cleanup -- --dry-run`,
+    apply: `SUPERVISOR_HOME=${root} npm run cleanup -- --apply`,
+    note: "only push-verified, clean worktrees become SAFE; apply retains branches and evidence"
   };
 }
 

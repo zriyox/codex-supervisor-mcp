@@ -2,54 +2,64 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
-import { writeFile } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { tempHome, makeRepo, withMcp, dispatchArgs, waitFor, git, repoRoot } from "./helpers.js";
+import { dispatchArgs, git, makeRepo, repoRoot, tempHome, waitFor, withMcp } from "./helpers.js";
 
-test("cleanup removes only clean integrated worktrees and preserves dirty, unlanded and lost work", async () => {
+function runCleanup(home, args) {
+  return JSON.parse(execFileSync(process.execPath, [join(repoRoot, "src", "cleanup.js"), ...args], {
+    encoding: "utf8",
+    env: { ...process.env, SUPERVISOR_HOME: home, CODEX_HOME: join(home, "codex") },
+    timeout: 30000
+  }));
+}
+
+test("cleanup plan only removes verified-safe worktrees and preserves the evidence ledger", async () => {
   const home = await tempHome("supervisor-cleanup-");
   const { dir } = await makeRepo(join(home, "repo"));
+  const remote = join(home, "remote.git");
+  await mkdir(remote);
+  execFileSync("git", ["init", "--bare", "-q", remote]);
+  git(dir, ["remote", "add", "origin", remote]);
+  git(dir, ["push", "-q", "-u", "origin", "main"]);
   const workers = {};
-  await withMcp({ SUPERVISOR_HOME: home }, async ({ call }) => {
-    for (const title of ["integrated", "dirty", "ignored", "unlanded", "lost"]) {
-      const worker = await call("create_codex_worker", dispatchArgs(title, dir, { ownedPaths: [`${title}.txt`] }));
-      await waitFor(call, worker.id, (t) => t.status === "completed" && t.exit_code != null);
+  await withMcp({ SUPERVISOR_HOME: home, FAKE_CODEX_SCENARIO: "commit-in-worktree" }, async ({ call }) => {
+    for (const title of ["safe", "dirty", "unverified"]) {
+      const worker = await call("create_codex_worker", dispatchArgs(title, dir, { sandbox: "workspace-write", ownedPaths: ["committed.txt", "uncommitted.txt"] }));
+      await waitFor(call, worker.id, (task) => task.status === "completed" && task.exit_code === 0);
+      const landed = await call("land_codex_worker", { task_id: worker.id, commitMessage: `land ${title}` });
+      assert.ok(!landed.error, JSON.stringify(landed));
       workers[title] = worker;
-      await writeFile(join(worker.worktree_path, `${title}.txt`), `${title}\n`);
-      git(worker.worktree_path, ["add", "-A"]);
-      git(worker.worktree_path, ["commit", "-q", "-m", title]);
-      if (["integrated", "dirty", "ignored"].includes(title)) {
-        const landed = await call("land_codex_worker", { task_id: worker.id });
-        assert.ok(!landed.error, JSON.stringify(landed));
+      if (title === "safe" || title === "dirty") {
+        git(dir, ["push", "-q", "origin", "main"]);
+        const verified = await call("verify_delivery_push", { task_id: worker.id });
+        assert.ok(verified.push_verified_at, JSON.stringify(verified));
       }
     }
   });
-  await writeFile(join(workers.dirty.worktree_path, "precious.txt"), "keep this\n");
-  const ignorePath = git(workers.ignored.worktree_path, ["rev-parse", "--git-path", "info/exclude"]);
-  await writeFile(ignorePath, "precious-artifact.bin\n");
-  await writeFile(join(workers.ignored.worktree_path, "precious-artifact.bin"), "keep ignored artifact\n");
+  await writeFile(join(workers.dirty.worktree_path, "precious.txt"), "keep\n");
+  const logPath = join(home, "data", "runs", `${workers.safe.id}.jsonl`);
+  const branch = `codex/${workers.safe.id}`;
+  const preview = runCleanup(home, ["--dry-run"]);
+  const safe = preview.items.find((item) => item.task_id === workers.safe.id);
+  const dirty = preview.items.find((item) => item.task_id === workers.dirty.id);
+  const unverified = preview.items.find((item) => item.task_id === workers.unverified.id);
+  assert.equal(safe.verdict, "safe");
+  assert.equal(dirty.verdict, "blocked");
+  assert.equal(unverified.verdict, "blocked");
+  assert.match(unverified.reasons.join(" "), /remote delivery/);
+  const applied = runCleanup(home, ["--apply", "--task", workers.safe.id]);
+  assert.equal(applied.applied.length, 1, JSON.stringify(applied));
+  assert(!existsSync(workers.safe.worktree_path));
+  assert(existsSync(workers.dirty.worktree_path));
+  assert(existsSync(workers.unverified.worktree_path));
+  assert.notEqual(git(dir, ["branch", "--list", branch]), "", "branch is retained");
+  assert(existsSync(logPath), "JSONL is retained");
   const db = new DatabaseSync(join(home, "data", "supervisor.sqlite"));
-  const old = new Date(Date.now() - 30 * 86400000).toISOString();
-  db.prepare("UPDATE tasks SET completed_at=?,updated_at=?").run(old, old);
-  db.prepare("UPDATE tasks SET status='lost' WHERE id=?").run(workers.lost.id);
+  assert.equal(db.prepare("SELECT count(*) AS count FROM tasks WHERE id = ?").get(workers.safe.id).count, 1, "task row is retained");
+  assert.ok(db.prepare("SELECT count(*) AS count FROM task_events WHERE task_id = ?").get(workers.safe.id).count > 0, "events are retained");
+  assert.equal(db.prepare("SELECT delivery_state FROM work_items WHERE task_id = ?").get(workers.safe.id).delivery_state, "cleanup_removed");
+  assert.ok(db.prepare("SELECT applied_at FROM cleanup_plan_items WHERE task_id = ? AND applied_at IS NOT NULL").get(workers.safe.id).applied_at);
   db.close();
-  const run = (args) => JSON.parse(execFileSync(process.execPath, [join(repoRoot, "src", "cleanup.js"), "--days", "1", ...args], {
-    encoding: "utf8", env: { ...process.env, SUPERVISOR_HOME: home, CODEX_HOME: join(home, "codex") }, timeout: 15000
-  }));
-  const preview = run(["--dry-run"]);
-  assert.deepEqual(preview.candidates, [workers.integrated.id]);
-  assert.ok(preview.skipped.some((item) => item.id === workers.dirty.id && /dirty/.test(item.reason)));
-  assert.ok(preview.skipped.some((item) => item.id === workers.unlanded.id && /unlanded/.test(item.reason)));
-  assert.ok(preview.skipped.some((item) => item.id === workers.lost.id));
-  assert.ok(preview.skipped.some((item) => item.id === workers.ignored.id && /ignored/.test(item.reason)));
-  assert(existsSync(workers.integrated.worktree_path));
-  const applied = run(["--apply"]);
-  assert.equal(applied.deleted.tasks, 1);
-  assert(!existsSync(workers.integrated.worktree_path));
-  for (const title of ["dirty", "ignored", "unlanded", "lost"]) assert(existsSync(workers[title].worktree_path));
-  assert.equal(git(dir, ["branch", "--list", `codex/${workers.integrated.id}`]), "");
-  const remaining = new DatabaseSync(join(home, "data", "supervisor.sqlite"));
-  assert.equal(remaining.prepare("SELECT count(*) AS n FROM tasks").get().n, 4);
-  remaining.close();
 });
