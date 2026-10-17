@@ -20,6 +20,12 @@ function uniqueSorted(values) {
   return [...new Set((values ?? []).map((value) => String(value)))].sort();
 }
 
+export function normalizeObservedCommand(command) {
+  const text = String(command ?? "").trim();
+  const wrapped = text.match(/^(?:[^\s]+\/)?(?:zsh|bash|sh)\s+-l?c\s+(['"])([\s\S]*)\1$/);
+  return wrapped ? wrapped[2].trim() : text;
+}
+
 export function buildRuntimeContract({
   projectRoot,
   baseCommit,
@@ -70,7 +76,7 @@ export function readPreflightResult(task) {
 
   const commands = Array.isArray(task.commands) ? task.commands : [];
   const probes = metadata.probe_commands.map((command) => {
-    const matches = commands.filter((entry) => entry.command === command);
+    const matches = commands.filter((entry) => normalizeObservedCommand(entry.command) === command);
     const result = matches.at(-1) ?? null;
     return {
       command,

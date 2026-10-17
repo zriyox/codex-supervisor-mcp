@@ -2,6 +2,13 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { join } from "node:path";
 import { dispatchArgs, makeRepo, tempHome, waitFor, withMcp } from "./helpers.js";
+import { normalizeObservedCommand } from "../../src/worker-preflight.js";
+
+test("preflight matches the shell wrapper Codex emits around a command", () => {
+  assert.equal(normalizeObservedCommand("/bin/zsh -lc 'git status --short'"), "git status --short");
+  assert.equal(normalizeObservedCommand("/bin/bash -c \"node --version\""), "node --version");
+  assert.equal(normalizeObservedCommand("git status --short"), "git status --short");
+});
 
 async function runPreflight(call, cwd, options = {}) {
   const created = await call("preflight_codex_worker", {
