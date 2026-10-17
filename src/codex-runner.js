@@ -576,6 +576,69 @@ function validateGoal(goal) {
   return { objective: goal.objective, tokenBudget };
 }
 
+function dependencyError(code, message, details = {}) {
+  const error = new Error(message);
+  error.code = code;
+  error.details = details;
+  return error;
+}
+
+function containsCommit(cwd, ancestor, descendant) {
+  try {
+    execFileSync(defaultGitBin, ["-C", cwd, "merge-base", "--is-ancestor", ancestor, descendant], {
+      stdio: "ignore",
+      timeout: 15000
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function validateDependencies(dependsOn, projectRoot, baseCommit) {
+  const dependencyIds = [...new Set(dependsOn ?? [])];
+  for (const dependencyId of dependencyIds) {
+    const dependency = await getTask(dependencyId);
+    if (!dependency) {
+      throw dependencyError("dependency_not_found", `dependency ${dependencyId} does not exist`, { dependency_id: dependencyId });
+    }
+    if (resolve(dependency.project_root) !== resolve(projectRoot)) {
+      throw dependencyError("dependency_project_mismatch", `dependency ${dependencyId} belongs to a different project root`, {
+        dependency_id: dependencyId,
+        dependency_project_root: dependency.project_root,
+        project_root: projectRoot
+      });
+    }
+    if (dependency.status !== "completed" || dependency.exit_code !== 0 || dependency.attention_reason) {
+      throw dependencyError("dependency_not_ready", `dependency ${dependencyId} is not successfully settled`, {
+        dependency_id: dependencyId,
+        status: dependency.status,
+        exit_code: dependency.exit_code ?? null,
+        attention_reason: dependency.attention_reason ?? null
+      });
+    }
+    if (Array.isArray(dependency.acceptance) && dependency.acceptance.length > 0 && dependency.acceptance_results?.passed !== true) {
+      throw dependencyError("dependency_not_ready", `dependency ${dependencyId} has not passed acceptance`, {
+        dependency_id: dependencyId,
+        acceptance: dependency.acceptance_results?.status ?? null
+      });
+    }
+    if (!dependency.landed_at || !dependency.landed_head) {
+      throw dependencyError("dependency_not_landed", `dependency ${dependencyId} must be landed before a dependent worker starts`, {
+        dependency_id: dependencyId,
+        landed_at: dependency.landed_at ?? null
+      });
+    }
+    if (!baseCommit || !containsCommit(projectRoot, dependency.landed_head, baseCommit)) {
+      throw dependencyError("dependency_base_mismatch", `worker base does not contain landed dependency ${dependencyId}; use the integrated branch or a newer baseRef`, {
+        dependency_id: dependencyId,
+        dependency_head: dependency.landed_head,
+        base_commit: baseCommit ?? null
+      });
+    }
+  }
+}
+
 export async function createCodexWorker({
   title,
   task,
@@ -741,6 +804,7 @@ export async function createCodexWorker({
     run_log: taskRunPath(id)
   };
   try {
+    await validateDependencies(dependsOn, projectRoot, worktree.baseCommit);
     if (preflightId) {
       const preflightTask = await getTask(preflightId);
       const preflightResult = readPreflightResult(preflightTask);
@@ -1141,7 +1205,7 @@ export async function createFollowupWorker({
     maxRunMs: maxRunMs ?? parent.guard_policy?.maxRunMs ?? null,
     maxTotalMs: maxTotalMs ?? parent.guard_policy?.maxTotalMs ?? null,
     goal: goal ?? { objective: parent.goal_objective ?? `Follow-up for ${parent.id}`, tokenBudget: parent.goal_token_budget ?? undefined },
-    dependsOn: [parent.id],
+    dependsOn: [],
     followupOf: parent.id,
     useWorktree: true,
     baseRef: baseRef ?? null,

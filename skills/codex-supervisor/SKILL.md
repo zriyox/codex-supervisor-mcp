@@ -29,7 +29,7 @@ description: 把 Codex CLI 当并行 worker 派活、盯进度、收结果。用
 | `ownedPaths` | 必填。这路允许写的路径，和在跑的 worker 重叠会被拒（**读不排他**，多路读同一份共享文件合法）。冲突是好事，说明该改拆法。传 `[]` 表示这路不落地：只读验证或研究 |
 | `goal.objective` | 必填。一句话说目标，worker 会建成 Codex 原生 goal |
 | `session_id` | 同一批传同一个值。第一路顺手带 `session_title`（30 字内，看板和 `get_session_works` 显示它），漏了用 `describe_session` 补 |
-| `dependsOn` | 有先后依赖填上游的 `task_id` |
+| `dependsOn` | 有先后依赖填上游的 `task_id`，它是硬门禁：上游必须同 `project_root`、成功结算、配置了 acceptance 就已通过、已 `land_codex_worker`，并且本路实际 `baseRef` 包含上游 `landed_head`。没满足先集成/修验收，不会启动下游 |
 | `baseRef` | worktree 从哪个提交切，默认 `HEAD`。第 N+1 步要建立在第 N 步上，填 `codex/<第 N 步 task_id>` |
 | `preflight_id` | 写 worker 必填。先跑 `preflight_codex_worker`，它实际在目标 sandbox/guard 里执行 `probeCommands`；`get_worker_preflight.status` 必须是 `passed`。base、ownedPaths、命令、context、contracts、network、可写根有变化就重跑 |
 | `sandbox` | 默认 `workspace-write`，worker 提交不了（Codex 把 `.git` 设成只读）。要它自己提交就 `danger-full-access`，否则收活时让 supervisor 替它提交 |

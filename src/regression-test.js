@@ -290,11 +290,10 @@ await test("R4-2 overlapping ownedPaths are refused with the conflicting task id
 
     const distinct = await call(client, "create_codex_worker", {
       ...describe({ title: "owner-c" }),
-      ownedPaths: ["/tmp/conflict/other"],
-      dependsOn: [first.id]
+      ownedPaths: ["/tmp/conflict/other"]
     });
     assert.equal(distinct.status, "running");
-    assert.deepEqual(distinct.depends_on, [first.id]);
+    assert.deepEqual(distinct.depends_on, []);
 
     await call(client, "cancel_codex_worker", { task_id: first.id });
     await call(client, "cancel_codex_worker", { task_id: distinct.id });
