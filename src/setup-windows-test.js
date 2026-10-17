@@ -92,6 +92,9 @@ function runSetup(root, args, { binDirs = [NPM_PREFIX], appData = APPDATA } = {}
       PATHEXT: ".COM;.EXE;.BAT;.CMD",
       APPDATA: appData,
       HOME: join(root, "home"),
+      USERPROFILE: join(root, "home"),
+      CODEX_HOME: "",
+      CLAUDE_CONFIG_DIR: "",
       SETUP_ENTRY: pathToFileURL(setupEntry).href,
       WINSIM_LOG: join(root, "calls.log")
     }
