@@ -533,7 +533,12 @@ function ensureControlRecords(dbInstance, task) {
 }
 
 function backfillControlRecords(dbInstance) {
-  const rows = dbInstance.prepare("SELECT id,title,project_root,goal_objective,landed_at FROM tasks").all();
+  const rows = dbInstance.prepare(`
+    SELECT t.id,t.title,t.project_root,t.goal_objective,t.landed_at
+    FROM tasks AS t
+    LEFT JOIN work_items AS w ON w.task_id = t.id
+    WHERE w.task_id IS NULL
+  `).all();
   for (const row of rows) ensureControlRecords(dbInstance, row);
 }
 
