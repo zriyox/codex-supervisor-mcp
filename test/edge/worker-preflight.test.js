@@ -8,6 +8,10 @@ import { normalizeObservedCommand } from "../../src/worker-preflight.js";
 test("preflight matches the shell wrapper Codex emits around a command", () => {
   assert.equal(normalizeObservedCommand("/bin/zsh -lc 'git status --short'"), "git status --short");
   assert.equal(normalizeObservedCommand("/bin/bash -c \"node --version\""), "node --version");
+  assert.equal(
+    normalizeObservedCommand("/bin/zsh -lc \"go test ./pkg -run '\"'^TestThing$'\"' -count=1\""),
+    "go test ./pkg -run '^TestThing$' -count=1"
+  );
   assert.equal(normalizeObservedCommand("git status --short"), "git status --short");
 });
 

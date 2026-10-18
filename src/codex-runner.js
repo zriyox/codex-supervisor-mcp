@@ -1006,7 +1006,12 @@ export async function createCodexWorker({
       if (preflightResult.contract_hash !== contractHash) {
         const error = new Error(`preflight ${preflightId} does not match this worker's runtime contract; create a new preflight after changing baseRef, sandbox, ownedPaths, commands, context, contracts, network or writable roots`);
         error.code = "preflight_mismatch";
-        error.details = { preflight_id: preflightId, expected_contract_hash: contractHash, actual_contract_hash: preflightResult.contract_hash };
+        error.details = {
+          preflight_id: preflightId,
+          expected_contract_hash: contractHash,
+          actual_contract_hash: preflightResult.contract_hash,
+          preflight: { expected_contract: runtimeContract, actual_contract: preflightResult.contract }
+        };
         throw error;
       }
     }

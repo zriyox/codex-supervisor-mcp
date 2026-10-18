@@ -22,8 +22,16 @@ function uniqueSorted(values) {
 
 export function normalizeObservedCommand(command) {
   const text = String(command ?? "").trim();
-  const wrapped = text.match(/^(?:[^\s]+\/)?(?:zsh|bash|sh)\s+-l?c\s+(['"])([\s\S]*)\1$/);
-  return wrapped ? wrapped[2].trim() : text;
+  const wrapped = text.match(/^(?:[^\s]+\/)?(?:zsh|bash|sh)\s+-l?c\s+([\s\S]+)$/);
+  if (!wrapped) return text;
+  let body = wrapped[1].trim();
+  const quote = body[0];
+  if ((quote === "'" || quote === '"') && body.at(-1) === quote) body = body.slice(1, -1);
+  // Codex displays a shell command that already contains single quotes by
+  // closing and reopening the outer quote around them: -run '"^Test$'"'.
+  // Decode that display-only wrapping before comparing it with the contract.
+  body = body.replace(/'"'/g, "'");
+  return body.trim();
 }
 
 export function buildRuntimeContract({
