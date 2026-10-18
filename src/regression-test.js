@@ -401,7 +401,8 @@ await test("R4-3 five MCP processes write the same database without SQLITE_BUSY"
             task: "noop",
             cwd: workspace,
             sandbox: "read-only",
-            ownedPaths: [`/tmp/concurrent/${clientIndex}-${taskIndex}`],
+            workspaceKind: "read_only_in_place",
+            ownedPaths: [],
             goal: { objective: `concurrent ${clientIndex}-${taskIndex}` }
           })
         )
@@ -411,7 +412,7 @@ await test("R4-3 five MCP processes write the same database without SQLITE_BUSY"
     assert.equal(errored.length, 0, JSON.stringify(errored.map(concurrentDispatchSummary)));
 
     await Promise.all(
-      results.map((result) => waitFor(clients[0], result.id, (task) => task.status !== "running" && task.status !== "queued", 120000))
+      results.map((result) => waitFor(clients[0], result.id, (task) => task.status !== "running" && task.status !== "queued"))
     );
     const listed = await call(clients[0], "list_codex_workers", { includeHistory: true });
     assert.equal(listed.length, 15);
