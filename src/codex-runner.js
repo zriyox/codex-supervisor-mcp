@@ -429,13 +429,27 @@ async function trackRunInHost({ record, args, prompt, logPath, spawnOptions = {}
   };
 
   let stdoutRest = "";
+  let pendingLines = [];
+  let eventFlushPending = false;
+  const queueEventLines = (lines) => {
+    pendingLines.push(...lines);
+    if (eventFlushPending) return;
+    eventFlushPending = true;
+    eventChain = eventChain.then(async () => {
+      await new Promise((resolveFlush) => setImmediate(resolveFlush));
+      const batch = pendingLines;
+      pendingLines = [];
+      eventFlushPending = false;
+      await handleLines(batch);
+    }).catch((error) => {
+      process.stderr.write(`[codex-supervisor] event handling failed for ${record.id}: ${error.message}\n`);
+    });
+  };
   const handleStdoutChunk = (chunk) => {
     const split = splitLines(stdoutRest, chunk.toString("utf8"));
     stdoutRest = split.rest;
     const lines = split.lines.filter((line) => line.trim());
-    if (lines.length) eventChain = eventChain.then(() => handleLines(lines)).catch((error) => {
-      process.stderr.write(`[codex-supervisor] event handling failed for ${record.id}: ${error.message}\n`);
-    });
+    if (lines.length) queueEventLines(lines);
   };
   earlyOutput.capture = false;
   for (const chunk of earlyOutput.stdout) handleStdoutChunk(chunk);
@@ -465,9 +479,7 @@ async function trackRunInHost({ record, args, prompt, logPath, spawnOptions = {}
     childSettled = true;
     if (quotaWatch) clearInterval(quotaWatch);
     processes.delete(record.id);
-    if (stdoutRest.trim()) eventChain = eventChain.then(() => handleLines([stdoutRest])).catch((error) => {
-      process.stderr.write(`[codex-supervisor] final event failed for ${record.id}: ${error.message}\n`);
-    });
+    if (stdoutRest.trim()) queueEventLines([stdoutRest]);
     await eventChain.catch(() => {});
     logStream.end();
     const finishedAt = new Date().toISOString();
