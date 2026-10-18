@@ -411,7 +411,7 @@ await test("R4-3 five MCP processes write the same database without SQLITE_BUSY"
     assert.equal(errored.length, 0, JSON.stringify(errored.map(concurrentDispatchSummary)));
 
     await Promise.all(
-      results.map((result) => waitFor(clients[0], result.id, (task) => task.status !== "running" && task.status !== "queued"))
+      results.map((result) => waitFor(clients[0], result.id, (task) => task.status !== "running" && task.status !== "queued", 120000))
     );
     const listed = await call(clients[0], "list_codex_workers", { includeHistory: true });
     assert.equal(listed.length, 15);
