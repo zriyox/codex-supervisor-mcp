@@ -212,7 +212,7 @@ worker 的最终 JSON 报告会先记录为该 run 的 `candidate` fact，不能
 
 wait 默认预算60秒、默认compact；includeEvents会选择详细结果（显式compact优先）。带progress token的客户端每30秒收到通知；已验证MCP SDK及真实Claude2.1.299：idle35秒、wait65秒，三次progress后正常返回；原生/loop定时调用也已实测。
 
-每路临时注入随包PreToolUse守卫：apply_patch核对全部目标路径（含rename和symlink），forbid拒绝红线；Shell仅允许简单读取和派单显式allowedCommands/acceptance。声明的验证脚本以派单者权限执行，可有副作用，不能当作任意程序的文件沙箱。guard策略随resume/followup继承，不写全局hooks。空跑write run按本轮输出前后内容和命令判断，no_work进入needs_attention；只读任务不因没改文件判空跑。
+每路临时注入随包PreToolUse守卫：apply_patch核对全部目标路径（含rename和symlink），forbid拒绝红线；安全只读检查（rg/cat/sed无-i/git只读/jq无-i/find无-exec或-delete）默认允许且不占其他 worker 的写路径，写入/执行/有副作用的 Shell 命令必须显式声明。声明的验证脚本以派单者权限执行，可有副作用，不能当作任意程序的文件沙箱。guard策略随resume/followup继承，不写全局hooks。空跑write run按本轮输出前后内容和命令判断，no_work进入needs_attention；只读任务不因没改文件判空跑。
 
 没有独立 `apply_patch` 工具的模型（实测 Codex 0.162 + DeepSeek/cc-switch）把补丁当 shell 命令发过来：`apply_patch <<'EOF' ... EOF`。守卫认这个形状，用同一套 ownedPaths 规则判每个目标路径，所以这种模型也能改文件；未加引号的 heredoc、后面还接 `&&`/`;` 的都拒绝。
 
@@ -228,7 +228,7 @@ context用绝对文件路径与可选sha256声明材料，最多20份、与contr
 
 workspace-write默认networkAccess:false；需要ssh/联网验证显式true，随resume/followup继承，不以danger-full-access代替。maxRunMs限制单轮、maxTotalMs限制从派单开始的总时长；超限中止worker并保留needs_attention/partial work，不自动重试。wait预算不改变这些quota。
 
-沙箱除工作区和临时目录外，自动放开 OS cache 目录（macOS `~/Library/Caches`、Linux `~/.cache`、Windows `%LOCALAPPDATA%`）、home 下已存在的工具链缓存目录（`.cargo`/`.npm`/`.yarn`/`.pnpm-store`/`.bun`/`.m2`/`.gradle`/`.nuget`/`.ivy2`/`.bundle`/`.composer`/`.pub-cache`/`.mix`/`.hex`/`.stack`/`.cpanm`/`.deno`/`.conda`、`go/pkg`）：Go 的 build cache 这类默认落在 cache 目录的工具链直接可用，换语言也不用改 supervisor；**凭据目录一律不自动放开**（`.ssh`/`.gnupg`/`.config`/`.aws`/`.docker`/`.kube`/`.netrc`/`.git-credentials`/`~/Library/Keychains`）：ssh 连服务器要写 known_hosts、kubectl、推私有镜像、签名提交这类需求，派单时显式传 `writableRoots`，只在这一路生效。`SUPERVISOR_NO_AUTO_CACHE_ROOTS=1` 关掉全部自动缓存根，显式声明的照常生效。Codex 拒绝带软链的可写根（这种根会让 worker 所有命令都失败），所以 cache 目录和 `writableRoots` 都先按 realpath 解析，解析不出无软链路径的根直接不带。cache 放在别处（`~/.m2`、`~/.gradle`、vendor 镜像）就传 `writableRoots:[绝对路径]`，要求是已存在目录、最多 20 个、只对 workspace-write 生效、随 resume/followup 继承；只读复用就不用传。
+沙箱除工作区和临时目录外，自动放开 OS cache 目录（macOS `~/Library/Caches`、Linux `~/.cache`、Windows `%LOCALAPPDATA%`）、home 下已存在的工具链缓存目录（`.cargo`/`.npm`/`.yarn`/`.pnpm-store`/`.bun`/`.m2`/`.gradle`/`.nuget`/`.ivy2`/`.bundle`/`.composer`/`.pub-cache`/`.mix`/`.hex`/`.stack`/`.cpanm`/`.deno`/`.conda`、`go/pkg`）。Go build cache（平台默认 `go-build` 或显式 `GOCACHE`）单独 realpath 并放行真实目录，因此 symlink 指向外置盘时也可在 worker sandbox 使用；**凭据目录一律不自动放开**（`.ssh`/`.gnupg`/`.config`/`.aws`/`.docker`/`.kube`/`.netrc`/`.git-credentials`/`~/Library/Keychains`）：ssh 连服务器要写 known_hosts、kubectl、推私有镜像、签名提交这类需求，派单时显式传 `writableRoots`，只在这一路生效。`SUPERVISOR_NO_AUTO_CACHE_ROOTS=1` 关掉全部自动缓存根，显式声明的照常生效。Codex 拒绝带软链的可写根，所以自动 cache 和 `writableRoots` 都先按 realpath 解析；解析不出无软链路径的根直接不传。其他 cache 放在别处（`~/.m2`、`~/.gradle`、vendor 镜像）就传 `writableRoots:[绝对路径]`，要求是已存在目录、最多 20 个、只对 workspace-write 生效、随 resume/followup 继承；只读复用就不用传。
 
 运行前核验Codex CLI是否具备hooks/output-schema（要求0.162+）；能力不足返回start_failed，wait可正常结算。get_worker_goal.native_goal_read区分missing_goal、missing_database、locked和read_error，不能把读取失败当没建goal。原生budget/usage限制也进入needs_attention。cleanup保留ignored artifacts、共享证据和未解决attention。
 

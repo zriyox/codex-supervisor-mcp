@@ -88,5 +88,8 @@ test("the guard preamble states each worker's write boundary", async () => {
   assert.match(research, /Network is available/);
   const writer = buildGuardPreamble({ sandbox: "workspace-write", ownedPaths: ["/tmp/x"], allowedCommands: ["npm test"], forbid: [] });
   assert.match(writer, /edits must use apply_patch within \["\/tmp\/x"\]/);
+  assert.match(writer, /Safe read-only inspection commands/);
+  assert.match(writer, /never reserve another worker's paths/);
+  assert.match(writer, /Commands that validate, write, execute code or have side effects must exactly match declared commands/);
   assert.match(writer, /npm test/);
 });
