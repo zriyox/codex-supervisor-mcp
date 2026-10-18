@@ -617,8 +617,6 @@ async function trackRunInHost({ record, args, prompt, logPath, spawnOptions = {}
             : next.current_action,
         updated_at: new Date().toISOString()
       };
-      await persist(finalRecord);
-      await completeRunRecord(finalRecord, live.run_count);
       await recordOutcomeFacts({
         task: finalRecord,
         runId,
@@ -628,10 +626,10 @@ async function trackRunInHost({ record, args, prompt, logPath, spawnOptions = {}
         acceptancePassed: results.passed === true
       });
       if (finalRecord.attention_reason === "two_stall") await updateWorkItemDelivery(finalRecord.id, "needs_attention");
-    } else {
-      const finalRecord = acceptance ? { ...next, acceptance_results: null } : next;
       await persist(finalRecord);
       await completeRunRecord(finalRecord, live.run_count);
+    } else {
+      const finalRecord = acceptance ? { ...next, acceptance_results: null } : next;
       await recordOutcomeFacts({
         task: finalRecord,
         runId,
@@ -639,6 +637,8 @@ async function trackRunInHost({ record, args, prompt, logPath, spawnOptions = {}
         reportEventId: rawReportEventId
       });
       if (finalRecord.attention_reason === "two_stall") await updateWorkItemDelivery(finalRecord.id, "needs_attention");
+      await persist(finalRecord);
+      await completeRunRecord(finalRecord, live.run_count);
     }
     cancelledTasks.delete(record.id);
   };
