@@ -1140,7 +1140,7 @@ export async function recordFact({
     valid_for_sha: validForSha,
     valid_for_content_hash: validForContentHash,
     valid_for_manifest_hash: validForManifestHash,
-    watched_paths: JSON.stringify(watchedPaths.map((path) => resolve(path))),
+    watched_paths: JSON.stringify(watchedPaths.map((path) => isAbsolute(path) ? resolve(path) : path)),
     expires_at: expiresAt,
     supersedes_id: supersedesId,
     created_at: now,

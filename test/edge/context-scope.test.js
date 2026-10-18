@@ -135,13 +135,15 @@ test("a canonical remote shares path-matched repo facts across isolated checkout
   const firstRepoRecord = db.prepare("SELECT canonical_remote FROM repos WHERE id = ?").get(firstWork.repo_id);
   assert.ok(firstRepoRecord.canonical_remote, "a checkout with origin records a canonical remote");
   assert.notEqual(firstRepoRecord.canonical_remote, firstWork.repo_id);
-  const verified = { id: randomUUID() };
+  const candidate = { id: randomUUID() };
   db.prepare(`
-    INSERT INTO facts (id, work_item_id, scope_type, scope_id, key, value_json, state, watched_paths, valid_for_sha, created_at, verified_at, verified_by)
-    VALUES (?, ?, 'repo_verified', ?, 'canonical_shared', ?, 'verified', ?, ?, ?, ?, 'main_thread')
-  `).run(verified.id, firstWork.id, firstRepoRecord.canonical_remote, JSON.stringify({ note: "CROSS_CHECKOUT_CANONICAL_FACT" }), JSON.stringify(["shared.txt"]), first.base_commit, new Date().toISOString(), new Date().toISOString());
+    INSERT INTO facts (id, work_item_id, scope_type, scope_id, key, value_json, state, watched_paths, valid_for_sha, created_at)
+    VALUES (?, ?, 'run', ?, 'canonical_shared', ?, 'candidate', ?, ?, ?)
+  `).run(candidate.id, firstWork.id, `run-${first.id}-1`, JSON.stringify({ note: "CROSS_CHECKOUT_CANONICAL_FACT" }), JSON.stringify([join(firstRepo, "shared.txt")]), first.base_commit, new Date().toISOString());
   db.close();
   await withMcp({ SUPERVISOR_HOME: home, FAKE_CODEX_SCENARIO: "echo-prompt" }, async ({ call }) => {
+    const promoted = await call("promote_worker_fact", { fact_id: candidate.id, scope: "repo_verified", watchedPaths: [join(firstRepo, "shared.txt")] });
+    assert.deepEqual(promoted.fact.watched_paths, ["shared.txt"]);
     await call("resume_codex_worker", { task_id: second.id, prompt: "read matching verified repository fact" });
     await waitFor(call, second.id, (row) => row.run_count === 2 && row.exit_code === 0);
     const result = await call("get_worker_result", { task_id: second.id, maxChars: 0 });
