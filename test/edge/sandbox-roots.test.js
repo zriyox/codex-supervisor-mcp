@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdir, mkdtemp, readFile, symlink } from "node:fs/promises";
 import { realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, posix, win32 } from "node:path";
 import { EXPLICIT_ONLY_DIRS, cacheRoots, resolveWritableRoot, symlinkComponents } from "../../src/sandbox-roots.js";
 import { dispatchArgs, makeRepo, tempHome, waitFor, withMcp } from "./helpers.js";
 
@@ -11,19 +11,20 @@ import { dispatchArgs, makeRepo, tempHome, waitFor, withMcp } from "./helpers.js
 // the resolution path through cacheRoots, which takes an injected resolver.
 const isWindows = process.platform === "win32";
 const asGiven = (candidate) => ({ path: candidate });
+const platformJoin = (platform, ...parts) => (platform === "win32" ? win32 : posix).join(...parts);
 
 test("the platform cache directory is offered to the sandbox on every platform", () => {
   assert.deepEqual(cacheRoots({ platform: "darwin", home: "/Users/example", env: {}, resolveRoot: asGiven, includeToolchain: false }),
-    [join("/Users/example", "Library", "Caches"), join("/Users/example", ".cache"), join("/Users/example", "Library", "Caches", "go-build")]);
+    [platformJoin("darwin", "/Users/example", "Library", "Caches"), platformJoin("darwin", "/Users/example", ".cache"), platformJoin("darwin", "/Users/example", "Library", "Caches", "go-build")]);
   assert.deepEqual(cacheRoots({ platform: "linux", home: "/home/example", env: {}, resolveRoot: asGiven, includeToolchain: false }),
-    [join("/home/example", ".cache"), join("/home/example", ".cache", "go-build")]);
+    [platformJoin("linux", "/home/example", ".cache"), platformJoin("linux", "/home/example", ".cache", "go-build")]);
   assert.deepEqual(cacheRoots({ platform: "win32", home: "C:\\Users\\example", env: { LOCALAPPDATA: "C:\\Users\\example\\AppData\\Local" }, resolveRoot: asGiven, includeToolchain: false }),
     ["C:\\Users\\example\\AppData\\Local", "C:\\Users\\example\\AppData\\Local\\go-build"]);
 });
 
 test("a symlinked Go build cache grants its resolved target", () => {
   const home = "/Users/example";
-  const goBuild = join(home, "Library", "Caches", "go-build");
+  const goBuild = platformJoin("darwin", home, "Library", "Caches", "go-build");
   const roots = cacheRoots({
     platform: "darwin",
     home,
@@ -52,7 +53,7 @@ test("a candidate that cannot be resolved to a symlink-free path is dropped", ()
   // The separator is platform-specific: the win32 runner builds \\Users\\...\\\.cache.
   const dropLink = (candidate) => /(^|[\\/])\.cache$/.test(candidate) ? { error: "resolved path still contains a symlink component" } : { path: candidate };
   assert.deepEqual(cacheRoots({ platform: "darwin", home: "/Users/example", env: {}, resolveRoot: dropLink, includeToolchain: false }),
-    [join("/Users/example", "Library", "Caches"), join("/Users/example", "Library", "Caches", "go-build")]);
+    [platformJoin("darwin", "/Users/example", "Library", "Caches"), platformJoin("darwin", "/Users/example", "Library", "Caches", "go-build")]);
   assert.deepEqual(cacheRoots({ platform: "linux", home: "/home/example", env: {}, resolveRoot: () => ({ error: "does not exist" }), includeToolchain: false }), []);
   assert.deepEqual(cacheRoots({ platform: "linux", home: "/home/example", env: { XDG_CACHE_HOME: "/vol/cache" },
     resolveRoot: (candidate) => ({ path: candidate === "/vol/cache" ? "/Volumes/data/cache" : candidate === "/vol/cache/go-build" ? "/Volumes/data/cache/go-build" : candidate }), includeToolchain: false }),
@@ -83,10 +84,10 @@ test("toolchain caches are granted automatically and credentials never are", () 
   const asGiven = (candidate) => ({ path: candidate });
   const roots = cacheRoots({ platform: "darwin", home, env: {}, resolveRoot: asGiven });
   for (const dir of [".cargo", ".npm", ".m2", ".gradle", ".nuget", ".bundle", ".composer", ".pub-cache", ".deno", "go/pkg"]) {
-    assert.ok(roots.includes(join(home, dir)), dir + " must be granted");
+    assert.ok(roots.includes(platformJoin("darwin", home, dir)), dir + " must be granted");
   }
   for (const dir of EXPLICIT_ONLY_DIRS) {
-    assert.ok(!roots.includes(join(home, dir)), dir + " must never be granted automatically");
+    assert.ok(!roots.includes(platformJoin("darwin", home, dir)), dir + " must never be granted automatically");
   }
 });
 
