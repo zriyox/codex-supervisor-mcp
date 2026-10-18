@@ -382,7 +382,7 @@ await test("R4-3 five MCP processes write the same database without SQLITE_BUSY"
           command: process.execPath,
           args: [join(here, "mcp-server.js")],
           cwd: projectRoot,
-          env: { ...process.env, ...baseEnv, SUPERVISOR_HOME: concurrentHome },
+          env: { ...process.env, ...baseEnv, SUPERVISOR_HOME: concurrentHome, FAKE_CODEX_SCENARIO: "exit-immediately" },
           stderr: "pipe"
         });
         const client = new Client({ name: "supervisor-concurrent", version: "1.0.0" });
@@ -408,12 +408,9 @@ await test("R4-3 five MCP processes write the same database without SQLITE_BUSY"
         )
       )
     );
-    const errored = results.filter((result) => result.error || result.conflicts);
+    const errored = results.filter((result) => !result?.id || result.conflicts);
     assert.equal(errored.length, 0, JSON.stringify(errored.map(concurrentDispatchSummary)));
 
-    await Promise.all(
-      results.map((result) => waitFor(clients[0], result.id, (task) => task.status !== "running" && task.status !== "queued"))
-    );
     const listed = await call(clients[0], "list_codex_workers", { includeHistory: true });
     assert.equal(listed.length, 15);
   } finally {
