@@ -13,7 +13,7 @@ import { runAcceptance } from "../../src/acceptance.js";
 const PASS = 'node -e "process.exit(0)"';
 const FAIL = 'node -e "console.log(\'boom from the check\'); process.exit(3)"';
 const HANG = 'node -e "setInterval(function(){}, 1000)"';
-const WRITES_MARKER = 'node -e "require(\'fs\').writeFileSync(\'ran.txt\', \'yes\')"';
+const WRITES_MARKER = "printf yes > ran.txt";
 const DRAIN = 'node -e "process.stdin.resume()"';
 
 const READ_IDENTITY = 'node -e "console.log(JSON.stringify([process.env.CODEX_SUPERVISOR_TASK_ID,process.env.CODEX_SUPERVISOR_BASE_COMMIT,process.env.CODEX_SUPERVISOR_RUN]))"';
