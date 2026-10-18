@@ -14,11 +14,36 @@ const asGiven = (candidate) => ({ path: candidate });
 
 test("the platform cache directory is offered to the sandbox on every platform", () => {
   assert.deepEqual(cacheRoots({ platform: "darwin", home: "/Users/example", env: {}, resolveRoot: asGiven, includeToolchain: false }),
-    [join("/Users/example", "Library", "Caches"), join("/Users/example", ".cache")]);
+    [join("/Users/example", "Library", "Caches"), join("/Users/example", ".cache"), join("/Users/example", "Library", "Caches", "go-build")]);
   assert.deepEqual(cacheRoots({ platform: "linux", home: "/home/example", env: {}, resolveRoot: asGiven, includeToolchain: false }),
-    [join("/home/example", ".cache")]);
+    [join("/home/example", ".cache"), join("/home/example", ".cache", "go-build")]);
   assert.deepEqual(cacheRoots({ platform: "win32", home: "C:\\Users\\example", env: { LOCALAPPDATA: "C:\\Users\\example\\AppData\\Local" }, resolveRoot: asGiven, includeToolchain: false }),
-    ["C:\\Users\\example\\AppData\\Local"]);
+    ["C:\\Users\\example\\AppData\\Local", "C:\\Users\\example\\AppData\\Local\\go-build"]);
+});
+
+test("a symlinked Go build cache grants its resolved target", () => {
+  const home = "/Users/example";
+  const goBuild = join(home, "Library", "Caches", "go-build");
+  const roots = cacheRoots({
+    platform: "darwin",
+    home,
+    env: {},
+    includeToolchain: false,
+    resolveRoot: (candidate) => candidate === goBuild ? { path: "/Volumes/dev-cache/go-build" } : { path: candidate }
+  });
+  assert.ok(roots.includes("/Volumes/dev-cache/go-build"));
+});
+
+test("an explicit GOCACHE takes precedence and is resolved before the sandbox sees it", () => {
+  const roots = cacheRoots({
+    platform: "darwin",
+    home: "/Users/example",
+    env: { GOCACHE: "/aliases/go-build" },
+    includeToolchain: false,
+    resolveRoot: (candidate) => candidate === "/aliases/go-build" ? { path: "/Volumes/dev-cache/go-build" } : { path: candidate }
+  });
+  assert.ok(roots.includes("/Volumes/dev-cache/go-build"));
+  assert.equal(roots.includes("/Users/example/Library/Caches/go-build"), false);
 });
 
 test("a candidate that cannot be resolved to a symlink-free path is dropped", () => {
@@ -27,11 +52,11 @@ test("a candidate that cannot be resolved to a symlink-free path is dropped", ()
   // The separator is platform-specific: the win32 runner builds \\Users\\...\\\.cache.
   const dropLink = (candidate) => /(^|[\\/])\.cache$/.test(candidate) ? { error: "resolved path still contains a symlink component" } : { path: candidate };
   assert.deepEqual(cacheRoots({ platform: "darwin", home: "/Users/example", env: {}, resolveRoot: dropLink, includeToolchain: false }),
-    [join("/Users/example", "Library", "Caches")]);
+    [join("/Users/example", "Library", "Caches"), join("/Users/example", "Library", "Caches", "go-build")]);
   assert.deepEqual(cacheRoots({ platform: "linux", home: "/home/example", env: {}, resolveRoot: () => ({ error: "does not exist" }), includeToolchain: false }), []);
   assert.deepEqual(cacheRoots({ platform: "linux", home: "/home/example", env: { XDG_CACHE_HOME: "/vol/cache" },
-    resolveRoot: (candidate) => ({ path: candidate === "/vol/cache" ? "/Volumes/data/cache" : candidate }), includeToolchain: false }),
-    ["/Volumes/data/cache", join("/home/example", ".cache")], "an alias is replaced by its target");
+    resolveRoot: (candidate) => ({ path: candidate === "/vol/cache" ? "/Volumes/data/cache" : candidate === "/vol/cache/go-build" ? "/Volumes/data/cache/go-build" : candidate }), includeToolchain: false }),
+    ["/Volumes/data/cache", join("/home/example", ".cache"), "/Volumes/data/cache/go-build"], "an alias is replaced by its target");
   assert.deepEqual(cacheRoots({ platform: "linux", home: "/home/example", env: { XDG_CACHE_HOME: "/vol/cache" },
     resolveRoot: () => ({ path: "/Volumes/data/cache" }), includeToolchain: false }), ["/Volumes/data/cache"], "duplicates collapse");
 });
