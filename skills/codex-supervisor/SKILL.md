@@ -137,7 +137,7 @@ Codex需0.162+支持hooks/output-schema，能力不够派单start_failed先修CL
 
 默认读回来的长文本都是裁过的（`current_action` 300 字、`prompt` 300 字、`last_message` 400 字），别把裁剪当成活没干。全量在库里。别一次 `limit: 200` 拉全量事件。
 
-worker 的 capsule 只在内部 create/resume 时生成：自身 L0 身份、当前 work 的 verified facts、显式 `dependsOn` 的最小交付摘要、路径命中且 SHA 有效的 repo facts。`session_id` peers、raw event、完整 diff/报告、candidate facts 一律不自动注入。base SHA 不再覆盖时排除该 fact；watched path 有 Git diff、或 in_place_write 的 manifest 漂移时，旧 fact 自动 expired 并排除，保留原始版本。主线程只能看 snapshot 元数据；要查事实用 `search_worker_facts` / `get_fact`，查证据用 `get_worker_evidence` / `get_artifact`，不能把自己变成 worker。
+worker 的 capsule 只在内部 create/resume 时生成：L0 身份会标 branch 与 acceptance 来源但不放 acceptance 命令正文、当前 work 的 verified facts、显式 `dependsOn` 的最小交付摘要、路径命中且 SHA 有效的 repo facts。repo fact 跨 checkout 必须 canonical `origin`、repo-relative watched path 与 SHA 同时命中；没有可识别 origin 就不共享。`session_id` peers、raw event、完整 diff/报告、candidate facts 一律不自动注入。base SHA 不再覆盖、watched path 有 Git diff、context 输入 content hash 或 in_place_write manifest 漂移时，旧 fact 自动 append-only `expired` 并排除，保留原始版本。主线程只能看 snapshot 元数据；要查事实用 `search_worker_facts` / `get_fact`，查证据用 `get_worker_evidence` / `get_artifact`，不能把自己变成 worker。
 
 worker 最终 JSON 只是 `candidate`：先留在本 run 做审计，绝不因为它自己说“完成”就变共享事实。supervisor acceptance 通过才会派生当前 work 的 `verified` outcome；验收失败/未配置、脏 diff、未 land/push 都不是 verified 交付证据。
 

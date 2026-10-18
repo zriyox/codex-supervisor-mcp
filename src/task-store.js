@@ -9,6 +9,7 @@ import { readNativeGoal } from "./goal-store.js";
 import { normalizeAcceptance } from "./acceptance.js";
 import { createHash, randomUUID } from "node:crypto";
 import { captureWorkspaceManifest } from "./workspace-kind.js";
+import { buildHandoff } from "./handoff.js";
 
 let db;
 
@@ -466,6 +467,34 @@ function repoIdForRoot(root) {
   return stableId("repo", resolve(root));
 }
 
+function canonicalizeRemote(value) {
+  let raw = String(value ?? "").trim();
+  if (!raw) return null;
+  const scp = raw.match(/^((?:[^@/:\s]+@)?)([^:/\s]+):(.+)$/);
+  if (scp && !raw.includes("://")) raw = `ssh://${scp[1]}${scp[2]}/${scp[3]}`;
+  try {
+    const parsed = new URL(raw);
+    if (parsed.protocol === "file:") {
+      const path = resolve(decodeURIComponent(parsed.pathname)).replace(/\.git$/i, "");
+      return `file://${path}`;
+    }
+    if (!parsed.hostname || !["ssh:", "https:", "http:"].includes(parsed.protocol)) return null;
+    const path = decodeURIComponent(parsed.pathname).replace(/^\/+|\/+$/g, "").replace(/\.git$/i, "");
+    if (!path) return null;
+    return `${parsed.protocol}//${parsed.hostname.toLowerCase()}${parsed.port ? `:${parsed.port}` : ""}/${path}`;
+  } catch {
+    return isAbsolute(raw) ? `file://${resolve(raw).replace(/\.git$/i, "")}` : null;
+  }
+}
+
+function canonicalRemoteForRoot(root) {
+  try {
+    return canonicalizeRemote(git(root, ["remote", "get-url", "origin"]));
+  } catch {
+    return null;
+  }
+}
+
 function workItemIdForTask(taskId) {
   return `work-${taskId}`;
 }
@@ -479,12 +508,13 @@ function ensureControlRecords(dbInstance, task) {
   const now = new Date().toISOString();
   const root = resolve(task.project_root);
   const repoId = repoIdForRoot(root);
+  const canonicalRemote = canonicalRemoteForRoot(root);
   const workItemId = workItemIdForTask(task.id);
   dbInstance.prepare(`
     INSERT INTO repos (id, canonical_remote, root, default_branch, created_at, updated_at)
-    VALUES (@id, NULL, @root, NULL, @now, @now)
-    ON CONFLICT(root) DO UPDATE SET updated_at = excluded.updated_at
-  `).run({ id: repoId, root, now });
+    VALUES (@id, @canonical_remote, @root, NULL, @now, @now)
+    ON CONFLICT(root) DO UPDATE SET canonical_remote = excluded.canonical_remote, updated_at = excluded.updated_at
+  `).run({ id: repoId, canonical_remote: canonicalRemote, root, now });
   dbInstance.prepare(`
     INSERT INTO work_items (id, repo_id, task_id, parent_work_item_id, objective, owner, delivery_state, created_at, updated_at)
     VALUES (@id, @repo_id, @task_id, NULL, @objective, NULL, @delivery_state, @now, @now)
@@ -1127,6 +1157,15 @@ function pathsOverlap(left, right) {
   return a === b || a.startsWith(`${b}/`) || b.startsWith(`${a}/`);
 }
 
+function repoRelativePaths(projectRoot, paths) {
+  return (paths ?? []).flatMap((path) => {
+    if (typeof path !== "string" || !path.trim()) return [];
+    const candidate = isAbsolute(path) ? relative(projectRoot, path) : path;
+    const normalized = candidate.replace(/\\/g, "/").replace(/^\.\//, "").replace(/\/$/, "");
+    return !normalized || normalized === ".." || normalized.startsWith("../") ? [] : [normalized];
+  });
+}
+
 function git(cwd, args) {
   return execFileSync(process.env.GIT_BIN?.trim() || "git", ["-C", cwd, ...args], {
     encoding: "utf8",
@@ -1148,7 +1187,7 @@ function shaCoversBase(projectRoot, validForSha, baseSha) {
 function watchedPathsChanged(projectRoot, validForSha, baseSha, watchedPaths) {
   if (!validForSha || !baseSha || watchedPaths.length === 0) return false;
   try {
-    const relativePaths = watchedPaths.map((path) => relative(projectRoot, path)).filter((path) => path && !path.startsWith(".."));
+    const relativePaths = repoRelativePaths(projectRoot, watchedPaths);
     if (relativePaths.length === 0) return true;
     return Boolean(git(projectRoot, ["diff", "--name-only", validForSha, baseSha, "--", ...relativePaths]));
   } catch {
@@ -1161,6 +1200,16 @@ async function currentWorkspaceManifest(task) {
   if (!metadata?.source_root || !Array.isArray(metadata.manifest_paths) || metadata.manifest_paths.length === 0) return null;
   try {
     return await captureWorkspaceManifest(metadata.source_root, metadata.manifest_paths);
+  } catch {
+    return null;
+  }
+}
+
+async function currentContextContentHash(task) {
+  const context = task.input_context?.context ?? [];
+  if (!Array.isArray(context) || context.length === 0) return null;
+  try {
+    return (await buildHandoff({ context }, { maxLines: 1, maxChars: 1 })).content_hash;
   } catch {
     return null;
   }
@@ -1195,20 +1244,25 @@ export async function listContextFacts({ taskId, baseSha, ownedPaths = [], depen
   `).all();
   const now = Date.now();
   const workspaceManifest = await currentWorkspaceManifest(task);
+  const contextContentHash = await currentContextContentHash(task);
+  const repo = openDb().prepare("SELECT canonical_remote FROM repos WHERE id = ?").get(workItem.repo_id);
+  const canonicalRemote = repo?.canonical_remote ?? null;
+  const ownedRelative = repoRelativePaths(task.project_root, ownedPaths);
   const visible = [];
   for (const row of rows) {
     const watched = decodeJson(row.watched_paths, []);
+    const watchedRelative = repoRelativePaths(task.project_root, watched);
     const included = row.scope_type === "work_item" ? row.scope_id === workItem.id
       : row.scope_type === "dependency" ? dependencyItems.includes(row.scope_id)
-        : row.scope_type === "repo_verified" && row.scope_id === workItem.repo_id
-          && watched.length > 0 && watched.some((path) => ownedPaths.some((owned) => pathsOverlap(path, owned)));
+        : row.scope_type === "repo_verified" && canonicalRemote && row.scope_id === canonicalRemote
+          && watchedRelative.length > 0 && watchedRelative.some((path) => ownedRelative.some((owned) => pathsOverlap(path, owned)));
     if (!included) continue;
     if (row.expires_at && Date.parse(row.expires_at) <= now) {
       markFactExpired(row.id);
       continue;
     }
     if (!shaCoversBase(task.project_root, row.valid_for_sha, baseSha)) continue;
-    if (watchedPathsChanged(task.project_root, row.valid_for_sha, baseSha, watched)) {
+    if (watchedPathsChanged(task.project_root, row.valid_for_sha, baseSha, watchedRelative)) {
       if (row.scope_type === "work_item" && row.scope_id === workItem.id) markFactExpired(row.id);
       continue;
     }
@@ -1216,7 +1270,8 @@ export async function listContextFacts({ taskId, baseSha, ownedPaths = [], depen
       if (row.scope_type === "work_item" && row.scope_id === workItem.id && workspaceManifest) markFactExpired(row.id);
       continue;
     }
-    if (row.valid_for_content_hash) {
+    if (row.valid_for_content_hash && contextContentHash !== row.valid_for_content_hash) {
+      if (row.scope_type === "work_item" && row.scope_id === workItem.id) markFactExpired(row.id);
       continue;
     }
     visible.push({
@@ -1305,16 +1360,30 @@ export async function promoteCandidateFact({ factId, scopeType = "work_item", wa
   if (!['work_item', 'repo_verified'].includes(scopeType)) throw new Error("promotion scope must be work_item or repo_verified");
   const workItem = openDb().prepare("SELECT * FROM work_items WHERE id = ?").get(source.work_item_id);
   if (!workItem) throw new Error(`work item not found for fact: ${factId}`);
+  const sourceTask = await getTaskForWorkItem(workItem.id);
   const paths = watchedPaths ?? source.watched_paths ?? [];
+  const repo = openDb().prepare("SELECT canonical_remote FROM repos WHERE id = ?").get(workItem.repo_id);
+  const canonicalRemote = repo?.canonical_remote ?? null;
+  const normalizedRepoPaths = sourceTask ? repoRelativePaths(sourceTask.project_root, paths) : [];
   if (scopeType === "repo_verified" && paths.length === 0) {
     const error = new Error("repo_verified promotion requires watchedPaths so unrelated work cannot inherit it");
     error.code = "repo_fact_requires_paths";
     throw error;
   }
+  if (scopeType === "repo_verified" && !canonicalRemote) {
+    const error = new Error("repo_verified promotion requires a canonical origin remote; facts from an unrecognized or missing remote stay work-scoped");
+    error.code = "repo_fact_requires_canonical_remote";
+    throw error;
+  }
+  if (scopeType === "repo_verified" && normalizedRepoPaths.length === 0) {
+    const error = new Error("repo_verified watchedPaths must stay inside the repository root");
+    error.code = "repo_fact_paths_outside_root";
+    throw error;
+  }
   return recordFact({
     workItemId: source.work_item_id,
     scopeType,
-    scopeId: scopeType === "repo_verified" ? workItem.repo_id : workItem.id,
+    scopeId: scopeType === "repo_verified" ? canonicalRemote : workItem.id,
     key: source.key,
     value: source.value,
     state: "verified",
@@ -1323,7 +1392,7 @@ export async function promoteCandidateFact({ factId, scopeType = "work_item", wa
     validForSha: source.valid_for_sha ?? null,
     validForContentHash: source.valid_for_content_hash ?? null,
     validForManifestHash: source.valid_for_manifest_hash ?? null,
-    watchedPaths: paths,
+    watchedPaths: scopeType === "repo_verified" ? normalizedRepoPaths : paths,
     expiresAt: expiresAt ?? source.expires_at ?? null,
     supersedesId: source.id,
     verifiedBy

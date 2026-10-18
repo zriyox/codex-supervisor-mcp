@@ -1,6 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { writeFile } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
+import { execFileSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { dispatchArgs, git, makeRepo, tempHome, waitFor, withMcp } from "./helpers.js";
@@ -28,7 +30,6 @@ test("worker context excludes session peers and includes only scoped verified fa
   const peerWork = await getWorkItemForTask(peer.id);
   const ownFact = await recordFact({ workItemId: ownWork.id, scopeType: "work_item", scopeId: ownWork.id, key: "own", value: { note: "OWN_VERIFIED_FACT" }, state: "verified", validForSha: target.base_commit });
   await recordFact({ workItemId: ownWork.id, scopeType: "work_item", scopeId: ownWork.id, key: "candidate", value: { note: "CANDIDATE_MUST_NOT_INJECT" }, state: "candidate", validForSha: target.base_commit });
-  await recordFact({ workItemId: ownWork.id, scopeType: "repo_verified", scopeId: ownWork.repo_id, key: "repo", value: { note: "REPO_PATH_MATCH" }, state: "verified", validForSha: target.base_commit, watchedPaths: [join(dir, "target.txt")] });
   await recordFact({ workItemId: peerWork.id, scopeType: "work_item", scopeId: peerWork.id, key: "peer", value: { note: "PEER_FACT_MUST_NOT_INJECT" }, state: "verified", validForSha: target.base_commit });
 
   await withMcp({ SUPERVISOR_HOME: home, FAKE_CODEX_SCENARIO: "echo-prompt" }, async ({ call }) => {
@@ -37,13 +38,14 @@ test("worker context excludes session peers and includes only scoped verified fa
     const result = await call("get_worker_result", { task_id: target.id, maxChars: 0 });
     const prompt = result.reports[0];
     assert.match(prompt, /OWN_VERIFIED_FACT/);
-    assert.match(prompt, /REPO_PATH_MATCH/);
+    assert.match(prompt, new RegExp(`branch: codex/${target.id}`));
+    assert.match(prompt, /acceptance_source: no acceptance configured/);
     assert.doesNotMatch(prompt, /CANDIDATE_MUST_NOT_INJECT/);
     assert.doesNotMatch(prompt, /PEER_FACT_MUST_NOT_INJECT/);
     assert.doesNotMatch(prompt, /PEER_SECRET_TITLE|PEER_SECRET_TASK|SESSION_SECRET_OBJECTIVE/);
     const snapshotMeta = await call("get_context_snapshot_meta", { task_id: target.id });
     assert.ok(snapshotMeta.snapshot);
-    assert.equal(snapshotMeta.snapshot.fact_ids.length, 2);
+    assert.equal(snapshotMeta.snapshot.fact_ids.length, 1);
     assert.ok(snapshotMeta.snapshot.fact_ids.includes(ownFact.id));
     assert.equal("text" in snapshotMeta.snapshot, false);
     const fact = await call("get_fact", { fact_id: ownFact.id });
@@ -52,7 +54,7 @@ test("worker context excludes session peers and includes only scoped verified fa
   const snapshot = await latestContextSnapshotForTask(target.id);
   assert.ok(snapshot);
   assert.equal(snapshot.recipient, "worker");
-  assert.equal(JSON.parse(snapshot.fact_versions).length, 2);
+  assert.equal(JSON.parse(snapshot.fact_versions).length, 1);
   assert.ok(snapshot.estimated_tokens <= 1500);
 });
 
@@ -102,6 +104,49 @@ test("concurrent searches append at most one expiry version for the same fact", 
   assert.equal(db.prepare("SELECT state FROM facts WHERE id = ?").get(original.id).state, "verified");
   assert.equal(db.prepare("SELECT COUNT(*) AS count FROM facts WHERE supersedes_id = ? AND state = 'expired'").get(original.id).count, 1);
   db.close();
+});
+
+test("a canonical remote shares path-matched repo facts across isolated checkouts", async () => {
+  const home = await tempHome("supervisor-canonical-remote-");
+  const { dir: firstRepo } = await makeRepo(join(home, "first"));
+  await writeFile(join(firstRepo, "shared.txt"), "shared source\n");
+  git(firstRepo, ["add", "shared.txt"]);
+  git(firstRepo, ["commit", "-q", "-m", "add shared source"]);
+  const remote = join(home, "canonical.git");
+  await mkdir(remote);
+  execFileSync("git", ["init", "--bare", "-q", remote]);
+  git(firstRepo, ["remote", "add", "origin", remote]);
+  git(firstRepo, ["push", "-q", "-u", "origin", "main"]);
+  const secondRepo = join(home, "second");
+  execFileSync("git", ["clone", "-q", "-b", "main", remote, secondRepo]);
+
+  let first;
+  let second;
+  await withMcp({ SUPERVISOR_HOME: home, FAKE_CODEX_SCENARIO: "echo-prompt" }, async ({ call }) => {
+    first = await call("create_codex_worker", dispatchArgs("first checkout", firstRepo, { ownedPaths: ["shared.txt"] }));
+    second = await call("create_codex_worker", dispatchArgs("second checkout", secondRepo, { ownedPaths: ["shared.txt"] }));
+    await waitFor(call, first.id, (row) => row.exit_code === 0);
+    await waitFor(call, second.id, (row) => row.exit_code === 0);
+  });
+
+  const db = new DatabaseSync(join(home, "data", "supervisor.sqlite"));
+  const firstWork = db.prepare("SELECT id, repo_id FROM work_items WHERE task_id = ?").get(first.id);
+  assert.ok(firstWork, "the first checkout has a work item");
+  const firstRepoRecord = db.prepare("SELECT canonical_remote FROM repos WHERE id = ?").get(firstWork.repo_id);
+  assert.ok(firstRepoRecord.canonical_remote, "a checkout with origin records a canonical remote");
+  assert.notEqual(firstRepoRecord.canonical_remote, firstWork.repo_id);
+  const verified = { id: randomUUID() };
+  db.prepare(`
+    INSERT INTO facts (id, work_item_id, scope_type, scope_id, key, value_json, state, watched_paths, valid_for_sha, created_at, verified_at, verified_by)
+    VALUES (?, ?, 'repo_verified', ?, 'canonical_shared', ?, 'verified', ?, ?, ?, ?, 'main_thread')
+  `).run(verified.id, firstWork.id, firstRepoRecord.canonical_remote, JSON.stringify({ note: "CROSS_CHECKOUT_CANONICAL_FACT" }), JSON.stringify(["shared.txt"]), first.base_commit, new Date().toISOString(), new Date().toISOString());
+  db.close();
+  await withMcp({ SUPERVISOR_HOME: home, FAKE_CODEX_SCENARIO: "echo-prompt" }, async ({ call }) => {
+    await call("resume_codex_worker", { task_id: second.id, prompt: "read matching verified repository fact" });
+    await waitFor(call, second.id, (row) => row.run_count === 2 && row.exit_code === 0);
+    const result = await call("get_worker_result", { task_id: second.id, maxChars: 0 });
+    assert.match(result.reports[0], /CROSS_CHECKOUT_CANONICAL_FACT/);
+  });
 });
 
 test("a verified watched-path fact expires when a resumed worker rebases across that path", async () => {

@@ -125,3 +125,42 @@ test("an in_place_write fact expires after its source manifest drifts before res
   assert.match(facts[2].valid_for_manifest_hash, /^[a-f0-9]{64}$/);
   db.close();
 });
+
+test("a content-pinned in-place fact expires when its declared input file changes", async () => {
+  const home = await tempHome("supervisor-workspace-content-expiry-");
+  const source = await makeDirectory(home, "source");
+  const input = join(home, "input.md");
+  await writeFile(input, "first verified input\n");
+  let worker;
+  await withMcp({ SUPERVISOR_HOME: home, FAKE_CODEX_SCENARIO: "commit-in-worktree" }, async ({ call }) => {
+    worker = await call("create_codex_worker", dispatchArgs("content-expiry", source, {
+      sandbox: "workspace-write",
+      workspaceKind: "in_place_write",
+      inPlaceAuthorization: "User explicitly authorized this isolated non-Git fixture edit.",
+      ownedPaths: ["committed.txt"],
+      context: [{ path: input }],
+      acceptance: ["node -e \"process.exit(0)\""]
+    }));
+    await waitFor(call, worker.id, (task) => task.exit_code === 0 && task.acceptance?.status !== "running");
+    const db = new DatabaseSync(join(home, "data", "supervisor.sqlite"));
+    const statement = db.prepare("SELECT id, valid_for_content_hash FROM facts WHERE work_item_id = (SELECT id FROM work_items WHERE task_id = ?) AND key = 'accepted_outcome' AND state = 'verified'");
+    let fact = statement.get(worker.id);
+    const deadline = Date.now() + 2000;
+    while (!fact && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      fact = statement.get(worker.id);
+    }
+    assert.ok(fact, "accepted outcome fact should be recorded after acceptance settles");
+    assert.match(fact.valid_for_content_hash, /^[a-f0-9]{64}$/);
+    db.close();
+  });
+  await writeFile(input, "changed after verification\n");
+  await withMcp({ SUPERVISOR_HOME: home }, async ({ call }) => {
+    const found = await call("search_worker_facts", { task_id: worker.id });
+    assert.equal(found.facts.some((fact) => fact.key === "accepted_outcome"), false);
+  });
+  const db = new DatabaseSync(join(home, "data", "supervisor.sqlite"));
+  const original = db.prepare("SELECT id FROM facts WHERE work_item_id = (SELECT id FROM work_items WHERE task_id = ?) AND key = 'accepted_outcome' AND state = 'verified'").get(worker.id);
+  assert.equal(db.prepare("SELECT COUNT(*) AS count FROM facts WHERE supersedes_id = ? AND state = 'expired'").get(original.id).count, 1);
+  db.close();
+});

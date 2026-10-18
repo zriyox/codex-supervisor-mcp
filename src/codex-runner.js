@@ -63,6 +63,7 @@ async function recordOutcomeFacts({ task, runId, report, reportEventId = null, a
     state: "candidate",
     sourceEventId: reportEventId,
     validForSha: task.base_commit ?? null,
+    validForContentHash: task.input_context?.content_hash ?? null,
     validForManifestHash,
     watchedPaths: task.owned_paths ?? []
   });
@@ -76,6 +77,7 @@ async function recordOutcomeFacts({ task, runId, report, reportEventId = null, a
     state: "verified",
     sourceEventId: acceptanceEventId,
     validForSha: task.base_commit ?? null,
+    validForContentHash: task.input_context?.content_hash ?? null,
     validForManifestHash,
     watchedPaths: task.owned_paths ?? [],
     supersedesId: candidate.id,
@@ -238,6 +240,9 @@ function failedStart(record, reason) {
 // failed instead of taking the whole MCP process down.
 async function spawnAndAwaitStart(target, args, options) {
   const child = spawn(target.cmd, [...target.prefixArgs, ...args], options);
+  const earlyOutput = { stdout: [], stderr: [], capture: true };
+  child.stdout?.on("data", (chunk) => { if (earlyOutput.capture) earlyOutput.stdout.push(chunk); });
+  child.stderr?.on("data", (chunk) => { if (earlyOutput.capture) earlyOutput.stderr.push(chunk); });
   const spawnError = await new Promise((resolvePromise) => {
     let settled = false;
     child.once("spawn", () => {
@@ -253,7 +258,7 @@ async function spawnAndAwaitStart(target, args, options) {
       }
     });
   });
-  return { child, spawnError };
+  return { child, spawnError, earlyOutput };
 }
 
 // Attaches stream handlers and keeps `record` in the supervisor database.
@@ -284,7 +289,7 @@ async function trackRunInHost({ record, args, prompt, logPath, spawnOptions = {}
   const guardedArgs = [...args.slice(0, -1), ...configArgs, args.at(-1)];
   prompt = `${buildGuardPreamble(guardPolicy)}\n\n${prompt}`;
 
-  const { child, spawnError } = await spawnAndAwaitStart(target, guardedArgs, {
+  const { child, spawnError, earlyOutput } = await spawnAndAwaitStart(target, guardedArgs, {
     stdio: ["pipe", "pipe", "pipe"],
     env: { ...process.env, NO_COLOR: "1", CODEX_SUPERVISOR_TASK_ID: record.id,
       CODEX_SUPERVISOR_RUN: String((record.run_count ?? 0) + 1), CODEX_SUPERVISOR_GUARD_POLICY: JSON.stringify(guardPolicy) },
@@ -386,7 +391,7 @@ async function trackRunInHost({ record, args, prompt, logPath, spawnOptions = {}
   };
 
   let stdoutRest = "";
-  child.stdout.on("data", (chunk) => {
+  const handleStdoutChunk = (chunk) => {
     const split = splitLines(stdoutRest, chunk.toString("utf8"));
     stdoutRest = split.rest;
     for (const line of split.lines) {
@@ -395,10 +400,13 @@ async function trackRunInHost({ record, args, prompt, logPath, spawnOptions = {}
         process.stderr.write(`[codex-supervisor] event handling failed for ${record.id}: ${error.message}\n`);
       });
     }
-  });
+  };
+  earlyOutput.capture = false;
+  for (const chunk of earlyOutput.stdout) handleStdoutChunk(chunk);
+  child.stdout.on("data", handleStdoutChunk);
   child.stdout.on("error", () => {});
 
-  let stderr = "";
+  let stderr = earlyOutput.stderr.map((chunk) => chunk.toString("utf8")).join("");
   child.stderr.on("data", (chunk) => {
     stderr += chunk.toString("utf8");
     persist({ ...live, stderr_tail: stderr.slice(-4000), updated_at: new Date().toISOString() });
@@ -413,7 +421,12 @@ async function trackRunInHost({ record, args, prompt, logPath, spawnOptions = {}
     });
   });
 
-  child.on("close", async (code, signal) => {
+  let settleRun;
+  const settled = new Promise((resolveSettled) => { settleRun = resolveSettled; });
+  let childSettled = false;
+  const finalizeChild = async (code, signal) => {
+    if (childSettled) return;
+    childSettled = true;
     if (quotaWatch) clearInterval(quotaWatch);
     processes.delete(record.id);
     if (stdoutRest.trim()) eventChain = eventChain.then(() => handleLine(stdoutRest)).catch((error) => {
@@ -579,7 +592,11 @@ async function trackRunInHost({ record, args, prompt, logPath, spawnOptions = {}
       if (finalRecord.attention_reason === "two_stall") await updateWorkItemDelivery(finalRecord.id, "needs_attention");
     }
     cancelledTasks.delete(record.id);
-  });
+  };
+  child.once("close", (code, signal) => { void finalizeChild(code, signal).finally(settleRun); });
+  if (child.exitCode !== null || child.signalCode !== null) {
+    setImmediate(() => { void finalizeChild(child.exitCode, child.signalCode).finally(settleRun); });
+  }
 
   try {
     child.stdin.end(prompt);
@@ -591,7 +608,7 @@ async function trackRunInHost({ record, args, prompt, logPath, spawnOptions = {}
     });
   }
 
-  return { ok: true, record: live, child };
+  return { ok: true, record: live, child, settled };
 }
 
 // The MCP client may disappear at any point. A detached process owns the
@@ -610,6 +627,7 @@ async function startTrackedRun(job) {
       ...job.record.input_context,
       context: compiled.sourceRefs,
       source_refs: compiled.sourceRefs,
+      content_hash: compiled.contentHash,
       context_snapshot_id: compiled.snapshot.id,
       context_snapshot_tokens: compiled.snapshot.estimated_tokens,
       context_fact_count: compiled.factCount
@@ -1104,6 +1122,7 @@ export async function recoverEligibleRuns() {
 
 if (process.argv[1] === fileURLToPath(import.meta.url) && process.argv[2] === "--run-host") {
   process.once("message", async (job) => {
+    const keepAlive = setInterval(() => {}, 1000);
     let result;
     try {
       result = await trackRunInHost(job);
@@ -1112,9 +1131,10 @@ if (process.argv[1] === fileURLToPath(import.meta.url) && process.argv[2] === "-
       result = failedStart(job.record, `run host failed: ${error.message}`);
       await upsertTask(result.record);
     }
-    if (process.connected) process.send({ ok: result.ok, record: result.record }, () => {
-      if (process.connected) process.disconnect();
-    });
+    if (process.connected) await new Promise((resolveSent) => process.send({ ok: result.ok, record: result.record }, resolveSent));
+    if (result.settled) await result.settled;
+    clearInterval(keepAlive);
+    if (process.connected) process.disconnect();
   });
 }
 

@@ -196,7 +196,7 @@ land_codex_worker       核过了，落进集成分支
 
 普通 worker 启动时会关闭它继承到的 `codex-supervisor` MCP，不能再派 worker、resume、cancel 或改编排状态；主线程是唯一编排者。其他业务 MCP 不受影响；旁问 fork 仍关闭全部 MCP，因为它只允许只读回答。
 
-`session_id` 只负责批次、默认门禁和审批，不再把同批 worker 的标题、汇报或 session objective 自动塞进新 worker。worker 只收到内部编译的 context capsule：自身身份/任务、显式依赖的最小交付摘要和路径/SHA 命中的 verified facts；raw event、完整 diff、历史报告、candidate facts 都只可按需读取。事实的 base SHA 不再覆盖、watched path 发生 Git diff、或非 Git in-place manifest 漂移时会自动标为 expired 并从 capsule 排除。主线程只看 `get_context_snapshot_meta`，需要证据时再显式 `get_fact` / `get_worker_result` / `get_worker_diff`。
+`session_id` 只负责批次、默认门禁和审批，不再把同批 worker 的标题、汇报或 session objective 自动塞进新 worker。worker 只收到内部编译的 context capsule：L0 只标明 branch 与 acceptance 来源（不塞命令正文）、自身身份/任务、显式依赖的最小交付摘要和路径/SHA 命中的 verified facts；raw event、完整 diff、历史报告、candidate facts 都只可按需读取。repo fact 只有两个 checkout 的 canonical `origin`、repo-relative watched path 和 base SHA 同时匹配时才跨 checkout 可见；无可识别 origin 就保持 work-scoped。事实的 base SHA 不再覆盖、watched path 发生 Git diff、context 输入内容 hash 或非 Git in-place manifest 漂移时会自动追加 `expired` 版本并从 capsule 排除。主线程只看 `get_context_snapshot_meta`，需要证据时再显式 `get_fact` / `get_worker_result` / `get_worker_diff`。
 
 worker 的最终 JSON 报告会先记录为该 run 的 `candidate` fact，不能跨 work 自动注入；supervisor acceptance 通过后才生成当前 work 的 `verified` outcome，并带 report/acceptance event 来源、base SHA 与 watched paths。push proof 另存为 retained artifact，verified fact 可回指该 artifact。验收失败、未配置验收或 worker 自报完成都不会升级成共享真相。
 

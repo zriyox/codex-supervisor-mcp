@@ -2,6 +2,14 @@ import { createHash } from "node:crypto";
 import { readFile, lstat } from "node:fs/promises";
 import { isAbsolute } from "node:path";
 
+export function contextContentHash(refs = []) {
+  if (!Array.isArray(refs) || refs.length === 0) return null;
+  const canonical = refs
+    .map((ref) => ({ path: String(ref.path), sha256: String(ref.sha256) }))
+    .sort((left, right) => left.path.localeCompare(right.path));
+  return createHash("sha256").update(JSON.stringify(canonical)).digest("hex");
+}
+
 export async function buildHandoff({ goal, todo, contracts = [], context = [] }, { maxLines = 16, maxChars = 1800 } = {}) {
   if (!Array.isArray(context) || context.length > 20 || !Array.isArray(contracts)
     || contracts.some((value) => typeof value !== "string") || JSON.stringify({ context, contracts }).length > 6000) throw new Error("context and contracts exceed the 6000 character input budget");
@@ -26,5 +34,5 @@ export async function buildHandoff({ goal, todo, contracts = [], context = [] },
   }
   const truncated = lines.length !== candidates.length;
   if (truncated) lines.push(marker);
-  return { text: lines.join("\n"), truncated, source_refs: refs };
+  return { text: lines.join("\n"), truncated, source_refs: refs, content_hash: contextContentHash(refs) };
 }
