@@ -1,6 +1,10 @@
 import { lstatSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, isAbsolute, join, resolve, win32 } from "node:path";
+import { dirname, isAbsolute, posix, resolve, win32 } from "node:path";
+
+function pathJoin(platform, ...parts) {
+  return (platform === "win32" ? win32 : posix).join(...parts);
+}
 
 // Codex refuses a writable root that contains a symlink component: the worker
 // does not merely lose that directory, every command in it fails with
@@ -72,15 +76,15 @@ export const TOOLCHAIN_CACHE_DIRS = [
 export const EXPLICIT_ONLY_DIRS = [".ssh", ".gnupg", ".config", ".aws", ".docker", ".kube", ".netrc", ".git-credentials", "Library/Keychains"];
 function osCacheCandidates({ env, platform, home }) {
   if (platform === "win32") return [env.LOCALAPPDATA];
-  return [env.XDG_CACHE_HOME, platform === "darwin" ? join(home, "Library", "Caches") : null, join(home, ".cache")];
+  return [env.XDG_CACHE_HOME, platform === "darwin" ? pathJoin(platform, home, "Library", "Caches") : null, pathJoin(platform, home, ".cache")];
 }
 
 function goBuildCacheCandidate({ env, platform, home }) {
   const configured = env.GOCACHE?.trim();
   if (configured && configured !== "off") return configured;
   if (platform === "win32") return env.LOCALAPPDATA ? win32.join(env.LOCALAPPDATA, "go-build") : null;
-  if (platform === "darwin") return join(home, "Library", "Caches", "go-build");
-  return join(env.XDG_CACHE_HOME?.trim() || join(home, ".cache"), "go-build");
+  if (platform === "darwin") return pathJoin(platform, home, "Library", "Caches", "go-build");
+  return pathJoin(platform, env.XDG_CACHE_HOME?.trim() || pathJoin(platform, home, ".cache"), "go-build");
 }
 
 export function cacheRoots({ env = process.env, platform = process.platform, home = homedir(), resolveRoot = resolveWritableRoot, includeToolchain = true } = {}) {
@@ -88,7 +92,7 @@ export function cacheRoots({ env = process.env, platform = process.platform, hom
   const candidates = [
     ...osCacheCandidates({ env, platform, home }),
     goBuildCacheCandidate({ env, platform, home }),
-    ...(includeToolchain ? TOOLCHAIN_CACHE_DIRS.map((dir) => join(home, dir)) : [])
+    ...(includeToolchain ? TOOLCHAIN_CACHE_DIRS.map((dir) => pathJoin(platform, home, dir)) : [])
   ];
   const roots = [];
   for (const candidate of candidates) {
