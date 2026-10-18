@@ -49,6 +49,7 @@ const defaultGitBin = process.env.GIT_BIN?.trim() || "git";
 const allowedReasoningEfforts = new Set(["minimal", "low", "medium", "high"]);
 const MAX_RUN_HOST_PROMPT_BYTES = 4 * 1024 * 1024;
 const RUN_HOST_STARTUP_TIMEOUT_MS = process.platform === "win32" ? 120000 : 30000;
+const WORKTREE_LOCK_TIMEOUT_MS = 120000;
 
 async function recordOutcomeFacts({ task, runId, report, reportEventId = null, acceptanceEventId = null, acceptancePassed = false }) {
   if (!report?.valid) return;
@@ -162,6 +163,31 @@ async function ensureWorktree(cwd, taskId, baseRef = null) {
     const failure = new Error(`could not create isolated worker checkout: ${error.message}`);
     failure.code = "worktree_creation_failed";
     throw failure;
+  }
+}
+
+function sleep(ms) {
+  return new Promise((resolvePromise) => setTimeout(resolvePromise, ms));
+}
+
+async function withWorktreeCreationLock(cwd, work) {
+  const lockName = `create-${createHash("sha256").update(resolve(cwd)).digest("hex").slice(0, 24)}.lock`;
+  const lockPath = join(worktreesDir, lockName);
+  await mkdir(worktreesDir, { recursive: true });
+  const deadline = Date.now() + WORKTREE_LOCK_TIMEOUT_MS;
+  while (true) {
+    try {
+      await mkdir(lockPath);
+      break;
+    } catch (error) {
+      if (error.code !== "EEXIST" || Date.now() >= deadline) throw new Error(`worktree creation lock timed out for ${cwd}`);
+      await sleep(100);
+    }
+  }
+  try {
+    return await work();
+  } finally {
+    await rm(lockPath, { recursive: true, force: true }).catch(() => {});
   }
 }
 
@@ -843,7 +869,7 @@ export async function createCodexWorker({
   const combinedAcceptance = normalizeAcceptance([...(session?.default_acceptance ?? []), ...(acceptanceCommands ?? [])]);
 
   const worktree = workspace.kind === "git_worktree"
-    ? await ensureWorktree(projectRoot, id, baseRef)
+    ? await withWorktreeCreationLock(projectRoot, () => ensureWorktree(projectRoot, id, baseRef))
     : { path: null, baseCommit: null };
   const worktreePath = worktree.path;
   if (workspace.kind === "git_worktree" && !worktreePath) {
