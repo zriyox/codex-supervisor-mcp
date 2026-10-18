@@ -641,7 +641,11 @@ async function startTrackedRun(job) {
     env: process.env, windowsHide: true
   });
   const started = await new Promise((resolveStart) => {
+    let settled = false;
+    let accepted = false;
     const finish = (result) => {
+      if (settled) return;
+      settled = true;
       clearTimeout(timer);
       host.removeAllListeners("message");
       host.removeAllListeners("exit");
@@ -650,10 +654,20 @@ async function startTrackedRun(job) {
       resolveStart(result);
     };
     const timer = setTimeout(() => {
+      if (accepted) {
+        finish({ ok: true, record: job.record });
+        return;
+      }
       host.kill();
       finish(failedStart(job.record, "run host startup timed out"));
     }, 30000);
-    host.once("message", finish);
+    host.on("message", (message) => {
+      if (message?.type === "run_host_accepted") {
+        accepted = true;
+        return;
+      }
+      finish(message);
+    });
     host.once("error", (error) => finish(failedStart(job.record, `run host startup failed: ${error.message}`)));
     host.once("exit", (code) => finish(failedStart(job.record, `run host exited before startup: ${code}`)));
     host.send(job, (error) => {
@@ -1125,6 +1139,7 @@ export async function recoverEligibleRuns() {
 if (process.argv[1] === fileURLToPath(import.meta.url) && process.argv[2] === "--run-host") {
   process.once("message", async (job) => {
     const keepAlive = setInterval(() => {}, 1000);
+    if (process.connected) process.send({ type: "run_host_accepted" });
     let result;
     try {
       result = await trackRunInHost(job);
