@@ -462,10 +462,11 @@ async function trackRunInHost({ record, args, prompt, logPath, spawnOptions = {}
       completed_at: live.completed_at ?? finishedAt,
       updated_at: finishedAt
     };
-    if (status === "failed" && !next.error) {
+    const stdinEpipe = /^stdin write failed:.*\bEPIPE\b/i.test(next.error ?? "");
+    if (status === "failed" && (!next.error || stdinEpipe)) {
       next.error = `codex exited with code ${code}${signal ? ` (signal ${signal})` : ""}`;
     }
-    if (status === "lost" && !next.error) {
+    if (status === "lost" && (!next.error || stdinEpipe)) {
       next.error = signal ? `codex worker was killed by signal ${signal} before writing a terminal event` : "Codex worker exited without recording a terminal event";
     }
     if (status === "cancelled") next.error = null;
