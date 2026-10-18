@@ -694,7 +694,7 @@ export async function reconcileDetachedActiveTasks() {
 
 export async function writeTask(task) {
   await ensureFilesystem();
-  return writeTaskNow(task);
+  return runWithRetry(openDb(), () => writeTaskNow(task));
 }
 
 function writeTaskNow(task) {
@@ -1011,35 +1011,38 @@ export async function ensureRunRecord(task, attempt) {
   await ensureFilesystem();
   if (!task?.id || !Number.isInteger(attempt) || attempt < 1) throw new Error("run record requires a task and positive attempt");
   const dbInstance = openDb();
-  ensureControlRecords(dbInstance, task);
-  const now = new Date().toISOString();
-  const id = runIdFor(task.id, attempt);
-  dbInstance.prepare(`
+  return runWithRetry(dbInstance, () => {
+    ensureControlRecords(dbInstance, task);
+    const now = new Date().toISOString();
+    const id = runIdFor(task.id, attempt);
+    dbInstance.prepare(`
     INSERT INTO runs (id, task_id, work_item_id, attempt, codex_thread_id, worktree_path, branch, base_sha, run_status, started_at, finished_at)
     VALUES (@id, @task_id, @work_item_id, @attempt, @codex_thread_id, @worktree_path, @branch, @base_sha, 'running', @started_at, NULL)
     ON CONFLICT(task_id, attempt) DO UPDATE SET
       codex_thread_id = COALESCE(excluded.codex_thread_id, runs.codex_thread_id),
       worktree_path = COALESCE(excluded.worktree_path, runs.worktree_path),
       base_sha = COALESCE(excluded.base_sha, runs.base_sha)
-  `).run({
-    id,
-    task_id: task.id,
-    work_item_id: workItemIdForTask(task.id),
-    attempt,
-    codex_thread_id: task.thread_id ?? null,
-    worktree_path: task.worktree_path ?? null,
-    branch: task.worktree_path ? `codex/${task.id}` : null,
-    base_sha: task.base_commit ?? null,
-    started_at: now
+    `).run({
+      id,
+      task_id: task.id,
+      work_item_id: workItemIdForTask(task.id),
+      attempt,
+      codex_thread_id: task.thread_id ?? null,
+      worktree_path: task.worktree_path ?? null,
+      branch: task.worktree_path ? `codex/${task.id}` : null,
+      base_sha: task.base_commit ?? null,
+      started_at: now
+    });
+    return id;
   });
-  return id;
 }
 
 export async function completeRunRecord(task, attempt) {
   await ensureFilesystem();
   if (!task?.id || !Number.isInteger(attempt) || attempt < 1) return;
   const now = task.completed_at ?? new Date().toISOString();
-  openDb().prepare(`
+  const dbInstance = openDb();
+  runWithRetry(dbInstance, () => dbInstance.prepare(`
     UPDATE runs SET codex_thread_id = @codex_thread_id,
       run_status = @run_status, finished_at = @finished_at
     WHERE task_id = @task_id AND attempt = @attempt
@@ -1049,20 +1052,29 @@ export async function completeRunRecord(task, attempt) {
     codex_thread_id: task.thread_id ?? null,
     run_status: task.status ?? "unknown",
     finished_at: now
-  });
+  }));
 }
 
 export async function appendTaskEvent(taskId, event, { runId = null, actor = "supervisor" } = {}) {
   await ensureFilesystem();
   const dbInstance = openDb();
-  const nextSeqRow = dbInstance.prepare("SELECT COALESCE(MAX(seq), 0) + 1 AS seq FROM task_events WHERE task_id = ?").get(taskId);
-  const payload = JSON.stringify(event);
-  const result = dbInstance.prepare(`
+  return runWithRetry(dbInstance, () => {
+    dbInstance.exec("BEGIN IMMEDIATE");
+    try {
+      const nextSeqRow = dbInstance.prepare("SELECT COALESCE(MAX(seq), 0) + 1 AS seq FROM task_events WHERE task_id = ?").get(taskId);
+      const payload = JSON.stringify(event);
+      const result = dbInstance.prepare(`
     INSERT INTO task_events (task_id, run_id, seq, created_at, actor, event_type, payload, payload_sha256)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(taskId, runId, nextSeqRow.seq, new Date().toISOString(), actor, event.type ?? "unknown", payload,
-    createHash("sha256").update(payload).digest("hex"));
-  return { id: Number(result.lastInsertRowid), run_id: runId, actor };
+      `).run(taskId, runId, nextSeqRow.seq, new Date().toISOString(), actor, event.type ?? "unknown", payload,
+        createHash("sha256").update(payload).digest("hex"));
+      dbInstance.exec("COMMIT");
+      return { id: Number(result.lastInsertRowid), run_id: runId, actor };
+    } catch (error) {
+      dbInstance.exec("ROLLBACK");
+      throw error;
+    }
+  });
 }
 
 export async function readTaskEvents(taskId, limit = 100, kinds = null) {
