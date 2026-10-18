@@ -69,6 +69,22 @@ function parse(result) {
 
 const call = (client, name, args = {}) => client.callTool({ name, arguments: args }).then(parse);
 
+function concurrentDispatchSummary(result) {
+  if (!result || typeof result !== "object") return result;
+  return {
+    id: result.id ?? null,
+    status: result.status ?? null,
+    error: result.error ?? null,
+    phase: result.phase ?? null,
+    run_count: result.run_count ?? null,
+    pid: result.pid ?? null,
+    run_host_pid: result.run_host_pid ?? null,
+    current_action: result.current_action ?? null,
+    current_command: result.current_command ?? null,
+    stderr_tail: typeof result.stderr_tail === "string" ? result.stderr_tail.slice(-600) : null
+  };
+}
+
 async function waitFor(client, taskId, predicate, timeoutMs = 20000) {
   const deadline = Date.now() + timeoutMs;
   let last = null;
@@ -392,7 +408,7 @@ await test("R4-3 five MCP processes write the same database without SQLITE_BUSY"
       )
     );
     const errored = results.filter((result) => result.error || result.conflicts);
-    assert.equal(errored.length, 0, JSON.stringify(errored).slice(0, 400));
+    assert.equal(errored.length, 0, JSON.stringify(errored.map(concurrentDispatchSummary)));
 
     await Promise.all(
       results.map((result) => waitFor(clients[0], result.id, (task) => task.status !== "running" && task.status !== "queued"))
