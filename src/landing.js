@@ -70,6 +70,16 @@ function currentBranch(cwd) {
   return name || null;
 }
 
+function hasStagedChanges(cwd) {
+  try {
+    git(cwd, ["diff", "--cached", "--quiet"]);
+    return false;
+  } catch (error) {
+    if (error.status === 1) return true;
+    throw error;
+  }
+}
+
 // Lands task's commits onto the current branch of its dispatch directory
 // (task.project_root: the row's cwd is the worktree the worker ran in).
 // `onto`, when given, must name that branch: it is a guard, not a switch.
@@ -145,14 +155,16 @@ export function landWorker(task, { onto = null, commitMessage = null, ignoreAcce
   if (uncommitted.length > 0 && commitMessage) {
     try {
       git(task.worktree_path, ["add", "-A"]);
-      git(task.worktree_path, ["commit", "-q", "-m", commitMessage]);
+      if (hasStagedChanges(task.worktree_path)) {
+        git(task.worktree_path, ["commit", "-q", "-m", commitMessage]);
+        committedForWorker = git(task.worktree_path, ["rev-parse", "HEAD"]).trim();
+        commits.push(committedForWorker);
+      }
+      uncommitted = porcelainPaths(git(task.worktree_path, ["--no-optional-locks", "status", "--porcelain"]));
     } catch (error) {
       const tail = `${error.stdout ?? ""}${error.stderr ?? ""}`.trim().split("\n").slice(-3).join("\n");
       return { error: "commit_failed", reason: `could not commit the worker's uncommitted edits in ${task.worktree_path}: ${tail || error.message.split("\n")[0]}`, uncommitted };
     }
-    committedForWorker = git(task.worktree_path, ["rev-parse", "HEAD"]).trim();
-    commits.push(committedForWorker);
-    uncommitted = [];
   }
   // Commits whose patch is already on the target (a previous land, or the
   // main thread cherry-picked by hand) are skipped by patch id; picking
