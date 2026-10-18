@@ -306,6 +306,7 @@ async function trackRunInHost({ record, args, prompt, logPath, spawnOptions = {}
   // the run that was lost, so a worker that was plainly running still showed
   // "process disappeared" until it finished.
   const priorAttemptFingerprint = record.run_evidence?.attempt_fingerprint ?? null;
+  const reportOnlyRecovery = record.attention_reason === "invalid_report";
   let live = {
     ...record,
     status: "running",
@@ -508,7 +509,7 @@ async function trackRunInHost({ record, args, prompt, logPath, spawnOptions = {}
     })).digest("hex");
     if (status === "completed" && code === 0 && live.sandbox !== "read-only"
       && !next.run_evidence.output_changed && next.run_evidence.output_changed !== null
-      && live.commands.length === 0) {
+      && live.commands.length === 0 && !reportOnlyRecovery) {
       next.attention_reason = priorAttemptFingerprint === next.run_evidence.attempt_fingerprint ? "two_stall" : "no_work";
       if (next.attention_reason === "two_stall") next.current_action = "No progress in two consecutive runs; needs attention";
     }

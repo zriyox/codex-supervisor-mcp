@@ -10,7 +10,7 @@ test("an invalid final report is retried once with a re-emit prompt", async () =
   const home = await tempHome("supervisor-invalid-report-");
   const { dir: repo } = await makeRepo(join(home, "repo"));
   await withMcp({ SUPERVISOR_HOME: home, FAKE_CODEX_BAD_REPORT_ON_RUN: "1" }, async ({ call }) => {
-    const worker = await call("create_codex_worker", { ...dispatchArgs("bad report", repo), sandbox: "read-only", ownedPaths: [] });
+    const worker = await call("create_codex_worker", { ...dispatchArgs("bad report", repo), sandbox: "workspace-write", ownedPaths: ["result.txt"] });
     assert.ok(worker.id, JSON.stringify(worker).slice(0, 300));
     const broken = await waitFor(call, worker.id, (task) => task.attention_reason === "invalid_report");
     assert.equal(broken.status, "failed", "the row says failed while the report is unusable");
