@@ -93,7 +93,7 @@ async function waitFor(client, taskId, predicate, timeoutMs = 20000) {
     if (predicate(last)) return last;
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
-  throw new Error(`timed out waiting for ${taskId}; last=${JSON.stringify(last)?.slice(0, 400)}`);
+    throw new Error(`timed out waiting for ${taskId}; last=${JSON.stringify(concurrentDispatchSummary(last))}`);
 }
 
 function describe(task, extra = {}) {

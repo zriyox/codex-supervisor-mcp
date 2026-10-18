@@ -503,25 +503,26 @@ export function runIdFor(taskId, attempt) {
   return `run-${taskId}-${attempt}`;
 }
 
-function ensureControlRecords(dbInstance, task) {
+function ensureControlRecords(dbInstance, task, { refreshRepo = false } = {}) {
   if (!task?.id || !task.project_root) return;
   const now = new Date().toISOString();
   const root = resolve(task.project_root);
   const repoId = repoIdForRoot(root);
-  const canonicalRemote = canonicalRemoteForRoot(root);
   const workItemId = workItemIdForTask(task.id);
-  dbInstance.prepare(`
-    INSERT INTO repos (id, canonical_remote, root, default_branch, created_at, updated_at)
-    VALUES (@id, @canonical_remote, @root, NULL, @now, @now)
-    ON CONFLICT(root) DO UPDATE SET canonical_remote = excluded.canonical_remote, updated_at = excluded.updated_at
-  `).run({ id: repoId, canonical_remote: canonicalRemote, root, now });
+  const repo = dbInstance.prepare("SELECT id FROM repos WHERE root = ?").get(root);
+  if (!repo || refreshRepo) {
+    const canonicalRemote = canonicalRemoteForRoot(root);
+    dbInstance.prepare(`
+      INSERT INTO repos (id, canonical_remote, root, default_branch, created_at, updated_at)
+      VALUES (@id, @canonical_remote, @root, NULL, @now, @now)
+      ON CONFLICT(root) DO UPDATE SET canonical_remote = excluded.canonical_remote, updated_at = excluded.updated_at
+    `).run({ id: repoId, canonical_remote: canonicalRemote, root, now });
+  }
+  const workItem = dbInstance.prepare("SELECT id FROM work_items WHERE task_id = ?").get(task.id);
+  if (workItem) return;
   dbInstance.prepare(`
     INSERT INTO work_items (id, repo_id, task_id, parent_work_item_id, objective, owner, delivery_state, created_at, updated_at)
     VALUES (@id, @repo_id, @task_id, NULL, @objective, NULL, @delivery_state, @now, @now)
-    ON CONFLICT(task_id) DO UPDATE SET
-      objective = COALESCE(excluded.objective, work_items.objective),
-      delivery_state = CASE WHEN work_items.delivery_state = 'draft' THEN excluded.delivery_state ELSE work_items.delivery_state END,
-      updated_at = excluded.updated_at
   `).run({
     id: workItemId,
     repo_id: repoId,
@@ -702,7 +703,7 @@ export async function writeTask(task) {
   return runWithRetry(openDb(), () => writeTaskNow(task));
 }
 
-function writeTaskNow(task) {
+function writeTaskNow(task, { refreshRepo = false } = {}) {
   const placeholders = TASK_COLUMNS.map((name) => `@${name}`).join(", ");
   const updates = TASK_COLUMNS
     .filter((name) => name !== "id" && name !== "created_at")
@@ -736,7 +737,7 @@ function writeTaskNow(task) {
   params.phase = task.phase ?? null;
 
   stmt.run(params);
-  ensureControlRecords(openDb(), task);
+  ensureControlRecords(openDb(), task, { refreshRepo });
   return task;
 }
 
@@ -764,7 +765,7 @@ export async function reserveTaskOwnership(task) {
   const connection=openDb();
   return runWithRetry(connection,()=>{
     connection.exec("BEGIN IMMEDIATE");
-    try { checkOwnership(task.id,task.owned_paths??[]);writeTaskNow(task);connection.exec("COMMIT");return task; }
+    try { checkOwnership(task.id,task.owned_paths??[]);writeTaskNow(task, { refreshRepo: true });connection.exec("COMMIT");return task; }
     catch(error){connection.exec("ROLLBACK");throw error;}
   });
 }
@@ -1060,26 +1061,36 @@ export async function completeRunRecord(task, attempt) {
   }));
 }
 
-export async function appendTaskEvent(taskId, event, { runId = null, actor = "supervisor" } = {}) {
+export async function appendTaskEvents(taskId, events, { runId = null, actor = "supervisor" } = {}) {
   await ensureFilesystem();
+  if (!Array.isArray(events) || events.length === 0) return [];
   const dbInstance = openDb();
   return runWithRetry(dbInstance, () => {
     dbInstance.exec("BEGIN IMMEDIATE");
     try {
       const nextSeqRow = dbInstance.prepare("SELECT COALESCE(MAX(seq), 0) + 1 AS seq FROM task_events WHERE task_id = ?").get(taskId);
-      const payload = JSON.stringify(event);
-      const result = dbInstance.prepare(`
+      const insert = dbInstance.prepare(`
     INSERT INTO task_events (task_id, run_id, seq, created_at, actor, event_type, payload, payload_sha256)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(taskId, runId, nextSeqRow.seq, new Date().toISOString(), actor, event.type ?? "unknown", payload,
-        createHash("sha256").update(payload).digest("hex"));
+      `);
+      const createdAt = new Date().toISOString();
+      const records = events.map((event, index) => {
+        const payload = JSON.stringify(event);
+        const result = insert.run(taskId, runId, nextSeqRow.seq + index, createdAt, actor, event.type ?? "unknown", payload,
+          createHash("sha256").update(payload).digest("hex"));
+        return { id: Number(result.lastInsertRowid), run_id: runId, actor };
+      });
       dbInstance.exec("COMMIT");
-      return { id: Number(result.lastInsertRowid), run_id: runId, actor };
+      return records;
     } catch (error) {
       dbInstance.exec("ROLLBACK");
       throw error;
     }
   });
+}
+
+export async function appendTaskEvent(taskId, event, options = {}) {
+  return (await appendTaskEvents(taskId, [event], options))[0];
 }
 
 export async function readTaskEvents(taskId, limit = 100, kinds = null) {

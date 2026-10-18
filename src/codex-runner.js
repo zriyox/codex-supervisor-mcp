@@ -6,6 +6,7 @@ import { join, resolve, sep, dirname, isAbsolute } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   appendTaskEvent,
+  appendTaskEvents,
   getTask,
   getSession,
   readActiveTasks,
@@ -402,32 +403,39 @@ async function trackRunInHost({ record, args, prompt, logPath, spawnOptions = {}
   let terminalEvent = false;
   let rawReport = null;
   let rawReportEventId = null;
-  const handleLine = async (line) => {
-    let event;
-    try {
-      event = JSON.parse(line);
-    } catch (error) {
-      logStream.write(`${JSON.stringify({ type: "supervisor.parse_error", line, error: error.message })}\n`);
-      return;
+  const handleLines = async (lines) => {
+    const events = [];
+    for (const line of lines) {
+      try {
+        const event = JSON.parse(line);
+        logStream.write(`${JSON.stringify(event)}\n`);
+        events.push(event);
+      } catch (error) {
+        logStream.write(`${JSON.stringify({ type: "supervisor.parse_error", line, error: error.message })}\n`);
+      }
     }
-    logStream.write(`${JSON.stringify(event)}\n`);
-    if (event.type === "item.completed" && event.item?.type === "agent_message") rawReport = event.item.text;
-    if (["turn.completed", "turn.failed"].includes(event.type)) terminalEvent = true;
-    const storedEvent = await appendTaskEvent(record.id, event, { runId, actor: "codex" });
-    if (event.type === "item.completed" && event.item?.type === "agent_message") rawReportEventId = storedEvent.id;
-    await persist(codexRunner.parseEvent(live, event));
+    if (events.length === 0) return;
+    const storedEvents = await appendTaskEvents(record.id, events, { runId, actor: "codex" });
+    let next = live;
+    for (const [index, event] of events.entries()) {
+      if (event.type === "item.completed" && event.item?.type === "agent_message") {
+        rawReport = event.item.text;
+        rawReportEventId = storedEvents[index].id;
+      }
+      if (["turn.completed", "turn.failed"].includes(event.type)) terminalEvent = true;
+      next = codexRunner.parseEvent(next, event);
+    }
+    await persist(next);
   };
 
   let stdoutRest = "";
   const handleStdoutChunk = (chunk) => {
     const split = splitLines(stdoutRest, chunk.toString("utf8"));
     stdoutRest = split.rest;
-    for (const line of split.lines) {
-      if (!line.trim()) continue;
-      eventChain = eventChain.then(() => handleLine(line)).catch((error) => {
-        process.stderr.write(`[codex-supervisor] event handling failed for ${record.id}: ${error.message}\n`);
-      });
-    }
+    const lines = split.lines.filter((line) => line.trim());
+    if (lines.length) eventChain = eventChain.then(() => handleLines(lines)).catch((error) => {
+      process.stderr.write(`[codex-supervisor] event handling failed for ${record.id}: ${error.message}\n`);
+    });
   };
   earlyOutput.capture = false;
   for (const chunk of earlyOutput.stdout) handleStdoutChunk(chunk);
@@ -457,7 +465,7 @@ async function trackRunInHost({ record, args, prompt, logPath, spawnOptions = {}
     childSettled = true;
     if (quotaWatch) clearInterval(quotaWatch);
     processes.delete(record.id);
-    if (stdoutRest.trim()) eventChain = eventChain.then(() => handleLine(stdoutRest)).catch((error) => {
+    if (stdoutRest.trim()) eventChain = eventChain.then(() => handleLines([stdoutRest])).catch((error) => {
       process.stderr.write(`[codex-supervisor] final event failed for ${record.id}: ${error.message}\n`);
     });
     await eventChain.catch(() => {});
