@@ -57,7 +57,7 @@ test("a candidate that cannot be resolved to a symlink-free path is dropped", ()
   assert.deepEqual(cacheRoots({ platform: "linux", home: "/home/example", env: {}, resolveRoot: () => ({ error: "does not exist" }), includeToolchain: false }), []);
   assert.deepEqual(cacheRoots({ platform: "linux", home: "/home/example", env: { XDG_CACHE_HOME: "/vol/cache" },
     resolveRoot: (candidate) => ({ path: candidate === "/vol/cache" ? "/Volumes/data/cache" : candidate === "/vol/cache/go-build" ? "/Volumes/data/cache/go-build" : candidate }), includeToolchain: false }),
-    ["/Volumes/data/cache", join("/home/example", ".cache"), "/Volumes/data/cache/go-build"], "an alias is replaced by its target");
+    ["/Volumes/data/cache", platformJoin("linux", "/home/example", ".cache"), "/Volumes/data/cache/go-build"], "an alias is replaced by its target");
   assert.deepEqual(cacheRoots({ platform: "linux", home: "/home/example", env: { XDG_CACHE_HOME: "/vol/cache" },
     resolveRoot: () => ({ path: "/Volumes/data/cache" }), includeToolchain: false }), ["/Volumes/data/cache"], "duplicates collapse");
 });
