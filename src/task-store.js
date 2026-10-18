@@ -503,7 +503,7 @@ export function runIdFor(taskId, attempt) {
   return `run-${taskId}-${attempt}`;
 }
 
-function ensureControlRecords(dbInstance, task, { refreshRepo = false } = {}) {
+function ensureControlRecords(dbInstance, task, { refreshRepo = false, canonicalRemote = undefined } = {}) {
   if (!task?.id || !task.project_root) return;
   const now = new Date().toISOString();
   const root = resolve(task.project_root);
@@ -511,12 +511,12 @@ function ensureControlRecords(dbInstance, task, { refreshRepo = false } = {}) {
   const workItemId = workItemIdForTask(task.id);
   const repo = dbInstance.prepare("SELECT id FROM repos WHERE root = ?").get(root);
   if (!repo || refreshRepo) {
-    const canonicalRemote = canonicalRemoteForRoot(root);
+    const resolvedRemote = canonicalRemote === undefined ? canonicalRemoteForRoot(root) : canonicalRemote;
     dbInstance.prepare(`
       INSERT INTO repos (id, canonical_remote, root, default_branch, created_at, updated_at)
       VALUES (@id, @canonical_remote, @root, NULL, @now, @now)
       ON CONFLICT(root) DO UPDATE SET canonical_remote = excluded.canonical_remote, updated_at = excluded.updated_at
-    `).run({ id: repoId, canonical_remote: canonicalRemote, root, now });
+    `).run({ id: repoId, canonical_remote: resolvedRemote, root, now });
   }
   const workItem = dbInstance.prepare("SELECT id FROM work_items WHERE task_id = ?").get(task.id);
   if (workItem) return;
@@ -703,7 +703,7 @@ export async function writeTask(task) {
   return runWithRetry(openDb(), () => writeTaskNow(task));
 }
 
-function writeTaskNow(task, { refreshRepo = false } = {}) {
+function writeTaskNow(task, { refreshRepo = false, canonicalRemote = undefined } = {}) {
   const placeholders = TASK_COLUMNS.map((name) => `@${name}`).join(", ");
   const updates = TASK_COLUMNS
     .filter((name) => name !== "id" && name !== "created_at")
@@ -737,7 +737,7 @@ function writeTaskNow(task, { refreshRepo = false } = {}) {
   params.phase = task.phase ?? null;
 
   stmt.run(params);
-  ensureControlRecords(openDb(), task, { refreshRepo });
+  ensureControlRecords(openDb(), task, { refreshRepo, canonicalRemote });
   return task;
 }
 
@@ -762,10 +762,11 @@ function checkOwnership(taskId, incoming) {
 
 export async function reserveTaskOwnership(task) {
   await ensureFilesystem();
+  const canonicalRemote = task?.project_root ? canonicalRemoteForRoot(resolve(task.project_root)) : null;
   const connection=openDb();
   return runWithRetry(connection,()=>{
     connection.exec("BEGIN IMMEDIATE");
-    try { checkOwnership(task.id,task.owned_paths??[]);writeTaskNow(task, { refreshRepo: true });connection.exec("COMMIT");return task; }
+    try { checkOwnership(task.id,task.owned_paths??[]);writeTaskNow(task, { refreshRepo: true, canonicalRemote });connection.exec("COMMIT");return task; }
     catch(error){connection.exec("ROLLBACK");throw error;}
   });
 }
