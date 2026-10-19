@@ -42,6 +42,7 @@ import { buildRuntimeContract, createPreflightMetadata, readPreflightResult, run
 import { supervisorMcpDisableArgs } from "./mcp-config.js";
 import { captureWorkspaceManifest, isGitCheckout, prepareWorkspace } from "./workspace-kind.js";
 import { codexRunner } from "./runner-adapter.js";
+import { withWorkerToolPath } from "./worker-env.js";
 
 const processes = new Map();
 // taskId -> control object of an acceptance run in progress ({ kill, cancelled }).
@@ -400,10 +401,10 @@ async function trackRunInHost({ record, args, prompt, logPath, spawnOptions = {}
 
   const { child, spawnError, earlyOutput } = await spawnAndAwaitStart(target, guardedArgs, {
     stdio: ["pipe", "pipe", "pipe"],
-    env: { ...process.env, NO_COLOR: "1", CODEX_SUPERVISOR_TASK_ID: record.id,
+    env: withWorkerToolPath({ ...process.env, NO_COLOR: "1", CODEX_SUPERVISOR_TASK_ID: record.id,
       CODEX_SUPERVISOR_BASE_COMMIT: record.base_commit ?? "",
       CODEX_SUPERVISOR_STAGE_CLI: stageCli,
-      CODEX_SUPERVISOR_RUN: String((record.run_count ?? 0) + 1), CODEX_SUPERVISOR_GUARD_POLICY: JSON.stringify(guardPolicy) },
+      CODEX_SUPERVISOR_RUN: String((record.run_count ?? 0) + 1), CODEX_SUPERVISOR_GUARD_POLICY: JSON.stringify(guardPolicy) }),
     windowsHide: true,
     ...spawnOptions
   });

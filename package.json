@@ -54,6 +54,7 @@
     "src/truncate.js",
     "src/status.js",
     "src/failure-class.js",
+    "src/worker-env.js",
     "src/thread-health.js",
     "src/stage-store.js",
     "src/stage.js",
