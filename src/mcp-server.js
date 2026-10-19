@@ -63,6 +63,7 @@ import { baseBehind, readTaskChanges, readWorktreeDiff, worktreeRef } from "./wo
 import { summarizeVerification } from "./event-parser.js";
 import { readPreflightResult } from "./worker-preflight.js";
 import { acceptanceVerdict, runAcceptance } from "./acceptance.js";
+import { classifyFailure } from "./failure-class.js";
 import { ACTIVE_STATUSES, TERMINAL_STATUSES, TASK_STATUSES, isGoalNeedingAttention } from "./status.js";
 import { approxTokenCount, truncateEventStrings, truncateMiddleChars, truncateReport } from "./truncate.js";
 import { checkForUpdate, updateNotice } from "./update-check.js";
@@ -299,6 +300,7 @@ function summarizeTask(task) {
     goal_token_budget: task.goal_token_budget,
     goal_status: task.goal_status,
     attention_reason: task.attention_reason ?? null,
+    failure: classifyFailure(task),
     changed_file_count: (task.changed_files ?? []).length,
     command_count: (task.commands ?? []).length,
     run_count: task.run_count ?? 0,
@@ -375,6 +377,7 @@ function receipt(task) {
     goal_objective: task.goal_objective,
     goal_token_budget: task.goal_token_budget,
     error: task.error ?? null,
+    failure: classifyFailure(task),
     run_count: task.run_count ?? 0,
     run_log: task.run_log,
     created_at: task.created_at,
@@ -394,6 +397,7 @@ function overviewRow(task, caps) {
     idle_seconds: liveness(task).idle_seconds,
     command_running: Boolean(task.current_command) && ACTIVE_STATUSES.has(task.status),
     acceptance: acceptanceVerdict(task),
+    failure_code: classifyFailure(task)?.code ?? null,
     changed_files: (task.changed_files ?? []).length,
     depends_on: task.depends_on ?? [],
     owned_paths: (task.owned_paths ?? []).map((entry) => clip(entry, caps.path))

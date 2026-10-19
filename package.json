@@ -52,6 +52,7 @@
     "src/external-output.js",
     "src/truncate.js",
     "src/status.js",
+    "src/failure-class.js",
     "src/paths.js",
     "src/prompt.js",
     "src/cleanup.js",

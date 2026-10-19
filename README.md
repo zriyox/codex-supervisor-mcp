@@ -29,6 +29,7 @@
 | 进程重启后不知道谁还在跑 | `supervisor.sqlite` 一行一个 work，带 `thread_id` |
 | 换个会话接不上之前的 worker | `resume_codex_worker` 走 `codex exec resume <thread_id>`，接的是同一个 Codex 会话 |
 | 分不清「跑失败」和「进程没了」 | 状态机把 `failed` 和 `lost` 分开 |
+| 分不清是谁报错 | status / overview / overview_delta 带 `failure.source` 和 `failure.code`，区分 provider、supervisor_process、workspace_setup、model_output、acceptance、worker_process |
 | worker 说做完了其实没有 | 派单给 `acceptance` 验收命令，worker 退出后 supervisor 在它的 worktree 里跑，失败 `land` 拒绝 |
 | 看不见一批活现在到哪了 | `codex-supervisor-web` 开一个看板，按 session 看每路 worker 在干什么 |
 | 改动留在本地没上线 | 收活默认 `land_codex_worker` 合回主分支；主线程自己的改动必须 commit + push；部署前用远端 SHA 核对文件真的在线上 |

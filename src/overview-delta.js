@@ -1,4 +1,5 @@
 import { ACTIVE_STATUSES, isGoalNeedingAttention } from "./status.js";
+import { classifyFailure } from "./failure-class.js";
 
 function readyToLand(task) {
   return task.status === "completed" && task.exit_code === 0 && (!task.acceptance_results || task.acceptance_results.passed === true) && !task.landed_at;
@@ -37,6 +38,7 @@ export function buildOverviewDelta(tasks, cursor = {}, { readyToCleanTaskIds = n
     const isReadyToLand = land.some((item) => item.id === task.id);
     const isReadyToClean = clean.some((item) => item.id === task.id);
     const reason = attentionReason(task);
+    const failure = classifyFailure(task);
     const fingerprint = JSON.stringify([task.run_count ?? 0, task.status, task.exit_code ?? null, task.attention_reason ?? null, task.landed_head ?? null, task.push_verified_at ?? null, task.delivery_state ?? null, isReadyToClean, reason, task.updated_at]);
     nextCursor[task.id] = fingerprint;
     if (cursor[task.id] !== fingerprint) {
@@ -47,6 +49,8 @@ export function buildOverviewDelta(tasks, cursor = {}, { readyToCleanTaskIds = n
         delivery_state: task.delivery_state ?? "draft",
         attention: isAttention,
         attention_reason: reason,
+        failure_source: failure?.source ?? null,
+        failure_code: failure?.code ?? null,
         ready_to_land: isReadyToLand,
         ready_to_clean: isReadyToClean,
         next_action: nextAction(task, { attention: isAttention, readyToLand: isReadyToLand, readyToClean: isReadyToClean }),

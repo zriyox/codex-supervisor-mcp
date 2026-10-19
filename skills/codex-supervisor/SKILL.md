@@ -160,6 +160,8 @@ worker 最终 JSON 只是 `candidate`：先留在本 run 做审计，绝不因�
 
 `status` 是生命周期：`queued` / `running` / `completed` / `failed` / `cancelled` / `lost`。`phase` 只在跑着时有值：`starting` → `thinking` → `command` → `editing` → `reporting`。`completed` 配 `exit_code: null` 是中间态，`wait` 会等到退出码落了再返回。goal 的 `paused` / `blocked` 不是结束，是等人管，overview 会列进 `needs_attention`。
 
+终态优先看 `failure.source` / `failure.code`：`provider` 是模型代理或上游，`supervisor_process` 是 exit 未收口/启动/超时，`workspace_setup` 是依赖链接、子模块或 prepare，`model_output` 是最终报告格式，`acceptance` 是验收命令，`worker_process` 是 worker 进程非零退出，`worker_progress` 是 no_work/two_stall。不要把所有 failed/lost 都当业务代码失败。
+
 ## 看到 `update` 字段就转告用户
 
 overview、派单回执、`wait` 返回里出现 `update` 且 `update_available: true` 时，当轮回复里照 `notice` 告诉用户一句。`auto_update.state` 是 `started` / `running` / `done` 时新版已在后台装，重开会话即可；`install_command` 有值才让用户自己跑。只说一次。
