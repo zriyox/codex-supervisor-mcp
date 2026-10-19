@@ -44,7 +44,7 @@ worker 默认不是调度员：启动时会禁用它继承到的 `codex-supervis
 
 验收用 Bash 的 `errexit` + `pipefail`：`npm test | tail` 不能吞失败；文件存在只可做附加门禁，不能单独证明业务完成。预期失败用 `if` / `||` 显式判。超时、`no tests to run`、`[no test files]` 都失败，别只看退出码 0。Windows 要有 Git for Windows Bash；缺失先修工具，别换回 cmd。
 
-验收取当前身份用 `CODEX_SUPERVISOR_TASK_ID` / `CODEX_SUPERVISOR_BASE_COMMIT` / `CODEX_SUPERVISOR_RUN`；不要在命令里写死旧 base，rebase/resume 后这些值会更新。
+验收取当前身份用 `CODEX_SUPERVISOR_TASK_ID` / `CODEX_SUPERVISOR_BASE_COMMIT` / `CODEX_SUPERVISOR_RUN`；worker 进程和 supervisor 验收子进程都会注入同一组当前值，rebase/resume 后一起更新。不要在命令里写死旧 base。
 
 `check_acceptance` 只是在宿主权限跑验收命令，预检通过不代表 worker sandbox/guard/PATH/cache/network 可用；写 worker 的实际环境预检必须走上面的 `preflight_codex_worker`。已知失败必须按结构化 baseline 的用例名/类型/签名比，必跑项写 required；报告必须标本次 `CODEX_SUPERVISOR_CHECK_ID`，给 complete/identity/failures/executed/skipped，缺失、跳过和旧报告都不算过。reportPath 用工作区内忽略的临时目录，验收报告别混进业务提交。
 

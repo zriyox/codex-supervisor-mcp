@@ -72,6 +72,14 @@ async function main() {
     } catch { guard = null; }
     appendFileSync(process.env.FAKE_CODEX_ARGS_LOG, `${JSON.stringify({ args, guard })}\n`);
   }
+  if (process.env.FAKE_CODEX_ENV_LOG) {
+    const { appendFileSync } = await import("node:fs");
+    appendFileSync(process.env.FAKE_CODEX_ENV_LOG, `${JSON.stringify({
+      task_id: process.env.CODEX_SUPERVISOR_TASK_ID ?? null,
+      base_commit: process.env.CODEX_SUPERVISOR_BASE_COMMIT ?? null,
+      run: process.env.CODEX_SUPERVISOR_RUN ?? null
+    })}\n`);
+  }
   if (scenario === "exit-immediately") process.exit(3);
   // Output is driven by the stdin "end" handler above.
   if (scenario === "echo-prompt") return;

@@ -202,7 +202,7 @@ worker 的最终 JSON 报告会先记录为该 run 的 `candidate` fact，不能
 
 交付状态分开：acceptance 通过只是 `verified`，`land_codex_worker` 只是 `landed`，仍不代表远端有这笔提交。需要显式 `verify_delivery_push` fetch 并校验 `landed_head` 已在目标 remote branch 上，才是 `push_verified`；它会自动生成 cleanup plan，SAFE 项进入 `cleanup_eligible`，但永远不会自己删除。该工具绝不代替用户执行 push 或部署。
 
-验收命令的环境包含 `CODEX_SUPERVISOR_TASK_ID`、`CODEX_SUPERVISOR_BASE_COMMIT` 和 `CODEX_SUPERVISOR_RUN`；分别是当前任务、当前运行基线和运行次数，rebase/resume 后会更新。
+worker 进程和 supervisor 验收子进程都包含当前 `CODEX_SUPERVISOR_TASK_ID`、`CODEX_SUPERVISOR_BASE_COMMIT` 和 `CODEX_SUPERVISOR_RUN`；分别是当前任务、运行基线和次数，rebase/resume 后两边一起更新。
 
 结构化验收项用 `{command, reportPath, baseline}`。baseline 包含 `identity.base_commit`、`failures`（test_id/kind/signature）和 `required`；报告包含 complete、identity、failures、executed、skipped，以及本次 `CODEX_SUPERVISOR_CHECK_ID`。必跑用例缺失/跳过、旧报告、失败名单变化都拒绝通过，原始退出码保留。reportPath 必须在工作目录内；测试报告可能写文件，要用忽略的临时目录，避免把报告合入。
 

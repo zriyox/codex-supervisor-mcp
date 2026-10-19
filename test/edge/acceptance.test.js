@@ -2,7 +2,7 @@
 // worker exits, the verdict on every read, and the gate on landing.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { chmod, mkdir, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { dispatchArgs, git, makeRepo, tempHome, waitFor, withMcp } from "./helpers.js";
@@ -61,7 +61,8 @@ test("a write worker refuses file-existence checks as its only acceptance", asyn
 test("acceptance sees the current worker identity after rebase, resume and follow-up", async () => {
   const home = await tempHome("supervisor-identity-");
   const { dir, second } = await makeRepo(join(home, "repo"));
-  await withMcp({ SUPERVISOR_HOME: home }, async ({ call }) => {
+  const envLog = join(home, "worker-env.jsonl");
+  await withMcp({ SUPERVISOR_HOME: home, FAKE_CODEX_ENV_LOG: envLog }, async ({ call }) => {
     const worker = await call("create_codex_worker", dispatchArgs("identity", dir, { acceptance: READ_IDENTITY }));
     await waitFor(call, worker.id, settled);
     const first = await call("get_worker_result", { task_id: worker.id });
@@ -80,6 +81,13 @@ test("acceptance sees the current worker identity after rebase, resume and follo
     await waitFor(call, followup.id, settled);
     const last = await call("get_worker_result", { task_id: followup.id });
     assert.deepEqual(JSON.parse(last.acceptance.checks[0].output_tail), [followup.id, followup.base_commit, "1"]);
+
+    const seen = (await readFile(envLog, "utf8")).trim().split("\n").map((line) => JSON.parse(line));
+    assert.deepEqual(seen.slice(-3), [
+      { task_id: worker.id, base_commit: second, run: "1" },
+      { task_id: worker.id, base_commit: head, run: "2" },
+      { task_id: followup.id, base_commit: followup.base_commit, run: "1" }
+    ]);
   });
 });
 

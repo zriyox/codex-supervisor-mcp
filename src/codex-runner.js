@@ -320,6 +320,7 @@ async function trackRunInHost({ record, args, prompt, logPath, spawnOptions = {}
   const { child, spawnError, earlyOutput } = await spawnAndAwaitStart(target, guardedArgs, {
     stdio: ["pipe", "pipe", "pipe"],
     env: { ...process.env, NO_COLOR: "1", CODEX_SUPERVISOR_TASK_ID: record.id,
+      CODEX_SUPERVISOR_BASE_COMMIT: record.base_commit ?? "",
       CODEX_SUPERVISOR_RUN: String((record.run_count ?? 0) + 1), CODEX_SUPERVISOR_GUARD_POLICY: JSON.stringify(guardPolicy) },
     windowsHide: true,
     ...spawnOptions
