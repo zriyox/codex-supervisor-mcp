@@ -40,7 +40,7 @@ worker 默认不是调度员：启动时会禁用它继承到的 `codex-supervis
 
 `probeCommands` 会自动加入这次 probe worker 的 guard-only allowlist，不会进入目标 worker 的 runtime contract；目标 worker 仍只声明自己真正需要的 `allowedCommands`。ssh 等联网探针仍要显式 `networkAccess: true`，需要写 `known_hosts` 时同时声明 `writableRoots: ["~/.ssh"]`。
 
-预检结论以 probe command evidence 为准，不把模型最终 JSON 当环境事实：所有探针都实际执行且通过、没有失败命令时，最终报告格式错误不会让预检失败；进程 close handler 缺失但退出码已为 0 的 probe-only worker 也只记诊断，不重跑。命令未执行、非零、取消或无法解释的 lost 仍失败。
+预检结论以 probe command evidence 为准，不把模型最终 JSON 或进程 close handler 当环境事实：所有探针都实际执行且通过、没有失败命令时，最终报告格式错误不会让预检失败；probe-only worker 即使最终变 `lost` 且退出码未记录，也只记诊断，不重跑。命令未执行、非零或取消仍失败。
 | `sandbox` | 默认 `workspace-write`，worker 提交不了（Codex 把 `.git` 设成只读）。要它自己提交就 `danger-full-access`，否则收活时让 supervisor 替它提交 |
 
 验收用 Bash 的 `errexit` + `pipefail`：`npm test | tail` 不能吞失败；文件存在只可做附加门禁，不能单独证明业务完成。预期失败用 `if` / `||` 显式判。超时、`no tests to run`、`[no test files]` 都失败，别只看退出码 0。Windows 要有 Git for Windows Bash；缺失先修工具，别换回 cmd。

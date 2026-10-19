@@ -112,7 +112,14 @@ test("a valid probe survives a missing process exit and is not auto-resumed", as
     assert.equal(verdict.worker_outcome.missing_exit_tolerated, true);
     const db = new DatabaseSync(join(home, "data", "supervisor.sqlite"));
     db.prepare("UPDATE tasks SET status = 'completed', exit_code = NULL WHERE id = ?").run(preflight.id);
+    let recovered = await call("get_worker_preflight", { task_id: preflight.id });
+    assert.equal(recovered.status, "passed", JSON.stringify(recovered));
+    assert.equal(recovered.worker_outcome.missing_exit_tolerated, true);
+    db.prepare("UPDATE tasks SET status = 'lost', exit_code = NULL WHERE id = ?").run(preflight.id);
     db.close();
+    recovered = await call("get_worker_preflight", { task_id: preflight.id });
+    assert.equal(recovered.status, "passed", JSON.stringify(recovered));
+    assert.equal(recovered.worker_outcome.missing_exit_tolerated, true);
     const target = await call("create_codex_worker", {
       ...dispatchArgs("passed preflight target", dir, {
         sandbox: "workspace-write",

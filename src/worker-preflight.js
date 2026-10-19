@@ -122,7 +122,8 @@ export function readPreflightResult(task) {
   const probesPassed = probes.every((probe) => probe.passed);
   const exitConfirmed = task.status === "completed" && task.exit_code === 0;
   const reportWasInvalid = task.attention_reason === "invalid_report";
-  const exitWasLost = task.status === "lost" && task.exit_code === 0;
+  const probesProveEnvironment = probesPassed && failedCommands.length === 0;
+  const exitWasLost = task.status === "lost" && probesProveEnvironment;
   // A preflight proves the worker environment through its command evidence.
   // Its own final report and close-handler completion are useful diagnostics,
   // but neither changes what those commands already proved. A completed turn
