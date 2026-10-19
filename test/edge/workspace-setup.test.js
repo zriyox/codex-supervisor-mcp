@@ -11,7 +11,7 @@ function writableRoots(args) {
   return flag ? JSON.parse(flag.slice("sandbox_workspace_write.writable_roots=".length)) : [];
 }
 
-test("workspaceSetup links dependencies, runs prepare, and exposes only its cache roots", async () => {
+test("workspaceSetup links dependencies, runs prepare, and exposes the link source and cache roots", async () => {
   const home = await tempHome("supervisor-workspace-setup-");
   const { dir } = await makeRepo(join(home, "repo"));
   await mkdir(join(dir, "node_modules"));
@@ -52,7 +52,10 @@ test("workspaceSetup links dependencies, runs prepare, and exposes only its cach
 
     const runs = (await readFile(argsLog, "utf8")).trim().split("\n").map((line) => JSON.parse(line));
     const canonicalDir = await realpath(dir);
-    const expected = [".vite", ".vite-temp", ".cache"].map((name) => join(canonicalDir, "node_modules", name));
+    const expected = [
+      join(canonicalDir, "node_modules"),
+      ...[".vite", ".vite-temp", ".cache"].map((name) => join(canonicalDir, "node_modules", name))
+    ];
     for (const run of runs.slice(-2)) assert.deepEqual(expected.filter((root) => !writableRoots(run.args).includes(root)), []);
   });
 });

@@ -222,9 +222,11 @@ async function prepareWorktreeWorkspace(setup, projectRoot, worktreePath, taskId
   }
 }
 
-function workspaceSetupCacheRoots(record) {
+function workspaceSetupWriteRoots(record) {
   const roots = [];
   for (const link of record.workspace_metadata?.setup?.links ?? []) {
+    const source = resolveWritableRoot(link.source);
+    if (!source.error) roots.push(source.path);
     if (basename(link.path) !== "node_modules") continue;
     for (const name of [".vite", ".vite-temp", ".cache"]) {
       const candidate = resolveWritableRoot(join(link.source, name));
@@ -389,7 +391,7 @@ async function trackRunInHost({ record, args, prompt, logPath, spawnOptions = {}
   const sandboxWritableRoots = [...new Set([
     ...externalBefore.map((file) => dirname(file.path)),
     ...cacheRoots(),
-    ...workspaceSetupCacheRoots(record),
+    ...workspaceSetupWriteRoots(record),
     ...(record.guard_policy?.writableRoots ?? [])
   ])];
   if (sandboxWritableRoots.length) configArgs.push("-c", `sandbox_workspace_write.writable_roots=${JSON.stringify(sandboxWritableRoots)}`);
