@@ -24,7 +24,7 @@ await writeFile(join(repo, "README.md"), "# test repo\n");
 git(["add", "."]);
 git(["commit", "-q", "-m", "init"]);
 
-const PROMPT = "Reply with exactly the word PONG and nothing else. Do not modify, create, or delete any files.";
+const PROMPT = "Treat PONG as your result, but follow the supervisor's final JSON report format exactly. Do not modify, create, or delete any files.";
 const TERMINAL = ["completed", "failed", "cancelled", "lost"];
 const VALID_PHASES = ["starting", "thinking", "command", "editing", "reporting"];
 
@@ -166,7 +166,7 @@ console.log("resuming the same thread from a new MCP process ...");
 const resumed = await withServer(async (client) => {
   const started = await call(client, "resume_codex_worker", {
     task_id: taskId,
-    prompt: "Reply with exactly the word PONG2 and nothing else."
+    prompt: "Treat PONG2 as your result, but follow the supervisor's final JSON report format exactly."
   });
   assert.ok(!started.error, JSON.stringify(started));
   assert.equal(started.thread_id, finished.thread_id, "resume must keep the same thread id");
