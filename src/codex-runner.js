@@ -560,7 +560,7 @@ async function trackRunInHost({ record, args, prompt, logPath, spawnOptions = {}
       next.attention_reason = priorAttemptFingerprint === next.run_evidence.attempt_fingerprint ? "two_stall" : "no_work";
       if (next.attention_reason === "two_stall") next.current_action = "No progress in two consecutive runs; needs attention";
     }
-    if (status === "completed" && !next.run_evidence.structured_report.valid) {
+    if (status === "completed" && !next.run_evidence.structured_report.valid && !live.guard_policy?.preflight) {
       next.status = "failed";
       next.attention_reason = "invalid_report";
       next.error = `Invalid final worker report: ${next.run_evidence.structured_report.error}`;
@@ -904,7 +904,14 @@ export async function createCodexWorker({
   }
   const guardPolicy = {
     forbid,
-    allowedCommands,
+    // Probe commands need enough permission to prove the worker environment,
+    // but they are not part of the target worker's executable contract. Keep
+    // them in this preflight run's guard only so the final worker can reuse the
+    // exact contract its dispatcher declared.
+    allowedCommands: [...new Set([
+      ...allowedCommands,
+      ...(preflight?.probeCommands ?? [])
+    ])],
     externalOutputs,
     networkAccess,
     writableRoots: [...new Set(resolvedWritableRoots)],
@@ -1149,6 +1156,7 @@ export async function resumeCodexWorker({ taskId, prompt, rebaseOnto = null, acc
 export async function recoverEligibleRuns() {
   const recovered = [];
   for (const task of await readTasks()) {
+    if (task.guard_policy?.preflight) continue;
     if ((task.run_count ?? 0) !== 1 || !task.thread_id
       || !(task.run_evidence?.run === 1 || (task.run_host_pid && task.started_at)) || !task.guard_policy
       || !(task.status === "lost" || task.attention_reason === "no_work" || task.attention_reason === "invalid_report")

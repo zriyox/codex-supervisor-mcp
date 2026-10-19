@@ -147,6 +147,14 @@ async function main() {
     return;
   }
 
+  if (scenario === "command-then-no-terminal") {
+    emit({ type: "thread.started", thread_id: threadId });
+    emit({ type: "turn.started" });
+    emit({ type: "item.started", item: { id: "item_1", type: "command_execution", command: commandText } });
+    emit({ type: "item.completed", item: { id: "item_1", type: "command_execution", command: commandText, exit_code: 0, status: "completed" } });
+    return;
+  }
+
   // The model gateway is down: Codex retries, gives up, writes turn.failed
   // with the error as an object, and exits non-zero. Seen for real against a
   // provider answering 502.

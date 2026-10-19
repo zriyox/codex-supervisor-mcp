@@ -31,7 +31,17 @@ export function normalizeObservedCommand(command) {
   // closing and reopening the outer quote around them: -run '"^Test$'"'.
   // Decode that display-only wrapping before comparing it with the contract.
   body = body.replace(/'"'/g, "'");
+  // Codex may quote path arguments while displaying a command even when the
+  // dispatcher wrote the path bare. Absolute, home-relative and Windows paths
+  // are quote-safe here because a path containing whitespace remains quoted in
+  // both forms and is not touched by this rule.
+  body = body.replace(/(^|\s)['"]((?:[A-Za-z]:[\\/]|\/|\.\/|\.\.\/|~\/)[^'"\s]*)['"](?=\s|$)/g, "$1$2");
   return body.trim();
+}
+
+export function commandsEquivalent(observed, expected) {
+  const normalizedExpected = normalizeObservedCommand(expected);
+  return normalizeObservedCommand(observed) === normalizedExpected;
 }
 
 export function buildRuntimeContract({
@@ -88,7 +98,7 @@ export function readPreflightResult(task) {
 
   const commands = Array.isArray(task.commands) ? task.commands : [];
   const probes = metadata.probe_commands.map((command) => {
-    const matches = commands.filter((entry) => normalizeObservedCommand(entry.command) === command);
+    const matches = commands.filter((entry) => commandsEquivalent(entry.command, command));
     const result = matches.at(-1) ?? null;
     return {
       command,
@@ -100,9 +110,22 @@ export function readPreflightResult(task) {
   });
   const terminal = ["completed", "failed", "cancelled", "lost"].includes(task.status);
   const failedCommands = commands.filter(commandFailed);
+  const probesPassed = probes.every((probe) => probe.passed);
+  const exitConfirmed = task.status === "completed" && task.exit_code === 0;
+  const reportWasInvalid = task.attention_reason === "invalid_report";
+  const exitWasLost = task.status === "lost" && task.exit_code === 0;
+  // A preflight proves the worker environment through its command evidence.
+  // Its own final report and close-handler completion are useful diagnostics,
+  // but neither changes what those commands already proved. A completed turn
+  // without a recorded exit is accepted for this probe-only task; real failed,
+  // cancelled or unexplained-lost commands still fail below.
+  const workerOutcomeAcceptable = exitConfirmed
+    || (task.status === "completed" && task.exit_code == null)
+    || reportWasInvalid
+    || exitWasLost;
   let status = "running";
   if (terminal) {
-    status = task.status === "completed" && task.exit_code === 0 && probes.every((probe) => probe.passed) && failedCommands.length === 0
+    status = workerOutcomeAcceptable && probesPassed && failedCommands.length === 0
       ? "passed"
       : "failed";
   }
@@ -112,6 +135,13 @@ export function readPreflightResult(task) {
     terminal,
     contract_hash: metadata.contract_hash,
     contract: metadata.contract,
+    worker_outcome: {
+      status: task.status,
+      exit_code: task.exit_code ?? null,
+      exit_confirmed: exitConfirmed,
+      report_ignored: reportWasInvalid,
+      missing_exit_tolerated: task.status === "completed" && task.exit_code == null || exitWasLost
+    },
     probes,
     failed_commands: failedCommands.map((entry) => ({
       command: entry.command,

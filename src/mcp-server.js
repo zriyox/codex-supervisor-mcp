@@ -204,6 +204,7 @@ function sleep(ms) {
 function isSettled(task) {
   if (!TERMINAL_STATUSES.has(task.status)) return false;
   if (task.attention_reason === "start_failed") return true;
+  if (task.guard_policy?.preflight && readPreflightResult(task).status === "passed") return true;
   if (task.status !== "completed" && task.status !== "failed") return true;
   // Acceptance is running in the supervisor process that owned the worker;
   // the codex pid is already dead, so that process is what to wait on.
