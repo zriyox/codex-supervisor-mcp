@@ -10,6 +10,7 @@ import { normalizeAcceptance } from "./acceptance.js";
 import { createHash, randomUUID } from "node:crypto";
 import { captureWorkspaceManifest } from "./workspace-kind.js";
 import { buildHandoff } from "./handoff.js";
+import { readPreflightResult } from "./worker-preflight.js";
 
 let db;
 
@@ -754,11 +755,17 @@ function checkOwnership(taskId, incoming) {
     return a===b || a.startsWith(`${b}/`) || b.startsWith(`${a}/`);
   };
   const conflicts = [];
-  const pending = openDb().prepare("SELECT t.id,t.title,t.status,t.owned_paths,t.acceptance_results,t.started_at,t.exit_code,c.owner_pid FROM tasks t LEFT JOIN run_claims c ON c.task_id=t.id WHERE t.id<>? AND (c.owner_pid IS NOT NULL OR status IN ('queued','running') OR json_extract(acceptance_results,'$.status')='running' OR (status IN ('completed','failed') AND started_at IS NOT NULL AND exit_code IS NULL AND acceptance_results IS NULL))").all(taskId);
+  const pending = openDb().prepare("SELECT t.id,t.title,t.status,t.owned_paths,t.acceptance_results,t.started_at,t.exit_code,t.guard_policy,t.commands,t.attention_reason,c.owner_pid FROM tasks t LEFT JOIN run_claims c ON c.task_id=t.id WHERE t.id<>? AND (c.owner_pid IS NOT NULL OR status IN ('queued','running') OR json_extract(acceptance_results,'$.status')='running' OR (status IN ('completed','failed') AND started_at IS NOT NULL AND exit_code IS NULL AND acceptance_results IS NULL))").all(taskId);
   for (const row of pending) {
     const settling = decodeJson(row.acceptance_results,null)?.status === "running"
       || (["completed","failed"].includes(row.status) && row.started_at && row.exit_code == null && !row.acceptance_results);
     if (row.owner_pid && !ACTIVE_STATUSES.has(row.status) && !settling && !isPidAlive(row.owner_pid)) continue;
+    const preflightTask = {
+      ...row,
+      guard_policy: decodeJson(row.guard_policy, null),
+      commands: decodeJson(row.commands, [])
+    };
+    if (preflightTask.guard_policy?.preflight && readPreflightResult(preflightTask).status === "passed") continue;
     const paths=decodeJson(row.owned_paths,[]);
     const matching=incoming.flatMap(path=>paths.filter(other=>overlaps(path,other)).map(other=>({incoming:path,existing:other})));
     if(matching.length)conflicts.push({task_id:row.id,title:row.title,status:row.status,overlapping_paths:matching});

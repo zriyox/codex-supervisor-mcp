@@ -110,6 +110,19 @@ test("a valid probe survives a missing process exit and is not auto-resumed", as
     const verdict = await call("get_worker_preflight", { task_id: preflight.id });
     assert.equal(verdict.status, "passed", JSON.stringify(verdict));
     assert.equal(verdict.worker_outcome.missing_exit_tolerated, true);
+    const db = new DatabaseSync(join(home, "data", "supervisor.sqlite"));
+    db.prepare("UPDATE tasks SET status = 'completed', exit_code = NULL WHERE id = ?").run(preflight.id);
+    db.close();
+    const target = await call("create_codex_worker", {
+      ...dispatchArgs("passed preflight target", dir, {
+        sandbox: "workspace-write",
+        ownedPaths: ["result.txt"]
+      }),
+      preflight_id: preflight.id
+    });
+    assert.ok(target.id, JSON.stringify(target));
+    assert.notEqual(target.error, "ownership_conflict");
+    await call("cancel_codex_worker", { task_id: target.id });
     const checked = await call("check_workers", {});
     assert.deepEqual(checked.recoveries, []);
   });
