@@ -1142,7 +1142,11 @@ export async function createCodexWorker({
       objective: validatedGoal.objective,
       tokenBudget: validatedGoal.tokenBudget
     }, { acceptance: combinedAcceptance }),
-    logPath: record.run_log
+    logPath: record.run_log,
+    // --cd tells Codex where the agent works. The shell/tool process must also
+    // inherit the worktree as its OS cwd: otherwise a login shell may restore
+    // the project directory and relative probes read the wrong checkout.
+    spawnOptions: { cwd: effectiveCwd }
   });
   return started.record;
 }

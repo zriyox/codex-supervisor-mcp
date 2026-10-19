@@ -80,6 +80,10 @@ async function main() {
       run: process.env.CODEX_SUPERVISOR_RUN ?? null
     })}\n`);
   }
+  if (process.env.FAKE_CODEX_CWD_LOG) {
+    const { appendFileSync } = await import("node:fs");
+    appendFileSync(process.env.FAKE_CODEX_CWD_LOG, `${process.cwd()}\n`);
+  }
   if (scenario === "exit-immediately") process.exit(3);
   // Output is driven by the stdin "end" handler above.
   if (scenario === "echo-prompt") return;
