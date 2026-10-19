@@ -59,7 +59,7 @@ import {
 import { readNativeGoal, readNativeGoalState } from "./goal-store.js";
 import { collectWorkerChanges } from "./worker-changes.js";
 import { buildHostGoalSync } from "./prompt.js";
-import { baseBehind, readTaskChanges, readWorktreeDiff, worktreeRef } from "./worktree.js";
+import { baseBehind, readTaskChanges, readWorktreeDiff, splitPatchHunks, worktreeRef } from "./worktree.js";
 import { summarizeVerification } from "./event-parser.js";
 import { readPreflightResult } from "./worker-preflight.js";
 import { acceptanceVerdict, runAcceptance } from "./acceptance.js";
@@ -1709,28 +1709,86 @@ server.registerTool(
   {
     title: "Get worker diff",
     description:
-      "The worker's actual changes as patches: everything between the commit its worktree started from and its working tree, committed or not, plus untracked files. This is the ground truth to check a worker's report against. maxChars bounds the whole answer: files past the budget come back listed but without a patch, so the file list is always complete. paths narrows the diff to those files or directories.",
+      "The worker's actual changes. By default this is a complete file/hunk index; request one file to page through hunks with pageSize or cursor. Supplying maxChars without file preserves the legacy bounded full-diff response. This is the ground truth to check a worker's report against.",
     inputSchema: {
       task_id: z.string().min(1),
-      maxChars: z.number().int().min(0).max(1000000).default(60000),
+      maxChars: z.number().int().min(0).max(1000000).optional(),
+      file: z.string().min(1).optional(),
+      hunk: z.number().int().min(0).optional(),
+      pageSize: z.number().int().min(1).max(20).default(4),
+      cursor: z.string().min(1).optional(),
       paths: z.array(z.string().min(1)).optional()
     }
   },
-  async ({ task_id, maxChars, paths }) => {
+  async ({ task_id, maxChars, file, hunk, pageSize, cursor, paths }) => {
     const task = await getTask(task_id);
     if (!task) return textResult({ error: "task_not_found", task_id });
     if (!task.worktree_path) {
       return textResult({ error: "no_worktree", task_id, external_outputs: externalOutputView(task, maxChars), reason: "this worker ran in place (its cwd is not a git repository or the worktree could not be created), so there is no isolated diff to read; call get_worker_result with includeFiles: true for the files it touched" });
     }
-    const diff = readWorktreeDiff(task.worktree_path, worktreeRef(task), { maxChars, paths: paths ?? [] });
-    return textResult({
+    if (!file && maxChars !== undefined) {
+      const diff = readWorktreeDiff(task.worktree_path, worktreeRef(task), { maxChars, paths: paths ?? [] });
+      return textResult({
+        task_id,
+        title: task.title,
+        status: task.status,
+        worktree_path: task.worktree_path,
+        branch: `codex/${task.id}`,
+        ...diff,
+        external_outputs: externalOutputView(task, maxChars)
+      });
+    }
+    const diff = readWorktreeDiff(task.worktree_path, worktreeRef(task), { maxChars: 10_000_000, paths: paths ?? [] });
+    if (diff.error) return textResult({ ...diff, task_id });
+    const files = diff.files.map((entry) => {
+      const parsed = splitPatchHunks(entry);
+      return { path: entry.path, status: entry.status, from: entry.from, additions: entry.additions, deletions: entry.deletions, hunk_count: parsed.hunks.length };
+    });
+    const base = {
       task_id,
       title: task.title,
       status: task.status,
       worktree_path: task.worktree_path,
       branch: `codex/${task.id}`,
       ...diff,
-      external_outputs: externalOutputView(task, maxChars)
+      files,
+      external_outputs: externalOutputView(task, maxChars || 6000)
+    };
+    if (!file) return textResult({ ...base, summary_only: true, next_step: "choose files[].path, then request file plus hunk or cursor" });
+    const selected = diff.files.find((entry) => entry.path === file);
+    if (!selected) return textResult({ error: "diff_file_not_found", task_id, file, files });
+    const parsed = splitPatchHunks(selected);
+    let offset = 0;
+    if (cursor) {
+      try {
+        const value = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8"));
+        if (value.task_id !== task_id || value.file !== file || !Number.isInteger(value.offset) || value.offset < 0) throw new Error("mismatch");
+        offset = value.offset;
+      } catch {
+        return textResult({ error: "invalid_diff_cursor", task_id, file });
+      }
+    }
+    if (hunk !== undefined) offset = hunk;
+    if (offset >= parsed.hunks.length) return textResult({ error: "diff_hunk_not_found", task_id, file, hunk: offset, hunk_count: parsed.hunks.length });
+    let remaining = maxChars ?? 24000;
+    const hunks = [];
+    for (let index = offset; index < parsed.hunks.length && hunks.length < pageSize; index += 1) {
+      if (remaining <= 0) break;
+      const item = parsed.hunks[index];
+      const patchText = item.patch.length > remaining ? truncateMiddleChars(item.patch, remaining) : item.patch;
+      hunks.push({ ...item, patch: patchText, truncated: patchText.length < item.patch.length });
+      remaining -= patchText.length;
+    }
+    const nextOffset = offset + hunks.length;
+    const nextCursor = nextOffset < parsed.hunks.length
+      ? Buffer.from(JSON.stringify({ task_id, file, offset: nextOffset })).toString("base64url")
+      : null;
+    return textResult({
+      ...base,
+      file: { path: selected.path, status: selected.status, from: selected.from, additions: selected.additions, deletions: selected.deletions, hunk_count: parsed.hunks.length },
+      hunks,
+      next_cursor: nextCursor,
+      summary_only: false
     });
   }
 );

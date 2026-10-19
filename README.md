@@ -170,7 +170,7 @@ land_codex_worker       核过了，落进集成分支
 | `wait_codex_workers` | `task_ids`, `mode`(any/all), `timeoutMinutes`, `timeoutMs`, `compact`, `emitProgress`, `includeEvents`, `eventLimit`, `eventMaxChars`, `eventKinds` | 等终态。默认 60 秒且不推周期 heartbeat；显式 `emitProgress: true` 才每 30 秒通知。`termination_reason` 区分 settled / budget_exhausted / client_cancelled；`compact` 每路一行 |
 | `get_orchestration_overview` | `status`, `limit` | 全部 worker 的状态表，封顶 7000 字节。带 `version` 和 `update` |
 | `get_worker_result` | `task_id`, `limit`, `maxChars`, `includeFiles` | worker 自己的汇报，默认截 6000 字节、`truncated` 提示读全。`acceptance` 是 supervisor 替你跑的验收过没过，`verification` 是它自己跑过的命令和退出码，`base_behind` 是主线走了多远（`contains_base: false` 时 `behind` 为 `null`，那是换了线） |
-| `get_worker_diff` | `task_id`, `maxChars`, `paths` | worker 实际改了什么：从 worktree 起点到工作区的 patch，提交没提交都算。`maxChars` 管总量，超了的文件只列名 |
+| `get_worker_diff` | `task_id`, `file`, `hunk`, `pageSize`, `cursor`, `maxChars`, `paths` | worker 实际改了什么。默认完整文件索引与 hunk 数；按 `file` + `hunk`/`cursor` 分页读 patch。显式 `maxChars` 且不传 `file` 保留旧整份限流模式 |
 | `ask_codex_worker` | `task_id`, `question`, `timeoutMs`, `maxChars`, `fresh`, `end` | 旁路问 worker 一句。线程 fork 成只读侧会话，没网络、没 MCP 工具，worker 本身不动。worker 被 resume 过会自动换新 fork，`fresh` 强制换，`end` 删 |
 | `land_codex_worker` | `task_id`, `onto`, `commitMessage`, `ignoreAcceptance`, `allowOutsideOwned` | 把 worker 在 `codex/<id>` 上的提交 cherry-pick 到派单目录的当前分支。目标要干净，冲突回滚，验收 `failed` 拒绝。`commitMessage` 先替它把未提交的改动提交成一笔，`ignoreAcceptance` 放行 |
 | `verify_delivery_push` | `task_id`, `remote`, `branch` | fetch 指定 remote branch 并证明 `landed_head` 已可达；只读验证，不会 push 或部署。通过后记录 `push_verified` 并生成 cleanup plan |

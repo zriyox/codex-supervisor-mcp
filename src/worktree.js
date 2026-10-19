@@ -183,6 +183,32 @@ export function readWorktreeDiff(worktreePath, { baseCommit = null, branch = nul
   return { base_commit: base, head, files, total_files: files.length, truncated_files: truncatedFiles };
 }
 
+export function splitPatchHunks(file) {
+  let patch = String(file.patch ?? "");
+  if (file.status === "untracked") {
+    const count = patch === "" ? 0 : patch.split("\n").length;
+    patch = [`--- /dev/null`, `+++ b/${file.path}`, `@@ -0,0 +1,${count} @@`, patch].join("\n");
+  }
+  if (!patch) return { headers: "", hunks: [] };
+  const lines = patch.split("\n");
+  const starts = [];
+  for (let index = 0; index < lines.length; index += 1) if (lines[index].startsWith("@@")) starts.push(index);
+  if (starts.length === 0) lines.unshift("@@ -0,0 +0,0 @@"), starts.push(0);
+  const headers = lines.slice(0, starts[0]).join("\n");
+  const hunks = starts.map((start, index) => {
+    const body = lines.slice(start, starts[index + 1] ?? lines.length).join("\n").replace(/\n+$/, "");
+    const counts = body.split("\n").slice(1).filter((line) => !line.startsWith("\\"));
+    return {
+      index,
+      header: lines[start],
+      additions: counts.filter((line) => line.startsWith("+") && !line.startsWith("+++")).length,
+      deletions: counts.filter((line) => line.startsWith("-") && !line.startsWith("---")).length,
+      patch: headers ? `${headers}\n${body}` : body
+    };
+  });
+  return { headers, hunks };
+}
+
 function statusWord(code) {
   switch (code[0]) {
     case "A": return "added";

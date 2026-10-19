@@ -96,7 +96,7 @@ Codex需0.162+支持hooks/output-schema，能力不够派单start_failed先修CL
 
 0. 先看 `acceptance`（compact wait、overview 的 `acceptance_failed`、`get_worker_result.acceptance` 都有）。`failed`：不用读它的汇报，直接走第 4 步，把 `checks[].output_tail` 原样贴进 resume 的 prompt。`passed` 但它说没做成、goal 是 `blocked`：信命令不信它，去看 diff。命令本身写错了，resume 带新的 `acceptance` 换掉，别 `ignoreAcceptance`。`null` 是没配，退出码只说明没崩，对不对自己看。
 1. `get_worker_result`：它说自己做了什么。默认截到 6000 字节，`truncated: true` 就按 `next_step` 带 `maxChars` 读全。`verification` 是它真跑过的命令和退出码：说"测过了"但 `commands_run: 0`、说"没建成"但那条命令退出码是 0、`last_command_failed: true` 却说完成、说"环境问题"但 `failed[].output_tail` 里是代码报错，都打回（走第 4 步），别替它圆。`base_behind.behind > 0` 说明派单后主线往前走了，改之前先 rebase（第 4 步）；`contains_base: false` 时 `behind` 是 `null` 并带 `note`，那是派单目录换了线，不是落后。
-2. `get_worker_diff`：它实际做了什么。起点到工作区的全部改动，提交没提交都算；`maxChars` 管总量，`paths` 缩范围。它说过了不算，diff 对得上才算。
+2. `get_worker_diff`：它实际做了什么。默认只回完整文件/hunk 索引；再传 `file` + `hunk` 或 `cursor` 分页读 patch，避免 500 行测试文件一次灌满上下文。显式传 `maxChars` 且不传 `file` 才走旧的整份 bounded diff。它说过了不算，diff 对得上才算。
 3. 对不上、看不懂为什么：`ask_codex_worker` 带 `question` 问它。fork 出一个只读旁路，worker 自己的线程不动；fork 没网络没 MCP 工具，问"改了什么、为什么、在哪"，别问要联网才能答的事。超时回 `running`，只带 `task_id` 再调拿答案。worker 被 resume 过后下一问自动换新 fork，`fresh: true` 强制换，问完 `end: true` 删。
 4. 要它改：`resume_codex_worker`，写清问题在哪，让它改完 `git commit --amend --no-edit` 并进原来那个提交。旁路只读，改东西永远走 resume。主线往前走过（`base_behind.behind > 0`）就带 `rebaseOnto: "HEAD"`（在派单目录里解析）：未提交的改动先 stash，跳过已合入的补丁，只把新增提交重放到新头，stash 放回，`base_commit` 跟着动。冲突（`rebase_conflict` / `stash_conflict`）会原样退回、不起 worker、`files` 列冲突文件；这时让它先 `land_codex_worker` 带 `commitMessage` 提交成一笔再 rebase，或者重派一路 `baseRef` 填新头。
 5. 过了：`land_codex_worker` 把 `codex/<id>` 上的提交 cherry-pick 到派单目录当前分支。目标脏了、分支不对、冲突都拒绝并原样退回。worker 没提交（默认沙箱提交不了）就带 `commitMessage`，supervisor 在它分支上替它提交一笔再落。验收 `failed` 它会拒，修完再落；`ignoreAcceptance` 只在用户说了"就这样落"时用。
@@ -130,7 +130,7 @@ Codex需0.162+支持hooks/output-schema，能力不够派单start_failed先修CL
 | 主线程日常增量 | `overview_delta`，保存 `next_cursor`；只看计数、变化 task 摘要、短版阻塞原因和下一步 |
 | 全部 worker 的状态 | `get_orchestration_overview`，只在需要全量状态时用 |
 | 一路的完整结论 | `get_worker_result` |
-| 一路改了什么 | `get_worker_diff`；只要文件名用 `get_worker_result` 带 `includeFiles: true` |
+| 一路改了什么 | `get_worker_diff` 默认拿文件/hunk 索引；选一个 `file` 后用 `hunk` 或 `cursor` 分页。只要文件名用 `get_worker_result` 带 `includeFiles: true` |
 | 活着还是完了 | `get_worker_summary` |
 | 过程 | `get_codex_worker_events`，`kinds` 先滤、`limit` 限条数、`maxChars` 截长串，先看 `available_kinds` |
 | 门禁内部阶段 | worker 脚本调用 `node "$CODEX_SUPERVISOR_STAGE_CLI" "gate:s3" --detail "..."`；status/overview/wait 显示 `current_stage`，终态保留 `last_stage`。不要写 secret |

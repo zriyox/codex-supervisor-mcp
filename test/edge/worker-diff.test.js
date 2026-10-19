@@ -13,6 +13,10 @@ let worker;
 let inPlace;
 
 before(async () => {
+  const lines = Array.from({ length: 500 }, (_, index) => `line ${index + 1}`);
+  await writeFile(join(repo, "multi.txt"), `${lines.join("\n")}\n`);
+  git(repo, ["add", "multi.txt"]);
+  git(repo, ["commit", "-q", "-m", "large searchable baseline"]);
   await withMcp({ SUPERVISOR_HOME: home }, async ({ call }) => {
     const created = await call("create_codex_worker", dispatchArgs("diffable", repo));
     worker = await waitFor(call, created.id, (t) => t.status === "completed");
@@ -36,16 +40,19 @@ before(async () => {
   await writeFile(join(wt, "second.txt"), "two\nchanged\n");
   await writeFile(join(wt, "新文件.txt"), "untracked\nlines\n");
   await writeFile(join(wt, "big.txt"), "x".repeat(5000) + "\n");
+  lines[49] = "changed near the top";
+  lines[449] = "changed near the bottom";
+  await writeFile(join(wt, "multi.txt"), `${lines.join("\n")}\n`);
 });
 
 test("committed, uncommitted and untracked changes are all there, with patches", async () => {
   await withMcp({ SUPERVISOR_HOME: home }, async ({ call }) => {
-    const diff = await call("get_worker_diff", { task_id: worker.id });
+    const diff = await call("get_worker_diff", { task_id: worker.id, maxChars: 60000 });
     assert.equal(diff.error, undefined, JSON.stringify(diff).slice(0, 300));
     assert.equal(diff.branch, `codex/${worker.id}`);
     assert.equal(diff.base_commit, worker.base_commit ?? diff.base_commit);
     const byPath = Object.fromEntries(diff.files.map((f) => [f.path, f]));
-    assert.deepEqual(Object.keys(byPath).sort(), ["big.txt", "first.txt", "lib/a.txt", "second.txt", "新文件.txt"]);
+    assert.deepEqual(Object.keys(byPath).sort(), ["big.txt", "first.txt", "lib/a.txt", "multi.txt", "second.txt", "新文件.txt"]);
     assert.equal(byPath["first.txt"].status, "modified");
     assert.match(byPath["first.txt"].patch, /^\+more$/m, "a committed change has its patch");
     assert.equal(byPath["lib/a.txt"].status, "added");
@@ -56,15 +63,35 @@ test("committed, uncommitted and untracked changes are all there, with patches",
     assert.equal(byPath["新文件.txt"].additions, 2);
     assert.equal(byPath["first.txt"].additions, 1);
     assert.equal(byPath["first.txt"].deletions, 0);
-    assert.equal(diff.total_files, 5);
+    assert.equal(diff.total_files, 6);
     assert.equal(diff.truncated_files, 0);
+  });
+});
+
+test("the default read is a file and hunk index, and one file is paged by hunk", async () => {
+  await withMcp({ SUPERVISOR_HOME: home }, async ({ call }) => {
+    const summary = await call("get_worker_diff", { task_id: worker.id });
+    assert.equal(summary.summary_only, true);
+    const multi = summary.files.find((entry) => entry.path === "multi.txt");
+    assert.equal(multi.hunk_count, 2);
+    assert.equal("patch" in multi, false);
+
+    const first = await call("get_worker_diff", { task_id: worker.id, file: "multi.txt", pageSize: 1 });
+    assert.equal(first.hunks.length, 1);
+    assert.match(first.hunks[0].patch, /changed near the top/);
+    assert.ok(first.next_cursor);
+    const second = await call("get_worker_diff", { task_id: worker.id, file: "multi.txt", cursor: first.next_cursor, pageSize: 1 });
+    assert.equal(second.hunks.length, 1);
+    assert.match(second.hunks[0].patch, /changed near the bottom/);
+    assert.equal(second.next_cursor, null);
+    assert.ok(first.hunks[0].patch.length < (await call("get_worker_diff", { task_id: worker.id, maxChars: 1000000 })).files.find((entry) => entry.path === "multi.txt").patch.length);
   });
 });
 
 test("the budget cuts patches, never the file list", async () => {
   await withMcp({ SUPERVISOR_HOME: home }, async ({ call }) => {
     const diff = await call("get_worker_diff", { task_id: worker.id, maxChars: 600 });
-    assert.equal(diff.total_files, 5, "every changed file is still listed");
+    assert.equal(diff.total_files, 6, "every changed file is still listed");
     assert.ok(diff.truncated_files >= 1);
     const served = diff.files.filter((f) => f.patch !== null);
     const total = served.reduce((n, f) => n + f.patch.length, 0);
