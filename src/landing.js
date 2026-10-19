@@ -154,9 +154,12 @@ export function landWorker(task, { onto = null, commitMessage = null, ignoreAcce
   let committedForWorker = null;
   if (uncommitted.length > 0 && commitMessage) {
     try {
-      const owned = findOutsideOwnedChanges(task, []).mapping.map((entry) => relative(task.worktree_path, entry.worker));
-      if (owned.length === 0) return { error: "outside_owned_paths", reason: "the worker left uncommitted changes but owns no landable path" };
-      git(task.worktree_path, ["add", "-A", "--", ...owned]);
+      if (allowOutsideOwned) git(task.worktree_path, ["add", "-A"]);
+      else {
+        const owned = findOutsideOwnedChanges(task, []).mapping.map((entry) => relative(task.worktree_path, entry.worker));
+        if (owned.length === 0) return { error: "outside_owned_paths", reason: "the worker left uncommitted changes but owns no landable path" };
+        git(task.worktree_path, ["add", "-A", "--", ...owned]);
+      }
       if (hasStagedChanges(task.worktree_path)) {
         git(task.worktree_path, ["commit", "-q", "-m", commitMessage]);
         committedForWorker = git(task.worktree_path, ["rev-parse", "HEAD"]).trim();
