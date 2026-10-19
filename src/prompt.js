@@ -38,6 +38,7 @@ export function buildGoalPreamble({ objective, tokenBudget = null, resume = fals
   return [
     "Do this first, before any other work:",
     `Call the create_goal tool with objective exactly "${goal}"${budget}.`,
+    tokenBudget ? "Use only the token budget given above; do not invent a smaller or larger one." : "Do not set a token_budget; the dispatcher did not provide one.",
     "That goal is how your supervisor tracks this work; do not skip it.",
     'When the objective is achieved and no required work remains, call update_goal with status "complete".',
     'If the same blocker repeats for three consecutive turns and you cannot make progress, call update_goal with status "blocked" instead.'
