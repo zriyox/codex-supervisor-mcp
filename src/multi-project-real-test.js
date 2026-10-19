@@ -78,7 +78,10 @@ try {
     submodules: true,
     commands: ["mkdir -p .prepared && printf ready > .prepared/status"]
   };
-  const probe = "node -e \"const fs=require('fs');for(const p of ['node_modules/example-dep/index.js','vendor-lib/lib.txt','.prepared/status','资料/说明.txt'])if(!fs.existsSync(p))process.exit(1);console.log('setup-ok')\"";
+  const probes = [
+    "node --version",
+    "test -f node_modules/example-dep/index.js && test -f vendor-lib/lib.txt && test -f .prepared/status && test -f 资料/说明.txt"
+  ];
   const chineseProbe = "head -n 1 资料/说明.txt | grep 中文";
 
   const preflights = await Promise.all(projects.map((project) => call("preflight_codex_worker", {
@@ -89,7 +92,7 @@ try {
     ownedPaths: [project.file],
     workspaceSetup: setup,
     baseRef: "HEAD",
-    probeCommands: [probe, chineseProbe]
+    probeCommands: [...probes, chineseProbe]
   })));
   for (const [index, receipt] of preflights.entries()) {
     assert.ok(receipt.id, JSON.stringify(receipt));
