@@ -219,8 +219,6 @@ const writeRun = await withServer(async (client) => {
     return TERMINAL.includes(task.status) && task.exit_code !== null && task.acceptance === "passed";
   });
   if (final.attention_reason === "invalid_report") {
-    const refused = await call(client, "land_codex_worker", { task_id: created.id, commitMessage: "must refuse invalid report" });
-    assert.equal(refused.error, "invalid_report");
     await call(client, "resume_codex_worker", { task_id: created.id,
       prompt: "Your final JSON was invalid. Preserve the already correct NOTES.md, rerun the declared acceptance, then return valid JSON with short result, verification and not_done fields. Close every array and object; do not include the quoted shell source." });
     final = await waitFor(client, created.id, (row) => row.run_count === 2 && row.exit_code !== null && row.acceptance === "passed");

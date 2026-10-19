@@ -13,8 +13,10 @@ test("an invalid final report is retried once with a re-emit prompt", async () =
     const worker = await call("create_codex_worker", { ...dispatchArgs("bad report", repo), sandbox: "workspace-write", ownedPaths: ["result.txt"] });
     assert.ok(worker.id, JSON.stringify(worker).slice(0, 300));
     const broken = await waitFor(call, worker.id, (task) => task.attention_reason === "invalid_report");
-    assert.equal(broken.status, "failed", "the row says failed while the report is unusable");
+    assert.equal(broken.status, "completed", "a summary format error does not turn completed work into a failed run");
     assert.match(broken.error ?? "", /Invalid final worker report/);
+    const refused = await call("land_codex_worker", { task_id: worker.id, commitMessage: "must not fail on report formatting" });
+    assert.notEqual(refused.error, "invalid_report", "acceptance and the reviewed diff decide whether work can land");
     const checked = await call("check_workers", {});
     assert.equal(checked.recoveries.length, 1, JSON.stringify(checked).slice(0, 400));
     assert.equal(checked.recoveries[0].reason, "invalid_report");

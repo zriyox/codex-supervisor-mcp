@@ -93,13 +93,15 @@ export function buildGuardPreamble({ sandbox, ownedPaths = [], allowedCommands =
 export function buildAcceptanceBlock(acceptance, { resume = false } = {}) {
   const commands = Array.isArray(acceptance) ? acceptance.filter(Boolean) : [];
   if (commands.length === 0) return "";
+  const runner = 'Run node "$CODEX_SUPERVISOR_ACCEPTANCE_CLI" to execute this exact contract through the supervisor\'s non-interactive Bash with errexit and pipefail. Do not retype the commands in zsh; the interactive shell is not the acceptance shell.';
   if (resume) {
-    return `Acceptance is unchanged; run it before you report: ${commands.map((check) => typeof check === "string" ? check : JSON.stringify(check)).join(" ; ")}`;
+    return ["Acceptance is unchanged.", runner, `Commands: ${commands.map((check) => typeof check === "string" ? check : JSON.stringify(check)).join(" ; ")}`].join("\n");
   }
   return [
     "Acceptance: when you exit, the supervisor runs these commands in this directory and each must exit 0:",
     ...commands.map((command) => `- ${typeof command === "string" ? command : JSON.stringify(command)}`),
-    "Run them yourself before you report and put their exit codes under Verification. Do not edit what they test to make them pass; if a check is wrong, say why under Not done / risks."
+    runner,
+    "Run that contract before you report and put its exit code and key evidence under Verification. Do not edit what it tests to make it pass; if a check is wrong, say why under Not done / risks."
   ].join("\n");
 }
 

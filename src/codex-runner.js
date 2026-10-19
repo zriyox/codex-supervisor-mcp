@@ -190,6 +190,17 @@ function normalizeWorkspaceSetup(value, projectRoot) {
   return links.length || submodules || commands.length ? { links, submodules, commands } : null;
 }
 
+const JS_DEPENDENCY_COMMAND = /(?:^|[\s"'/])(?:npm|pnpm|yarn|npx|vitest|jest|vue-tsc|tsc|eslint|oxlint|nuxi)(?:\s|$)/;
+
+function requireDependencySetup({ kind, projectRoot, setup, commands }) {
+  if (kind !== "git_worktree" || setup || !existsSync(join(projectRoot, "package.json"))) return;
+  const commandText = (commands ?? []).map((check) => typeof check === "string" ? check : check?.command).filter(Boolean).join("\n");
+  if (!JS_DEPENDENCY_COMMAND.test(commandText)) return;
+  const error = new Error("workspace_setup_required: this JavaScript acceptance uses local project tooling, but the new worktree has no node_modules or generated prepare files; pass workspaceSetup with dependency links and prepare commands (the same setup must be used by preflight)");
+  error.code = "workspace_setup_required";
+  throw error;
+}
+
 async function prepareWorktreeWorkspace(setup, projectRoot, worktreePath, taskId) {
   if (!setup) return;
   for (const link of setup.links) {
@@ -377,10 +388,12 @@ async function trackRunInHost({ record, args, prompt, logPath, spawnOptions = {}
       // This CLI writes only data/stages/<this task>.json. It is part of the
       // runtime contract, not an ad-hoc command the model must declare. The
       // task id comes from the injected environment; stage.js has no override.
-      'node "$CODEX_SUPERVISOR_STAGE_CLI"*'
+      'node "$CODEX_SUPERVISOR_STAGE_CLI"*',
+      'node "$CODEX_SUPERVISOR_ACCEPTANCE_CLI"*'
     ] };
   const guard = fileURLToPath(new URL("./tool-guard.js", import.meta.url));
   const stageCli = fileURLToPath(new URL("./stage.js", import.meta.url));
+  const acceptanceCli = fileURLToPath(new URL("./acceptance-cli.js", import.meta.url));
   const quoteCommand = (path) => process.platform === "win32" ? `"${path.replace(/"/g, '""')}"` : `'${path.replace(/'/g, "'\\''")}'`;
   const hookCommand = `${quoteCommand(process.execPath)} ${quoteCommand(guard)}`;
   const configArgs = ["--output-schema", workerReportSchemaPath, "--dangerously-bypass-hook-trust", "-c",
@@ -407,6 +420,7 @@ async function trackRunInHost({ record, args, prompt, logPath, spawnOptions = {}
     env: withWorkerToolPath({ ...process.env, NO_COLOR: "1", CODEX_SUPERVISOR_TASK_ID: record.id,
       CODEX_SUPERVISOR_BASE_COMMIT: record.base_commit ?? "",
       CODEX_SUPERVISOR_STAGE_CLI: stageCli,
+      CODEX_SUPERVISOR_ACCEPTANCE_CLI: acceptanceCli,
       CODEX_SUPERVISOR_RUN: String((record.run_count ?? 0) + 1), CODEX_SUPERVISOR_GUARD_POLICY: JSON.stringify(guardPolicy) }),
     windowsHide: true,
     ...spawnOptions
@@ -648,9 +662,12 @@ async function trackRunInHost({ record, args, prompt, logPath, spawnOptions = {}
       if (next.attention_reason === "two_stall") next.current_action = "No progress in two consecutive runs; needs attention";
     }
     if (status === "completed" && !next.run_evidence.structured_report.valid && !live.guard_policy?.preflight) {
-      next.status = "failed";
+      // The report is a summary, not the business result. Keep the completed
+      // lifecycle and let acceptance plus the reviewed diff decide whether it
+      // can land; a report-only recovery can still repair the summary.
       next.attention_reason = "invalid_report";
       next.error = `Invalid final worker report: ${next.run_evidence.structured_report.error}`;
+      next.current_action = "Work completed, but the final report is invalid; acceptance and diff remain authoritative";
     }
 
     // Acceptance runs after the worker is gone, in two writes. The first
@@ -977,6 +994,8 @@ export async function createCodexWorker({
     throw error;
   }
   const combinedAcceptance = normalizeAcceptance([...(session?.default_acceptance ?? []), ...(acceptanceCommands ?? [])]);
+  requireDependencySetup({ kind: workspace.kind, projectRoot, setup: normalizedWorkspaceSetup,
+    commands: [...(combinedAcceptance ?? []), ...(preflight?.probeCommands ?? [])] });
 
   const worktree = workspace.kind === "git_worktree"
     ? await withWorktreeCreationLock(projectRoot, () => ensureWorktree(projectRoot, id, baseRef))

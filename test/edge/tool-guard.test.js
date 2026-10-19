@@ -147,6 +147,14 @@ test("the built-in stage checkpoint is allowed, but cannot smuggle another comma
   assert.equal(shell('node "$CODEX_SUPERVISOR_STAGE_CLI" "gate:s3" && rm -rf /').allow, false);
 });
 
+test("the built-in acceptance runner is allowed, but cannot smuggle another command", () => {
+  const policy = { cwd: tmpdir(), sandbox: "workspace-write", ownedPaths: [tmpdir()],
+    allowedCommands: ['node "$CODEX_SUPERVISOR_ACCEPTANCE_CLI"*'] };
+  const shell = (command) => evaluateToolUse({ tool_name: "Bash", tool_input: { command } }, policy);
+  assert.equal(shell('node "$CODEX_SUPERVISOR_ACCEPTANCE_CLI"').allow, true);
+  assert.equal(shell('node "$CODEX_SUPERVISOR_ACCEPTANCE_CLI" && rm -rf /').allow, false);
+});
+
 
 test("reading a file another worker owns is never a conflict", async () => {
   const root = await mkdtemp(join(tmpdir(), "supervisor-shared-read-"));

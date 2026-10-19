@@ -11,10 +11,19 @@ description: 把 Codex CLI 当并行 worker 派活、盯进度、收结果。用
 
 一批能拆开的活、活偏大不想占自己的上下文、跑到一半可能断要能接回来。一个文件的小改、纯问答、要来回确认的活，自己干更快。
 
+## 派单硬门禁
+
+- `ownedPaths` 是完整交付面，不是主文件：实现、测试、路由、注册表、DI、配置、迁移、i18n 和模板接线都要预估；路径多就给唯一模块目录，漏列就是 guard 正常拒绝。
+- 依赖不在 worktree 里就传 `workspaceSetup`，同一份 setup 同时给 preflight 和目标 worker。前端 `node_modules`、`.nuxt` 和 Vitest 缓存，后端 submodule/proto，都不准靠 sleep 或主线程手工补。
+- 写 worker 先跑同 contract 的 `preflight_codex_worker`，`get_worker_preflight` 必须 passed；不能拿宿主 `check_acceptance` 冒充 worker 环境。
+- `workspace-write` worker 不提交。不要让它 `git add` / `git commit` / `amend`；验后用 `land_codex_worker({commitMessage})` 由 supervisor 代提交并 cherry-pick。
+- worker 自查验收统一运行 `node "$CODEX_SUPERVISOR_ACCEPTANCE_CLI"`。不要手抄到 zsh；supervisor 和 worker 都走同一个 Bash `errexit + pipefail` 入口。
+- 最终 JSON 只是摘要。格式错会让 `attention_reason=invalid_report`，不再否定已经通过的同 run acceptance 和真实 diff；先 `check_workers` 做一次 report-only 修复，仍失败可审过 diff 后显式 land。
+
 ## 派单
 
 1. 先 `search_works` 搜一下，别重复派。
-2. 拆功能包。每路写清楚：干什么、能写哪些文件、依赖谁、怎么算做完和谁负责集成。改同一批文件就串行；文件不重叠只是并行前提，不等于依赖已满足。
+2. 拆功能包。每路写清楚：干什么、完整写集和 `ownedPaths`、依赖谁、怎么算做完和谁负责集成。改同一批文件就串行；文件不重叠只是并行前提，不等于依赖已满足。
 3. 写 worker 先 `preflight_codex_worker`：用目标同一份 `workspaceKind` / `baseRef` / `ownedPaths` / `sandbox` / `allowedCommands` / `context` / `networkAccess` / `writableRoots` 跑必要命令。等它终态后 `get_worker_preflight` 必须 `passed`，再把它的 `task_id` 填进 `create_codex_worker.preflight_id`。contract 变了重跑，不能拿宿主 `check_acceptance` 冒充 worker 环境成功。
 4. `create_codex_worker` 派出去。回执只有 `id`、`worktree_path`、`branch`、`owned_paths`、`status`，不回传任务原文。
 5. 长任务配宿主 `/loop 5m check_workers` 定时收活，没变化 quiet，有新结果按 next_step 收。工具会按规则恢复一次，但不会唤醒关闭的主窗口；每个主线程设独立 `CODEX_SUPERVISOR_OBSERVER_ID` 可重启接回。短等用 `wait_codex_workers` 的 `timeoutMs: 60000`、`compact: true`，到点继续同批 task_ids。
@@ -27,8 +36,8 @@ worker 默认不是调度员：启动时会禁用它继承到的 `codex-supervis
 | `cwd` | Git 项目根，或非 Git 输入目录；实际执行目录由 `workspaceKind` 决定，不能默认写原目录 |
 | `workspaceKind` | Git 代码默认 `git_worktree`；非 Git 只读用 `read_only_in_place`，联网研究用 `scratch`，要改用户非 Git 目录只能显式 `in_place_write` |
 | `inPlaceAuthorization` | 仅 `in_place_write`：写明用户授权原因；同时必须有非空 `ownedPaths` 和 `acceptance`，系统记录前后 manifest |
-| `workspaceSetup` | 仅 Git worktree，在 worker 启动前完成环境准备：`links` 把主仓依赖链接进 worktree；`submodules: true` 初始化子模块；`commands` 跑 `nuxi prepare` 等准备工作。setup 失败会在派单阶段回收 worktree。链接名为 `node_modules` 时自动把 `.vite`、`.vite-temp`、`.cache` 放进该 worker 可写缓存根 |
-| `acceptance` | 这一步"做完了"的判据，worker 退出后 supervisor 在它的 worktree 里逐条跑。写 worker 不能只用 `test -s/-f`、`[ -e ]` 这类文件存在性检查；要有真实 test、endpoint probe 或结构化执行证据。识别到的 test runner 输出 `no tests to run` / `[no test files]` 即使 exit 0 也失败。必跑用例、skip、旧报告和失败身份用 `{command,reportPath,baseline}` 结构化验收证明；远端机器的检查包进 `ssh` |
+| `workspaceSetup` | 仅 Git worktree，在 worker 启动前完成环境准备：`links` 把主仓依赖链接进 worktree；`submodules: true` 初始化子模块；`commands` 跑 `nuxi prepare` 等准备工作。**只要测试或构建依赖生成物，就必须在派单前准备；禁止 sleep 抢时间或主线程事后补。** setup 失败会在派单阶段回收 worktree。链接名为 `node_modules` 时自动把 `.vite`、`.vite-temp`、`.cache` 放进该 worker 可写缓存根 |
+| `acceptance` | 这一步"做完了"的判据，worker 退出后 supervisor 在它的 worktree 里逐条跑。worker 自查统一用 `node "$CODEX_SUPERVISOR_ACCEPTANCE_CLI"`，不要手抄到 zsh。写 worker 不能只用 `test -s/-f`、`[ -e ]` 这类文件存在性检查；要有真实 test、endpoint probe 或结构化执行证据。识别到的 test runner 输出 `no tests to run` / `[no test files]` 即使 exit 0 也失败。必跑用例、skip、旧报告和失败身份用 `{command,reportPath,baseline}` 结构化验收证明；远端机器的检查包进 `ssh` |
 | `forbid` / `allowedCommands` | 原样声明红线与验证命令；守卫拒绝未声明Shell程序，编辑用apply_patch |
 | `writableRoots` | 只有需要凭据目录时才传（绝对路径、已存在、自动解析软链、只对 workspace-write 生效）：ssh/远程测试 → `["~/.ssh"]`；kubectl → `["~/.kube"]`；推私有镜像 → `["~/.docker"]`；aws cli → `["~/.aws"]`；签名提交 → `["~/.gnupg"]`。缓存目录不用写，已经自动加 |
 | `ownedPaths` | 必填。这路允许写的路径，和在跑的 worker 重叠会被拒（**读不排他**，多路读同一份共享文件合法）。冲突是好事，说明该改拆法。传 `[]` 表示这路不落地：只读验证或研究 |
@@ -41,7 +50,7 @@ worker 默认不是调度员：启动时会禁用它继承到的 `codex-supervis
 `probeCommands` 会自动加入这次 probe worker 的 guard-only allowlist，不会进入目标 worker 的 runtime contract；目标 worker 仍只声明自己真正需要的 `allowedCommands`。ssh 等联网探针仍要显式 `networkAccess: true`，需要写 `known_hosts` 时同时声明 `writableRoots: ["~/.ssh"]`。
 
 预检结论以 probe command evidence 为准，不把模型最终 JSON 或进程 close handler 当环境事实：所有探针都实际执行且通过、没有失败命令时，最终报告格式错误不会让预检失败；probe-only worker 即使最终变 `lost` 且退出码未记录，也只记诊断，不重跑。命令未执行、非零或取消仍失败。
-| `sandbox` | 默认 `workspace-write`，worker 提交不了（Codex 把 `.git` 设成只读）。要它自己提交就 `danger-full-access`，否则收活时让 supervisor 替它提交 |
+| `sandbox` | 默认 `workspace-write`，worker 提交不了（Codex 把 `.git` 设成只读）。这是正常形状：worker 只改和验收，收活时 `land_codex_worker(commitMessage)` 由 supervisor 代提交；不要为提交改用 `danger-full-access` |
 
 验收用 Bash 的 `errexit` + `pipefail`：`npm test | tail` 不能吞失败；文件存在只可做附加门禁，不能单独证明业务完成。预期失败用 `if` / `||` 显式判。超时、`no tests to run`、`[no test files]` 都失败，别只看退出码 0。Windows 要有 Git for Windows Bash；缺失先修工具，别换回 cmd。
 
@@ -70,7 +79,7 @@ worker不止改代码，按这路要什么选形状：
 
 read-only 下 `networkAccess: true` 会被拒（实测该沙箱连 DNS 都不通，配了也没用）；要联网就按 `scratch` 研究 worker 派。非 Git `workspace-write` 不写 `workspaceKind` 会拒绝，绝不偷偷落到用户目录。研究 worker 的 shell 不受 allowedCommands 限制，forbid 红线照旧。读共享文件永远不排他，只有写按 ownedPaths 排他。
 
-check_workers可对已死的第1轮lost/no_work/invalid_report自动resume一次，recoveries记动作；invalid_report只让它重发裸JSON、不重做活，审批/认证/权限/quota不盲重试。连续两轮同 fingerprint 的无输出/无命令会变 `two_stall` + `needs_attention`，禁止再自动 resume；看 evidence 决定主线程接管、修工具或重派。最终报告强制JSON，structured_report仅验证格式；invalid_report拒land，resume让模型提交合法JSON，命令和acceptance另外核对。
+check_workers可对已死的第1轮lost/no_work/invalid_report自动resume一次，recoveries记动作；invalid_report只让它重发裸JSON、不重做活，审批/认证/权限/quota不盲重试。连续两轮同 fingerprint 的无输出/无命令会变 `two_stall` + `needs_attention`，禁止再自动 resume；看 evidence 决定主线程接管、修工具或重派。最终报告强制JSON，但报告只是摘要：常见安全修复包括把单个字符串归一成 string[]、补上唯一缺失的 `]`/`}`；invalid_report 保留 `completed` 生命周期和 attention，不否定同 run 的 acceptance/diff。先自动重发一次，仍失败可审过 diff 后显式 land。
 
 未提交材料用context:[{path:绝对路径,sha256:可选}]；首次记哈希，resume材料变了要显式换context。context/contracts总6000字、最多20份文件，每份≤5 MB；handoff1800字/16行可裁，完整约束和refs另传。输入路径不等于写授权。
 
@@ -98,7 +107,7 @@ Codex需0.162+支持hooks/output-schema，能力不够派单start_failed先修CL
 1. `get_worker_result`：它说自己做了什么。默认截到 6000 字节，`truncated: true` 就按 `next_step` 带 `maxChars` 读全。`verification` 是它真跑过的命令和退出码：说"测过了"但 `commands_run: 0`、说"没建成"但那条命令退出码是 0、`last_command_failed: true` 却说完成、说"环境问题"但 `failed[].output_tail` 里是代码报错，都打回（走第 4 步），别替它圆。`base_behind.behind > 0` 说明派单后主线往前走了，改之前先 rebase（第 4 步）；`contains_base: false` 时 `behind` 是 `null` 并带 `note`，那是派单目录换了线，不是落后。
 2. `get_worker_diff`：它实际做了什么。默认只回完整文件/hunk 索引；再传 `file` + `hunk` 或 `cursor` 分页读 patch，避免 500 行测试文件一次灌满上下文。显式传 `maxChars` 且不传 `file` 才走旧的整份 bounded diff。它说过了不算，diff 对得上才算。
 3. 对不上、看不懂为什么：`ask_codex_worker` 带 `question` 问它。fork 出一个只读旁路，worker 自己的线程不动；fork 没网络没 MCP 工具，问"改了什么、为什么、在哪"，别问要联网才能答的事。超时回 `running`，只带 `task_id` 再调拿答案。worker 被 resume 过后下一问自动换新 fork，`fresh: true` 强制换，问完 `end: true` 删。
-4. 要它改：`resume_codex_worker`，写清问题在哪，让它改完 `git commit --amend --no-edit` 并进原来那个提交。旁路只读，改东西永远走 resume。主线往前走过（`base_behind.behind > 0`）就带 `rebaseOnto: "HEAD"`（在派单目录里解析）：未提交的改动先 stash，跳过已合入的补丁，只把新增提交重放到新头，stash 放回，`base_commit` 跟着动。冲突（`rebase_conflict` / `stash_conflict`）会原样退回、不起 worker、`files` 列冲突文件；这时让它先 `land_codex_worker` 带 `commitMessage` 提交成一笔再 rebase，或者重派一路 `baseRef` 填新头。
+4. 要它改：`resume_codex_worker`，写清问题在哪；不要要求 `workspace-write` worker 自己 commit 或 amend。旁路只读，改东西永远走 resume。主线往前走过（`base_behind.behind > 0`）就带 `rebaseOnto: "HEAD"`（在派单目录里解析）：未提交的改动先 stash，跳过已合入的补丁，只把新增提交重放到新头，stash 放回，`base_commit` 跟着动。冲突（`rebase_conflict` / `stash_conflict`）会原样退回、不起 worker、`files` 列冲突文件；这时先 `land_codex_worker` 带 `commitMessage` 让 supervisor 提交成一笔再 rebase，或者重派一路 `baseRef` 填新头。
 5. 过了：`land_codex_worker` 把 `codex/<id>` 上的提交 cherry-pick 到派单目录当前分支。目标脏了、分支不对、冲突都拒绝并原样退回。worker 没提交（默认沙箱提交不了）就带 `commitMessage`，supervisor 在它分支上替它提交一笔再落。验收 `failed` 它会拒，修完再落；`ignoreAcceptance` 只在用户说了"就这样落"时用。
 
 一批活全部到终态后：`get_orchestration_overview` 确认没有 `needs_attention`、`acceptance_failed` 为空，再逐路走上面几步。合不合、怎么合由主线程定。

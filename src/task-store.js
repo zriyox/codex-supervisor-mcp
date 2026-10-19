@@ -654,6 +654,21 @@ async function reconcileInterruptedAcceptance() {
     && !isPidAlive(task.acceptance_results.supervisor_pid));
   for (const task of interrupted) {
     const now = new Date().toISOString();
+    const durable = (await readTaskEvents(task.id, 1, ["supervisor.acceptance"]))[0] ?? null;
+    if (durable && durable.run === task.run_count) {
+      const reportInvalid = task.attention_reason === "invalid_report";
+      await writeTask({
+        ...task,
+        status: reportInvalid ? "completed" : task.status,
+        exit_code: task.exit_code ?? (reportInvalid ? 0 : null),
+        acceptance_results: durable,
+        current_action: durable.passed === true
+          ? "Acceptance passed (recovered from the durable event)"
+          : `Acceptance ${durable.status} (recovered from the durable event)`,
+        updated_at: now
+      });
+      continue;
+    }
     await writeTask({
       ...task,
       acceptance_results: { ...task.acceptance_results, status: "interrupted", passed: null, finished_at: now },

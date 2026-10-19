@@ -6,12 +6,27 @@ import { readFile } from "node:fs/promises";
 test("structured report validation refuses prose, missing fields and fabricated shapes", async () => {
   const report = { result: "done", verification: ["npm test exit 0"], not_done: [] };
   assert.deepEqual(parseWorkerReport(JSON.stringify(report)).report, report);
-  for (const input of ["done", "{}", JSON.stringify({ ...report, verification: "passed" }), JSON.stringify({ ...report, not_done: [null] }), JSON.stringify({ ...report, extra: "ignored" })]) assert.equal(parseWorkerReport(input).valid, false);
+  const stringFields = parseWorkerReport(JSON.stringify({ ...report, verification: "passed", not_done: "none" }));
+  assert.equal(stringFields.valid, true);
+  assert.deepEqual(stringFields.report, { ...report, verification: ["passed"], not_done: ["none"] });
+  assert.match(stringFields.repaired, /verification_string/);
+  for (const input of ["done", "{}", JSON.stringify({ ...report, verification: [null] }), JSON.stringify({ ...report, not_done: [null] }), JSON.stringify({ ...report, extra: "ignored" })]) assert.equal(parseWorkerReport(input).valid, false);
   assert.equal(parseWorkerReport("").valid, false);
   assert.equal(parseWorkerReport("   ").valid, false);
   const schema = JSON.parse(await readFile(workerReportSchemaPath, "utf8"));
   assert.equal(schema.additionalProperties, false);
   assert.deepEqual(schema.required, Object.keys(report));
+});
+
+test("a report missing one closing bracket is repaired only within the exact schema", () => {
+  const report = { result: "done", verification: ["npm test exit 0"], not_done: ["none"] };
+  const complete = JSON.stringify(report);
+  const text = complete.slice(0, -2) + "}";
+  const parsed = parseWorkerReport(text);
+  assert.equal(parsed.valid, true);
+  assert.deepEqual(parsed.report, report);
+  assert.match(parsed.repaired, /closed_array/);
+  assert.equal(parseWorkerReport(JSON.stringify(report).slice(0, -8)).valid, false, "a deeply truncated report is not guessed");
 });
 
 // Observed in the wild: the run is fine and acceptance passes, but the last

@@ -172,7 +172,7 @@ land_codex_worker       核过了，落进集成分支
 | `get_worker_result` | `task_id`, `limit`, `maxChars`, `includeFiles` | worker 自己的汇报，默认截 6000 字节、`truncated` 提示读全。`acceptance` 是 supervisor 替你跑的验收过没过，`verification` 是它自己跑过的命令和退出码，`base_behind` 是主线走了多远（`contains_base: false` 时 `behind` 为 `null`，那是换了线） |
 | `get_worker_diff` | `task_id`, `file`, `hunk`, `pageSize`, `cursor`, `maxChars`, `paths` | worker 实际改了什么。默认完整文件索引与 hunk 数；按 `file` + `hunk`/`cursor` 分页读 patch。显式 `maxChars` 且不传 `file` 保留旧整份限流模式 |
 | `ask_codex_worker` | `task_id`, `question`, `timeoutMs`, `maxChars`, `fresh`, `end` | 旁路问 worker 一句。线程 fork 成只读侧会话，没网络、没 MCP 工具，worker 本身不动。worker 被 resume 过会自动换新 fork，`fresh` 强制换，`end` 删 |
-| `land_codex_worker` | `task_id`, `onto`, `commitMessage`, `ignoreAcceptance`, `allowOutsideOwned` | 把 worker 在 `codex/<id>` 上的提交 cherry-pick 到派单目录的当前分支。目标要干净，冲突回滚，验收 `failed` 拒绝。`commitMessage` 先替它把未提交的改动提交成一笔，`ignoreAcceptance` 放行 |
+| `land_codex_worker` | `task_id`, `onto`, `commitMessage`, `ignoreAcceptance`, `allowOutsideOwned` | 把 worker 在 `codex/<id>` 上的提交 cherry-pick 到派单目录的当前分支。目标要干净，冲突回滚，验收 `failed` 拒绝；报告格式错不再单独阻止显式 land。`commitMessage` 先替它把未提交的改动提交成一笔，`ignoreAcceptance` 放行 |
 | `verify_delivery_push` | `task_id`, `remote`, `branch` | fetch 指定 remote branch 并证明 `landed_head` 已可达；只读验证，不会 push 或部署。通过后记录 `push_verified` 并生成 cleanup plan |
 | `cleanup_plan` | `task_ids`, `project_root` | 生成 15 分钟有效的 SAFE / REVIEW / BLOCKED 计划，含原因、fingerprint 与回收空间估算；SAFE 必须 acceptance passed、push verified、干净且无活跃依赖/进程 |
 | `apply_cleanup` | `plan_id`, `item_ids` | 只在未过期计划上二次校验 SAFE item、重新 fetch remote 并确认 landed SHA 仍可达后执行 `git worktree remove/prune`；保留 branch、task、events、JSONL、artifacts |
@@ -201,7 +201,9 @@ land_codex_worker       核过了，落进集成分支
 
 必填的两个：`ownedPaths`（派单前和在跑的 worker 求交集，重叠就拒，只在派单时查）和 `goal.objective`（worker 会建成 Codex 原生 goal）。`session_id` 不传就归不了组，一批活传同一个值。
 
-`acceptance` 在 Bash 中启用 `errexit` 和 `pipefail`：未处理的失败会停止检查，`npm test | tail` 中的测试失败也会保留。写 worker 不能只用 `test -s`、`test -f` 或 `[ -e ]` 这类文件存在性命令交付；要加真实 test、endpoint probe 或结构化执行证据。识别到的 test runner 输出 `no tests to run` / `[no test files]` 时，即使退出码是 0 也判失败。预期失败用 `if` 或 `||` 显式处理；超时始终判失败，即使命令收到终止信号后退出 0。Windows 需要 Git for Windows 的 Bash；找不到会报错。显示的输出会裁剪，退出码不会因此改变。
+`acceptance` 在 Bash 中启用 `errexit` 和 `pipefail`：未处理的失败会停止检查，`npm test | tail` 中的测试失败也会保留。worker 自查必须运行 `node "$CODEX_SUPERVISOR_ACCEPTANCE_CLI"`，它执行同一份 supervisor 验收契约；不要手抄到 zsh，变量拆词等交互壳差异不会污染证据。写 worker 不能只用 `test -s`、`test -f` 或 `[ -e ]` 这类文件存在性命令交付；要加真实 test、endpoint probe 或结构化执行证据。识别到的 test runner 输出 `no tests to run` / `[no test files]` 时，即使退出码是 0 也判失败。预期失败用 `if` 或 `||` 显式处理；超时始终判失败，即使命令收到终止信号后退出 0。Windows 需要 Git for Windows 的 Bash；找不到会报错。显示的输出会裁剪，退出码不会因此改变。
+
+`package.json` 仓库里，如果 `acceptance` 使用 `npm`、`pnpm`、`vitest`、`vue-tsc`、`eslint`、`nuxi` 等本地 JavaScript 工具，而派单没有 `workspaceSetup`，会直接拒绝为 `workspace_setup_required`。这条是 runtime 硬门禁，不再靠模型记得手工链接依赖。
 
 普通 worker 启动时会关闭它继承到的 `codex-supervisor` MCP，不能再派 worker、resume、cancel 或改编排状态；主线程是唯一编排者。其他业务 MCP 不受影响；旁问 fork 仍关闭全部 MCP，因为它只允许只读回答。
 
@@ -231,7 +233,7 @@ wait 默认预算60秒、默认compact；includeEvents会选择详细结果（�
 
 守卫按 worker 形状放权：`git_worktree` 编辑 worker 只放声明过的命令和简单读取；`read_only_in_place` 无写入无网络；`scratch` 的联网草稿只能写在 `SUPERVISOR_HOME/scratch/<taskId>`；`in_place_write` 必须有显式授权、ownedPaths 与 acceptance，并保存前后 manifest。非 Git `workspace-write` 没写 `workspaceKind` 会拒绝，绝不默认写用户目录。
 
-check_workers在状态协调后，对已结束的第1轮lost/no_work/invalid_report原子resume一次（invalid_report只要求重发裸JSON，不重做活）。两轮同 fingerprint 的无输出/无命令会升级为 `two_stall` 和 `needs_attention`，不再自动重试；审批、认证、权限和quota等待也不重试，返回recoveries记录。worker最终输出强制JSON result/verification/not_done；get_worker_result的structured_report给格式校验，独立命令与acceptance仍为实际证据。非法JSON标failed/invalid_report并拒绝land；旧历史标legacy_text。
+check_workers在状态协调后，对已结束的第1轮lost/no_work/invalid_report原子resume一次（invalid_report只要求重发裸JSON，不重做活）。两轮同 fingerprint 的无输出/无命令会升级为 `two_stall` 和 `needs_attention`，不再自动重试；审批、认证、权限和quota等待也不重试，返回recoveries记录。worker最终输出要求JSON result/verification/not_done；解析只做安全修复：字符串字段归一成 string[]，以及唯一缺少的 `]`/`}`，伪造字段仍拒绝。报告只是摘要；invalid_report 保持 `completed` 生命周期和 attention，不否定同 run acceptance 和真实 diff，显式 land 仍可用；旧历史标legacy_text。
 
 context用绝对文件路径与可选sha256声明材料，最多20份、与contracts合计6000字；文件不超过5 MB。首次派单记录实际哈希，resume校验原材料未变，需要新材料时显式传context。handoff最多1800字/16行，截断明确标记；完整约束和引用单独保留，材料不授予写权限。
 
@@ -348,7 +350,7 @@ rm -rf ~/.claude/skills/codex-supervisor ~/.agents/skills/codex-supervisor ~/.co
 | worker 一起来就 `failed`，`spawn codex ENOENT` | 进程 `PATH` 里没有 codex | 配置里设 `CODEX_BIN` |
 | `Cannot find module 'node:sqlite'` | Node 低于 22.13.0 | 升 Node |
 | worker `lost` | worker 或独立运行进程中断 | 查事件后用 `resume_codex_worker` 接回 |
-| worker 说 `git add` 报 `index.lock: Operation not permitted` | 默认沙箱把 `.git` 设成只读 | 收活时 `land_codex_worker` 带 `commitMessage`，或派单用 `danger-full-access` |
+| worker 说 `git add` 报 `index.lock: Operation not permitted` | 默认沙箱把 `.git` 设成只读，这是正常边界 | 保持 worker 只改和验收，收活时 `land_codex_worker` 带 `commitMessage` |
 | `ownedPaths overlap with active worker(s)` | 两路认领了同一片路径 | 改拆法，或先取消占着的那路 |
 | 看板打开是空的 | 看板和 MCP 的 `SUPERVISOR_HOME` 不是同一个 | 在配了 `.mcp.json` 的项目目录里起，或显式传同一个 `SUPERVISOR_HOME` |
 | `port 7877 ... is already in use` | 已经有一个看板在跑 | 直接开它，或 `SUPERVISOR_WEB_PORT=8080` 再起一个 |
@@ -356,7 +358,7 @@ rm -rf ~/.claude/skills/codex-supervisor ~/.agents/skills/codex-supervisor ~/.co
 ## 已知限制
 
 - 每次运行由独立进程读取 worker 输出、落状态和执行验收，直到结算后退出。派单 MCP 被 kill 后这些工作继续；新窗口用 `get_session_works` 收结果。若运行进程也被杀，保留 worktree 和 thread_id，核对 lost/interrupted 后恢复。
-- 默认 `workspace-write` 沙箱里 worker 提交不了（Codex 把 `.git` 设成只读）。要么收活时 `land_codex_worker` 带 `commitMessage` 替它提交，要么派单用 `danger-full-access`。
+- 默认 `workspace-write` 沙箱里 worker 提交不了（Codex 把 `.git` 设成只读）。收活时 `land_codex_worker` 带 `commitMessage` 替它提交；不要为了提交改用 `danger-full-access`。
 - worktree 从一个提交切，你工作区里没 commit 的东西不在里面。
 - 只隔离工作目录。临时目录、数据库、端口是共用的。
 - `ownedPaths` 只在派单时查，拦不住 worker 新建清单外的文件。收活看 diff。

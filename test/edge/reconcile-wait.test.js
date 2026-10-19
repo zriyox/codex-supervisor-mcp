@@ -232,3 +232,31 @@ test("two MCP windows cannot resume the same completed run concurrently", async 
     });
   });
 });
+
+test("a durable passed acceptance survives the supervisor process death", async () => {
+  const home = await tempHome("supervisor-acceptance-durable-");
+  await withMcp({ SUPERVISOR_HOME: home }, async ({ call }) => {
+    await call("list_codex_workers", {});
+    const db = new DatabaseSync(join(home, "data", "supervisor.sqlite"));
+    const now = new Date().toISOString();
+    const acceptance = { status: "running", passed: null, run: 1, supervisor_pid: 2 ** 22 - 1, started_at: now };
+    db.prepare(`INSERT INTO tasks
+      (id,title,worker,status,cwd,project_root,sandbox,prompt,created_at,updated_at,run_log,exit_code,run_count,attention_reason,acceptance_results)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
+      "durable-acceptance", "durable acceptance", "codex", "failed", home, home, "workspace-write", "x",
+      now, now, "/tmp/none", null, 1, "invalid_report", JSON.stringify(acceptance));
+    const payload = { type: "supervisor.acceptance", status: "passed", passed: true, run: 1,
+      started_at: now, finished_at: now, checks: [{ command: "printf ok", exit_code: 0, passed: true }] };
+    db.prepare(`INSERT INTO task_events (task_id,run_id,seq,created_at,actor,event_type,payload)
+      VALUES (?,?,?,?,?,?,?)`).run("durable-acceptance", "run-durable-acceptance-1", 1, now,
+      "supervisor", "supervisor.acceptance", JSON.stringify(payload));
+    db.close();
+
+    await call("list_codex_workers", { includeHistory: true });
+    const recovered = await call("get_codex_worker_status", { task_id: "durable-acceptance" });
+    assert.equal(recovered.status, "completed");
+    assert.equal(recovered.exit_code, 0);
+    assert.equal(recovered.acceptance, "passed");
+    assert.equal(recovered.attention_reason, "invalid_report");
+  });
+});

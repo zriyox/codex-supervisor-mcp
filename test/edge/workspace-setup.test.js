@@ -163,3 +163,20 @@ test("workspaceSetup is rejected outside git worktrees", async () => {
     assert.match(refused.message ?? "", /only supported for git_worktree/);
   });
 });
+
+test("JavaScript acceptance requires an explicit workspace setup", async () => {
+  const home = await tempHome("supervisor-workspace-setup-required-");
+  const { dir } = await makeRepo(join(home, "repo"));
+  await writeFile(join(dir, "package.json"), JSON.stringify({ scripts: { test: "node -e \"console.log('ok')\"" } }));
+  git(dir, ["add", "package.json"]);
+  git(dir, ["commit", "-q", "-m", "add package manifest"]);
+  await withMcp({ SUPERVISOR_HOME: home }, async ({ call }) => {
+    const refused = await call("create_codex_worker", dispatchArgs("missing setup", dir, {
+      sandbox: "workspace-write",
+      ownedPaths: ["src/result.txt"],
+      acceptance: ["npm test"]
+    }));
+    assert.equal(refused.error, "workspace_setup_required", JSON.stringify(refused));
+    assert.match(refused.message ?? "", /workspaceSetup/);
+  });
+});

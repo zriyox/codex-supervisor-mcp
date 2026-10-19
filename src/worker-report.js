@@ -19,19 +19,54 @@ function reportCandidates(text) {
   return candidates;
 }
 
+function validateReport(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return { valid: false, error: "report must be a JSON object" };
+  if (Object.keys(value).sort().join(",") !== "not_done,result,verification") {
+    return { valid: false, error: "report must contain result:string, verification:string[], not_done:string[] only" };
+  }
+  if (typeof value.result !== "string") return { valid: false, error: "report.result must be a string" };
+  const repaired = [];
+  const normalized = { ...value };
+  for (const field of ["verification", "not_done"]) {
+    if (typeof value[field] === "string") {
+      normalized[field] = [value[field]];
+      repaired.push(`${field}_string`);
+    }
+    if (!Array.isArray(normalized[field]) || !normalized[field].every((entry) => typeof entry === "string")) {
+      return { valid: false, error: `report.${field} must be a string or string[]` };
+    }
+  }
+  return { valid: true, report: normalized, repaired };
+}
+
+function parseWithClosure(candidate) {
+  try { return { value: JSON.parse(candidate), repair: null }; } catch (error) {
+    const parsedError = error;
+    const attempts = [
+      [candidate, "}", "closed_object"],
+      [candidate, "]", "closed_array"]
+    ];
+    if (candidate.endsWith("}")) {
+      const body = candidate.slice(0, -1);
+      attempts.push([body, "]}", "closed_array"]);
+    }
+    for (const [body, suffix, repair] of attempts) {
+      try { return { value: JSON.parse(body + suffix), repair }; } catch { /* try the next bounded repair */ }
+    }
+    return { value: null, repair: null, error: parsedError };
+  }
+}
+
 export function parseWorkerReport(text) {
   if (typeof text !== "string" || !text.trim()) return { format: "json_schema", valid: false, error: "worker wrote no final report" };
   let parseError = null;
   for (const { source, text: candidate } of reportCandidates(text)) {
-    let value;
-    try { value = JSON.parse(candidate); }
-    catch (error) { parseError = parseError ?? error; continue; }
-    const valid = value && typeof value === "object" && !Array.isArray(value)
-      && Object.keys(value).sort().join(",") === "not_done,result,verification"
-      && typeof value.result === "string" && Array.isArray(value.verification) && Array.isArray(value.not_done)
-      && [...value.verification, ...value.not_done].every((entry) => typeof entry === "string");
-    if (!valid) return { format: "json_schema", valid: false, error: "report must contain result:string, verification:string[], not_done:string[] only" };
-    return { format: "json_schema", valid: true, report: value, ...(source === "bare" ? {} : { repaired: source }) };
+    const parsed = parseWithClosure(candidate);
+    if (parsed.error) { parseError = parseError ?? parsed.error; continue; }
+    const checked = validateReport(parsed.value);
+    if (!checked.valid) return { format: "json_schema", valid: false, error: checked.error };
+    const repairs = [source === "bare" ? null : source, parsed.repair, ...checked.repaired].filter(Boolean);
+    return { format: "json_schema", valid: true, report: checked.report, ...(repairs.length ? { repaired: repairs.join("+") } : {}) };
   }
   return { format: "json_schema", valid: false, error: parseError?.message ?? "report is not JSON" };
 }
