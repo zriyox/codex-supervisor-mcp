@@ -60,7 +60,7 @@ test("an answer is clipped to maxChars", async () => {
 });
 
 test("a question that outruns the budget keeps running and can be read back", async () => {
-  await withMcp({ ...sideEnv, FAKE_CODEX_STEP_MS: "400" }, async ({ call }) => {
+  await withMcp({ ...sideEnv, FAKE_CODEX_STEP_MS: "1500" }, async ({ call }) => {
     const slow = await call("ask_codex_worker", { task_id: worker.id, question: "slow one", timeoutMs: 1000 });
     assert.equal(slow.timed_out, true);
     assert.equal(slow.turn.status, "running");

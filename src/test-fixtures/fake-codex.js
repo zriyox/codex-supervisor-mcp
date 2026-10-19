@@ -39,10 +39,15 @@ process.stdin.on("error", () => {});
 const stdinChunks = [];
 process.stdin.on("data", (chunk) => stdinChunks.push(chunk));
 const stdinEnd = new Promise((resolve) => process.stdin.on("end", resolve));
-const stdinText = Promise.race([
-  stdinEnd.then(() => Buffer.concat(stdinChunks).toString("utf8")),
-  wait(1500).then(() => Buffer.concat(stdinChunks).toString("utf8"))
-]);
+const stdinText = new Promise((resolve) => {
+  let timer;
+  const finish = () => {
+    clearTimeout(timer);
+    resolve(Buffer.concat(stdinChunks).toString("utf8"));
+  };
+  timer = setTimeout(finish, 1500);
+  process.stdin.once("end", finish);
+});
 stdinEnd.then(() => {
   if (scenario === "echo-prompt") {
     emit({ type: "thread.started", thread_id: threadId });
