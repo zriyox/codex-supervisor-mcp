@@ -90,6 +90,7 @@ try {
     sandbox: "workspace-write",
     reasoningEffort: "low",
     ownedPaths: [project.file],
+    allowedCommands: ["sleep 5"],
     workspaceSetup: setup,
     baseRef: "HEAD",
     probeCommands: [...probes, chineseProbe]
@@ -124,6 +125,7 @@ try {
       goal: { objective: `In ${project.name}, prove isolated dependencies and create ${project.file}` }
     });
   }));
+  for (const receipt of dispatched) assert.ok(receipt.id, JSON.stringify(receipt));
 
   const observedStages = new Set();
   const finals = await Promise.all(dispatched.map((receipt, index) => waitFor(receipt.id, (task) => {
