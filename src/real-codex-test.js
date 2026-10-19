@@ -230,9 +230,11 @@ const writeRun = await withServer(async (client) => {
   assert.match(result.acceptance.checks[0].output_tail, /real output verified/);
   assert.equal(await readFile(join(repo, "README.md"), "utf8"), "# test repo\n");
   assert.equal(await stat(join(repo, "NOTES.md")).then(() => true, () => false), false);
-  const diff = await call(client, "get_worker_diff", { task_id: created.id });
-  assert.equal(diff.files.length, 1);
-  assert.match(diff.files[0].patch, /hello from worker/);
+  const diffIndex = await call(client, "get_worker_diff", { task_id: created.id });
+  assert.equal(diffIndex.summary_only, true);
+  assert.equal(diffIndex.files.length, 1);
+  const diff = await call(client, "get_worker_diff", { task_id: created.id, file: diffIndex.files[0].path, pageSize: 1 });
+  assert.match(diff.hunks[0].patch, /hello from worker/);
   const landed = await call(client, "land_codex_worker", { task_id: created.id, commitMessage: "Verify real model worker output" });
   assert.ok(!landed.error, JSON.stringify(landed));
   assert.equal(landed.landed.length, 1);
