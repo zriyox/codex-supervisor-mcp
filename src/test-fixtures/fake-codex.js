@@ -38,7 +38,12 @@ const lingerMs = Number(process.env.FAKE_CODEX_LINGER_MS ?? "0");
 process.stdin.on("error", () => {});
 const stdinChunks = [];
 process.stdin.on("data", (chunk) => stdinChunks.push(chunk));
-process.stdin.on("end", () => {
+const stdinEnd = new Promise((resolve) => process.stdin.on("end", resolve));
+const stdinText = Promise.race([
+  stdinEnd.then(() => Buffer.concat(stdinChunks).toString("utf8")),
+  wait(1500).then(() => Buffer.concat(stdinChunks).toString("utf8"))
+]);
+stdinEnd.then(() => {
   if (scenario === "echo-prompt") {
     emit({ type: "thread.started", thread_id: threadId });
     emit({
@@ -95,12 +100,10 @@ async function main() {
   if (args[0] === "exec" && (args[1] === "fork" || (args[1] === "resume" && scenario === "side-chat"))) {
     const mode = args[1];
     const target = args.filter((a) => !a.startsWith("-")).at(-1) === "-" ? args.filter((a) => !a.startsWith("-")).at(-2) : args.filter((a) => !a.startsWith("-")).at(-1);
-    const raw = Buffer.concat(await new Promise((resolve) => {
-      const chunks = [];
-      process.stdin.on("data", (c) => chunks.push(c));
-      process.stdin.on("end", () => resolve(chunks));
-      setTimeout(() => resolve(chunks), 1500);
-    })).toString("utf8").trim();
+    // Capture from the listener installed at process start. Attaching another
+    // data listener here races early bytes on fast or differently scheduled
+    // pipes, which used to turn the question into an empty string on Windows.
+    const raw = (await stdinText).trim();
     if (process.env.FAKE_CODEX_STDIN_LOG) {
       const { appendFileSync } = await import("node:fs");
       appendFileSync(process.env.FAKE_CODEX_STDIN_LOG, `${JSON.stringify({ args, stdin: raw })}\n`);
