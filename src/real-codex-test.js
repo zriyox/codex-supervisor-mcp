@@ -132,6 +132,7 @@ const first = await withServer(async (client) => {
   // Codex thread must own a real goal. If this fails the framing regressed.
   assert.ok(goal.native_goal, "expected a native Codex goal created by the worker");
   assert.equal(goal.native_goal.objective, "Respond with PONG without touching files; the supervisor validates your response");
+  assert.equal(goal.native_goal.token_budget, null, "omitting goal.tokenBudget must create an unlimited native goal");
 
   return { task: current, id: created.id };
 });

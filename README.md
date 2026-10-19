@@ -223,6 +223,8 @@ wait 默认预算60秒、默认compact；includeEvents会选择详细结果（�
 
 每路临时注入随包PreToolUse守卫：apply_patch核对全部目标路径（含rename和symlink），forbid拒绝红线；安全只读检查（rg/cat/sed无-i/git只读/jq无-i/find无-exec或-delete）默认允许且不占其他 worker 的写路径，写入/执行/有副作用的 Shell 命令必须显式声明。声明的验证脚本以派单者权限执行，可有副作用，不能当作任意程序的文件沙箱。guard策略随resume/followup继承，不写全局hooks。空跑write run按本轮输出前后内容和命令判断，no_work进入needs_attention；只读任务不因没改文件判空跑。
 
+守卫同时拦截 `create_goal` 的预算：派单未传 `goal.tokenBudget` 时，worker 必须完全省略 `token_budget`；模型自行填写 `0`、`1` 或 `null` 会被拒绝，不会被误当成“不限预算”。显式传预算时只允许逐值一致，缺失或改动都拒绝。原生 goal 仍用于完成状态与 token 用量统计。
+
 没有独立 `apply_patch` 工具的模型（实测 Codex 0.162 + DeepSeek/cc-switch）把补丁当 shell 命令发过来：`apply_patch <<'EOF' ... EOF`。守卫认这个形状，用同一套 ownedPaths 规则判每个目标路径，所以这种模型也能改文件；未加引号的 heredoc、后面还接 `&&`/`;` 的都拒绝。
 
 `allowedCommands` 里以 `*` 结尾的条目是前缀匹配（如 `go test ./internal/*` 覆盖 `go test ./internal/service -run TestX`），只对没有 shell 元字符的单条命令生效。编辑器 worker 的只读白名单覆盖 grep/sed（无 `-i`）/find（无 `-exec`/`-delete`）/jq（无 `-i`）/awk、git 只读子命令和 `cmd | head|tail|wc|sort|uniq` 纯读管道；`tee`、重定向、`env` 仍拒。守卫不是文件沙箱，漏网的写入只会落在 worker 自己的 worktree，land 会拒。

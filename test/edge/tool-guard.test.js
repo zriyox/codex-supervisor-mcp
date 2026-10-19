@@ -64,6 +64,28 @@ test("the allowlist is not lifted when the sandbox is gone", () => {
   assert.equal(shell("curl -s https://example.com").allow, false, "without a sandbox only declared commands run");
 });
 
+test("create_goal cannot invent or override the dispatcher's token budget", () => {
+  const policy = { cwd: tmpdir(), sandbox: "workspace-write", ownedPaths: [tmpdir()], goalTokenBudget: null };
+  const goal = (input, overrides = {}) => evaluateToolUse({
+    tool_name: "create_goal",
+    tool_input: { objective: "finish", ...input }
+  }, { ...policy, ...overrides });
+
+  assert.equal(goal({}).allow, true, "omitting the budget is the unlimited shape");
+  for (const token_budget of [0, 1, null, "24000"]) {
+    const denied = goal({ token_budget });
+    assert.equal(denied.allow, false, `the model may not choose token_budget=${JSON.stringify(token_budget)}`);
+    assert.match(denied.reason, /omit token_budget entirely/);
+  }
+
+  assert.equal(goal({ token_budget: 24000 }, { goalTokenBudget: 24000 }).allow, true);
+  for (const input of [{}, { token_budget: 1 }, { token_budget: 24001 }, { token_budget: "24000" }]) {
+    const denied = goal(input, { goalTokenBudget: 24000 });
+    assert.equal(denied.allow, false, "an explicit dispatcher budget must be copied exactly");
+    assert.match(denied.reason, /must include exactly that value/);
+  }
+});
+
 // Codex 0.162 with a model that has no separate apply_patch tool sends the
 // patch as a shell call: apply_patch <<"EOF" ... EOF. That used to be refused
 // as an undeclared command, so such a worker could never edit anything.

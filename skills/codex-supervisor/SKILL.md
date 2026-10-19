@@ -32,7 +32,7 @@ worker 默认不是调度员：启动时会禁用它继承到的 `codex-supervis
 | `forbid` / `allowedCommands` | 原样声明红线与验证命令；守卫拒绝未声明Shell程序，编辑用apply_patch |
 | `writableRoots` | 只有需要凭据目录时才传（绝对路径、已存在、自动解析软链、只对 workspace-write 生效）：ssh/远程测试 → `["~/.ssh"]`；kubectl → `["~/.kube"]`；推私有镜像 → `["~/.docker"]`；aws cli → `["~/.aws"]`；签名提交 → `["~/.gnupg"]`。缓存目录不用写，已经自动加 |
 | `ownedPaths` | 必填。这路允许写的路径，和在跑的 worker 重叠会被拒（**读不排他**，多路读同一份共享文件合法）。冲突是好事，说明该改拆法。传 `[]` 表示这路不落地：只读验证或研究 |
-| `goal.objective` | 必填。一句话说目标，worker 会建成 Codex 原生 goal |
+| `goal.objective` | 必填。一句话说目标，worker 会建成 Codex 原生 goal；不传 `goal.tokenBudget` 就是不限预算，runtime guard 会拒绝 worker 自填 `token_budget` |
 | `session_id` | 同一批传同一个值。只管批次、默认验收和审批，不是上下文继承边界；第一路顺手带 `session_title`（30 字内，看板和 `get_session_works` 显示它），漏了用 `describe_session` 补 |
 | `dependsOn` | 有先后依赖填上游的 `task_id`，它是硬门禁：上游必须同 `project_root`、成功结算、配置了 acceptance 就已通过、已 `land_codex_worker`，并且本路实际 `baseRef` 包含上游 `landed_head`。没满足先集成/修验收，不会启动下游 |
 | `baseRef` | worktree 从哪个提交切，默认 `HEAD`。第 N+1 步要建立在第 N 步上，填 `codex/<第 N 步 task_id>` |

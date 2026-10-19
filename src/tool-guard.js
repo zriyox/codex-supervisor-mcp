@@ -118,6 +118,22 @@ export function evaluateToolUse(event, policy) {
   const tool = event.tool_name;
   const input = event.tool_input;
   const command = typeof input === "string" ? input : input?.command;
+  if (tool === "create_goal") {
+    const configured = policy.goalTokenBudget ?? null;
+    const supplied = input && typeof input === "object" && Object.hasOwn(input, "token_budget")
+      ? input.token_budget
+      : undefined;
+    if (configured === null) {
+      if (supplied !== undefined) {
+        return deny("the dispatcher did not set a goal token budget; omit token_budget entirely (0, 1, and null are not unlimited)");
+      }
+      return { allow: true, reason: "goal created without a token budget" };
+    }
+    if (supplied !== configured) {
+      return deny(`the dispatcher set goal token_budget to ${configured}; create_goal must include exactly that value`);
+    }
+    return { allow: true, reason: `goal uses the dispatcher's token budget ${configured}` };
+  }
   if (tool === "Bash") {
     if (typeof command !== "string") return deny("invalid shell input");
     const normalized = command.replace(/\\\r?\n/g, "").replace(/\s+/g, " ").trim();

@@ -370,6 +370,7 @@ async function trackRunInHost({ record, args, prompt, logPath, spawnOptions = {}
   const externalBefore = await captureExternalOutputs(record.guard_policy?.externalOutputs ?? [], { checkBaseline: (record.run_count ?? 0) === 0 });
   const owned = [...findOutsideOwnedChanges(record, []).mapping.map((entry) => entry.worker), ...externalBefore.map((entry) => entry.path)];
   const guardPolicy = { cwd: record.cwd, worktree: record.cwd, sandbox: record.sandbox, ownedPaths: owned, ...(record.guard_policy ?? {}),
+    goalTokenBudget: record.goal_token_budget ?? null,
     allowedCommands: [
       ...(record.guard_policy?.allowedCommands ?? []),
       ...(record.acceptance ?? []).map((check) => typeof check === "string" ? check : check.command),
@@ -383,7 +384,7 @@ async function trackRunInHost({ record, args, prompt, logPath, spawnOptions = {}
   const quoteCommand = (path) => process.platform === "win32" ? `"${path.replace(/"/g, '""')}"` : `'${path.replace(/'/g, "'\\''")}'`;
   const hookCommand = `${quoteCommand(process.execPath)} ${quoteCommand(guard)}`;
   const configArgs = ["--output-schema", workerReportSchemaPath, "--dangerously-bypass-hook-trust", "-c",
-    `hooks.PreToolUse=[{matcher="Bash|apply_patch",hooks=[{type="command",command=${JSON.stringify(hookCommand)}}]}]`];
+    `hooks.PreToolUse=[{matcher="Bash|apply_patch|create_goal",hooks=[{type="command",command=${JSON.stringify(hookCommand)}}]}]`];
   // A worker may use its explicitly configured business MCP servers, but it
   // must not inherit this supervisor and create a second orchestration tree.
   configArgs.push(...supervisorMcpDisableArgs());
