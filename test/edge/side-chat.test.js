@@ -170,7 +170,13 @@ test("a turn nobody watched still finishes and its answer is in the history", as
   try {
     const controller = new AbortController();
     const inflight = post(slow.base, worker.id, "unwatched", { signal: controller.signal });
-    await new Promise((r) => setTimeout(r, 200));
+    const startDeadline = Date.now() + 2000;
+    let started;
+    do {
+      await new Promise((r) => setTimeout(r, 100));
+      started = (await slow.get(`/api/workers/${worker.id}/chat`)).body;
+    } while (!started.busy && Date.now() < startDeadline);
+    assert.equal(started.busy, true, "the server must accept the turn before the page disappears");
     controller.abort();
     await inflight.catch(() => {});
     const deadline = Date.now() + 8000;
