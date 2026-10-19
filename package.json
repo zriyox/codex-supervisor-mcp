@@ -26,7 +26,8 @@
   "bin": {
     "codex-supervisor-mcp": "src/mcp-server.js",
     "codex-supervisor-setup": "src/setup.js",
-    "codex-supervisor-web": "src/web-server.js"
+    "codex-supervisor-web": "src/web-server.js",
+    "codex-supervisor-stage": "src/stage.js"
   },
   "files": [
     "src/mcp-server.js",
@@ -53,6 +54,9 @@
     "src/truncate.js",
     "src/status.js",
     "src/failure-class.js",
+    "src/thread-health.js",
+    "src/stage-store.js",
+    "src/stage.js",
     "src/paths.js",
     "src/prompt.js",
     "src/cleanup.js",

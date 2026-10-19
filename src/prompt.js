@@ -52,12 +52,14 @@ export const REPORT_SECTIONS = ["Result", "Verification", "Not done / risks"];
 // may do instead of being told to use apply_patch they cannot use.
 export function buildGuardPreamble({ sandbox, ownedPaths = [], allowedCommands = [], forbid = [], networkAccess = false, workspaceKind = null } = {}) {
   const forbidden = JSON.stringify(forbid);
+  const stage = 'For a long gate, checkpoint phases with node "$CODEX_SUPERVISOR_STAGE_CLI" "gate:s3" --detail "current check"; stage text is visible to status/overview/wait and must not contain secrets.';
   if (sandbox === "read-only") {
     return [
       "Runtime supervisor guard: this is a read-only task.",
       "The sandbox denies every file write, the temp directory included, and it has no network, so do not try to write files, fetch URLs or install anything: they fail and waste the turn.",
       "Run the read commands you need (rg, cat, git, jq, the project's own read-only tools) and put the findings in the final report.",
-      `Forbidden: ${forbidden}.`
+      `Forbidden: ${forbidden}.`,
+      stage
     ].join(" ");
   }
   if (Array.isArray(ownedPaths) && ownedPaths.length === 0) {
@@ -69,6 +71,7 @@ export function buildGuardPreamble({ sandbox, ownedPaths = [], allowedCommands =
       `${location}, so the shell is unrestricted apart from the red lines; keep notes and downloads inside it.`,
       networkAccess ? "Network is available." : "There is no network in this sandbox; ask for it instead of retrying a failing fetch.",
       `Forbidden: ${forbidden}.`,
+      stage,
       "Report what you found and name the files a writer would have to change."
     ].join(" ");
   }
@@ -76,7 +79,7 @@ export function buildGuardPreamble({ sandbox, ownedPaths = [], allowedCommands =
   // shell as a heredoc; the guard accepts that shape too, so the worker is told
   // about it instead of stalling on a tool it does not have.
   const shellEdit = "If your toolset has no apply_patch tool, run it through the shell as apply_patch <<'EOF' ... EOF; the guard checks the file paths the same way. A declared command ending in * is a prefix, so go test ./internal/* covers go test ./internal/service -run TestX.";
-  return `Runtime supervisor guard: edits must use apply_patch within ${JSON.stringify(ownedPaths)}. ${shellEdit} Safe read-only inspection commands (rg, cat, sed without -i, git status/diff/log, jq without -i, find without -exec/-delete) are allowed and never reserve another worker's paths. Commands that validate, write, execute code or have side effects must exactly match declared commands ${JSON.stringify(allowedCommands)}. Forbidden: ${forbidden}. Undeclared shell programs are denied; report a needed validation command instead of bypassing the guard.`;
+  return `Runtime supervisor guard: edits must use apply_patch within ${JSON.stringify(ownedPaths)}. ${shellEdit} Safe read-only inspection commands (rg, cat, sed without -i, git status/diff/log, jq without -i, find without -exec/-delete) are allowed and never reserve another worker's paths. Commands that validate, write, execute code or have side effects must exactly match declared commands ${JSON.stringify(allowedCommands)}. Forbidden: ${forbidden}. Undeclared shell programs are denied; report a needed validation command instead of bypassing the guard. ${stage}`;
 }
 
 // The acceptance commands are shown to the worker. Hiding them would not

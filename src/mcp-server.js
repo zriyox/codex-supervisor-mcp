@@ -64,6 +64,8 @@ import { summarizeVerification } from "./event-parser.js";
 import { readPreflightResult } from "./worker-preflight.js";
 import { acceptanceVerdict, runAcceptance } from "./acceptance.js";
 import { classifyFailure } from "./failure-class.js";
+import { threadHealth } from "./thread-health.js";
+import { readStage } from "./stage-store.js";
 import { ACTIVE_STATUSES, TERMINAL_STATUSES, TASK_STATUSES, isGoalNeedingAttention } from "./status.js";
 import { approxTokenCount, truncateEventStrings, truncateMiddleChars, truncateReport } from "./truncate.js";
 import { checkForUpdate, updateNotice } from "./update-check.js";
@@ -229,12 +231,44 @@ function isSettled(task) {
 const LIVE_COMMAND_PREVIEW_CHARS = 120;
 function liveness(task) {
   if (!ACTIVE_STATUSES.has(task.status)) {
-    return { idle_seconds: null, command_running: false, current_command: null };
+    const stage = readStage(task.id);
+    return {
+      idle_seconds: null,
+      command_running: false,
+      current_command: null,
+      current_stage: null,
+      current_stage_detail: null,
+      last_stage: stage?.stage ?? null,
+      stage_updated_at: stage?.updated_at ?? null
+    };
   }
   const since = Date.parse(task.last_event_at ?? task.started_at ?? "");
   const idle = Number.isFinite(since) ? Math.max(0, Math.floor((Date.now() - since) / 1000)) : null;
   const command = task.current_command ? clip(task.current_command, LIVE_COMMAND_PREVIEW_CHARS) : null;
-  return { idle_seconds: idle, command_running: Boolean(task.current_command), current_command: command };
+  const stage = readStage(task.id);
+  const active = ACTIVE_STATUSES.has(task.status);
+  return {
+    idle_seconds: idle,
+    command_running: Boolean(task.current_command),
+    current_command: command,
+    current_stage: active ? stage?.stage ?? null : null,
+    current_stage_detail: active ? stage?.detail ?? null : null,
+    last_stage: active ? null : stage?.stage ?? null,
+    stage_updated_at: stage?.updated_at ?? null
+  };
+}
+
+function compactLiveness(task) {
+  const live = liveness(task);
+  return {
+    idle_seconds: live.idle_seconds,
+    command_running: live.command_running,
+    current_command: live.current_command,
+    ...(live.current_stage ? { current_stage: live.current_stage } : {}),
+    ...(live.current_stage_detail ? { current_stage_detail: live.current_stage_detail } : {}),
+    ...(live.last_stage ? { last_stage: live.last_stage } : {}),
+    ...(live.stage_updated_at ? { stage_updated_at: live.stage_updated_at } : {})
+  };
 }
 
 // The acceptance verdict as get_worker_result reports it, with the one
@@ -301,6 +335,8 @@ function summarizeTask(task) {
     goal_objective: task.goal_objective,
     goal_token_budget: task.goal_token_budget,
     goal_status: task.goal_status,
+    goal_tokens_used: task.goal_tokens_used ?? null,
+    thread_health: threadHealth(task),
     attention_reason: task.attention_reason ?? null,
     failure: classifyFailure(task),
     changed_file_count: (task.changed_files ?? []).length,
@@ -388,6 +424,7 @@ function receipt(task) {
 }
 
 function overviewRow(task, caps) {
+  const live = liveness(task);
   return {
     id: task.id,
     title: clip(task.title, caps.title),
@@ -396,10 +433,13 @@ function overviewRow(task, caps) {
     goal: clip(task.goal_objective, caps.goal),
     goal_status: task.goal_status ?? null,
     last_action: clip(task.current_action, caps.action),
-    idle_seconds: liveness(task).idle_seconds,
+    idle_seconds: live.idle_seconds,
     command_running: Boolean(task.current_command) && ACTIVE_STATUSES.has(task.status),
+    ...(live.current_stage ? { current_stage: live.current_stage } : {}),
+    ...(live.last_stage ? { last_stage: live.last_stage } : {}),
     acceptance: acceptanceVerdict(task),
-    failure_code: classifyFailure(task)?.code ?? null,
+    ...(classifyFailure(task)?.code ? { failure_code: classifyFailure(task).code } : {}),
+    ...(threadHealth(task).state === "handoff_recommended" ? { handoff_recommended: true } : {}),
     changed_files: (task.changed_files ?? []).length,
     depends_on: task.depends_on ?? [],
     owned_paths: (task.owned_paths ?? []).map((entry) => clip(entry, caps.path))
@@ -1055,7 +1095,7 @@ server.registerTool(
             exit_code: task.exit_code ?? null,
             changed_file_count: readTaskChanges(task).length,
             acceptance: acceptanceVerdict(task),
-            ...liveness(task),
+            ...compactLiveness(task),
             updated_at: task.updated_at ?? null
           }))
         : summaries

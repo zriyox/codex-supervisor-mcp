@@ -82,6 +82,14 @@ npx -p codex-supervisor-mcp codex-supervisor-web
 
 打开 `http://127.0.0.1:7877`。状态目录按 `SUPERVISOR_HOME`、最近的 `.mcp.json`、`~/.codex-supervisor` 的顺序找；端口用 `SUPERVISOR_WEB_PORT` 改。看板只看，不派单不取消。
 
+长门禁脚本可主动上报阶段：
+
+```bash
+node "$CODEX_SUPERVISOR_STAGE_CLI" "gate:s3" --detail "integration queue"
+```
+
+`current_stage` 会出现在 status / overview / wait，终态保留为 `last_stage`；不要放 token、密码或 DSN。
+
 ## 我自己怎么用
 
 能连 MCP 的都能当主线程，这里只是我的用法。我开两个 Claude Code 会话，一个只管文档，一个只管派活：一个会话又写详设又盯 worker，上下文两小时就满。
@@ -286,6 +294,7 @@ ownedPaths预留和任务入库在同一事务内，跨MCP并发派单/恢复不
 | `GIT_BIN` | `git` | Git 路径 |
 | `SUPERVISOR_WEB_PORT` / `SUPERVISOR_WEB_HOST` | `7877` / `127.0.0.1` | 看板监听地址 |
 | `CODEX_SUPERVISOR_NO_UPDATE_CHECK` | 未设 | `1` 关闭更新检查 |
+| `CODEX_SUPERVISOR_HANDOFF_TOKEN_THRESHOLD` | `300000` | native goal 累计 token 达到该值时 status/overview 标记 `handoff_recommended`；设 `0` 关闭 |
 | `CODEX_SUPERVISOR_REGISTRY` | `https://registry.npmjs.org` | 更新检查和自动更新用的 registry |
 | `CODEX_SUPERVISOR_UPDATE_TIMEOUT_MS` | `4000` | 等 registry 的上限 |
 | `CODEX_SUPERVISOR_NO_AUTO_UPDATE` | 未设 | `1` 关闭后台自动更新（只提醒） |

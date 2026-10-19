@@ -26,6 +26,7 @@ import {
 } from "./task-store.js";
 import { ACTIVE_STATUSES, TERMINAL_STATUSES } from "./status.js";
 import { worktreesDir } from "./paths.js";
+import { clearStage } from "./stage-store.js";
 import { buildGuardPreamble, frameWorkerPrompt } from "./prompt.js";
 import { cacheRoots, resolveWritableRoot } from "./sandbox-roots.js";
 import { readTaskChanges, snapshotTaskOutput } from "./worktree.js";
@@ -368,6 +369,7 @@ async function trackRunInHost({ record, args, prompt, logPath, spawnOptions = {}
   const guardPolicy = { cwd: record.cwd, worktree: record.cwd, sandbox: record.sandbox, ownedPaths: owned, ...(record.guard_policy ?? {}),
     allowedCommands: [...(record.guard_policy?.allowedCommands ?? []), ...(record.acceptance ?? []).map((check) => typeof check === "string" ? check : check.command)] };
   const guard = fileURLToPath(new URL("./tool-guard.js", import.meta.url));
+  const stageCli = fileURLToPath(new URL("./stage.js", import.meta.url));
   const quoteCommand = (path) => process.platform === "win32" ? `"${path.replace(/"/g, '""')}"` : `'${path.replace(/'/g, "'\\''")}'`;
   const hookCommand = `${quoteCommand(process.execPath)} ${quoteCommand(guard)}`;
   const configArgs = ["--output-schema", workerReportSchemaPath, "--dangerously-bypass-hook-trust", "-c",
@@ -387,10 +389,13 @@ async function trackRunInHost({ record, args, prompt, logPath, spawnOptions = {}
   const guardedArgs = [...args.slice(0, -1), ...configArgs, args.at(-1)];
   prompt = `${buildGuardPreamble(guardPolicy)}\n\n${prompt}`;
 
+  clearStage(record.id);
+
   const { child, spawnError, earlyOutput } = await spawnAndAwaitStart(target, guardedArgs, {
     stdio: ["pipe", "pipe", "pipe"],
     env: { ...process.env, NO_COLOR: "1", CODEX_SUPERVISOR_TASK_ID: record.id,
       CODEX_SUPERVISOR_BASE_COMMIT: record.base_commit ?? "",
+      CODEX_SUPERVISOR_STAGE_CLI: stageCli,
       CODEX_SUPERVISOR_RUN: String((record.run_count ?? 0) + 1), CODEX_SUPERVISOR_GUARD_POLICY: JSON.stringify(guardPolicy) },
     windowsHide: true,
     ...spawnOptions
