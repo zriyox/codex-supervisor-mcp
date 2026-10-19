@@ -16,6 +16,9 @@ test("workspaceSetup links dependencies, runs prepare, and exposes the link sour
   const { dir } = await makeRepo(join(home, "repo"));
   await mkdir(join(dir, "node_modules"));
   await writeFile(join(dir, "node_modules", "installed.txt"), "shared\n");
+  await writeFile(join(dir, ".gitignore"), "generated/\n");
+  git(dir, ["add", ".gitignore"]);
+  git(dir, ["commit", "-q", "-m", "ignore generated setup output"]);
   const argsLog = join(home, "args.jsonl");
   const setup = {
     links: [{ path: "node_modules", source: "node_modules" }],
@@ -49,6 +52,15 @@ test("workspaceSetup links dependencies, runs prepare, and exposes the link sour
     await waitFor(call, worker.id, settled);
     const second = await call("get_codex_worker_status", { task_id: worker.id });
     assert.equal(await readlink(join(second.worktree_path, "node_modules")), join(dir, "node_modules"));
+
+    await mkdir(join(second.worktree_path, "apps", "web", "src"), { recursive: true });
+    await writeFile(join(second.worktree_path, "apps", "web", "src", "page.vue"), "<template>ready</template>\n");
+    const landed = await call("land_codex_worker", { task_id: worker.id, commitMessage: "land owned frontend file" });
+    assert.ok(!landed.error, JSON.stringify(landed));
+    assert.equal(git(dir, ["show", "HEAD:apps/web/src/page.vue"]), "<template>ready</template>");
+    const committed = git(dir, ["ls-tree", "-r", "--name-only", "HEAD"]).split("\n");
+    assert.equal(committed.some((path) => path === "node_modules" || path.startsWith("node_modules/")), false);
+    assert.equal(committed.includes("generated/prepared.txt"), false);
 
     const runs = (await readFile(argsLog, "utf8")).trim().split("\n").map((line) => JSON.parse(line));
     const canonicalDir = await realpath(dir);

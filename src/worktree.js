@@ -12,7 +12,7 @@
 // base is the commit the worktree was created from.
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, lstatSync } from "node:fs";
-import { join } from "node:path";
+import { join, relative, resolve } from "node:path";
 import { truncateMiddleChars } from "./truncate.js";
 import { createHash } from "node:crypto";
 
@@ -71,7 +71,7 @@ export function readWorktreeChanges(worktreePath, { baseCommit = null, branch = 
   if (!worktreePath || !existsSync(worktreePath)) return [];
   const found = new Set();
   try {
-    const output = git(worktreePath, ["status", "--porcelain"]);
+    const output = git(worktreePath, ["status", "--porcelain", "--untracked-files=all"]);
     for (const entry of output.split("\n").map(parsePorcelainLine).filter(Boolean)) found.add(entry);
   } catch {
     return [];
@@ -97,7 +97,30 @@ export function readWorktreeChanges(worktreePath, { baseCommit = null, branch = 
 // file that does not fit is cut in the middle (truncated: true), and files
 // after the budget is spent come back without a patch so the list of what
 // changed is still complete.
-export function readWorktreeDiff(worktreePath, { baseCommit = null, branch = null } = {}, { maxChars = 60000, paths = [] } = {}) {
+function normalizedPath(path) {
+  return String(path ?? "").replace(/\\/g, "/").replace(/^\.\//, "").replace(/\/+$/, "");
+}
+
+function underPath(path, prefix) {
+  const file = normalizedPath(path);
+  const base = normalizedPath(prefix);
+  return base !== "" && (file === base || file.startsWith(`${base}/`));
+}
+
+export function workspaceSetupIgnorePaths(task) {
+  return (task?.workspace_metadata?.setup?.links ?? []).map((link) => normalizedPath(link.path));
+}
+
+export function filterWorkspaceSetupChanges(task, changes) {
+  const worktree = resolve(task?.worktree_path ?? task?.cwd ?? task?.project_root ?? ".");
+  const ignored = workspaceSetupIgnorePaths(task);
+  return (changes ?? []).filter((change) => {
+    const item = normalizedPath(relative(worktree, resolve(worktree, change)));
+    return !ignored.some((path) => underPath(item, path));
+  });
+}
+
+export function readWorktreeDiff(worktreePath, { baseCommit = null, branch = null } = {}, { maxChars = 60000, paths = [], ignorePaths = [] } = {}) {
   if (!worktreePath || !existsSync(worktreePath)) return { error: "no_worktree", files: [] };
   const base = resolveWorktreeBase(worktreePath, { baseCommit, branch });
   if (!base) return { error: "no_base_commit", files: [] };
@@ -108,6 +131,8 @@ export function readWorktreeDiff(worktreePath, { baseCommit = null, branch = nul
     // a worktree without a resolvable HEAD still has a working tree to diff
   }
   const scope = Array.isArray(paths) && paths.length > 0 ? ["--", ...paths] : [];
+  const ignored = ignorePaths.map(normalizedPath);
+  const isIgnored = (path) => ignored.some((entry) => underPath(path, entry));
 
   const files = [];
   const known = new Set();
@@ -115,7 +140,7 @@ export function readWorktreeDiff(worktreePath, { baseCommit = null, branch = nul
     for (const line of nonEmptyLines(git(worktreePath, ["diff", "--name-status", "-M", base, ...scope]))) {
       const [code, ...rest] = line.split("\t");
       const path = rest.at(-1);
-      if (!path) continue;
+      if (!path || isIgnored(path)) continue;
       known.add(path);
       files.push({ path, status: statusWord(code), from: code.startsWith("R") && rest.length > 1 ? rest[0] : null });
     }
@@ -126,7 +151,8 @@ export function readWorktreeDiff(worktreePath, { baseCommit = null, branch = nul
   try {
     for (const line of nonEmptyLines(git(worktreePath, ["diff", "--numstat", "-M", base, ...scope]))) {
       const [added, deleted, ...rest] = line.split("\t");
-      counts.set(rest.at(-1), { additions: added === "-" ? null : Number(added), deletions: deleted === "-" ? null : Number(deleted) });
+      const path = rest.at(-1);
+      if (!isIgnored(path)) counts.set(path, { additions: added === "-" ? null : Number(added), deletions: deleted === "-" ? null : Number(deleted) });
     }
   } catch {
     // counts are decoration
@@ -137,7 +163,7 @@ export function readWorktreeDiff(worktreePath, { baseCommit = null, branch = nul
     for (const line of git(worktreePath, ["status", "--porcelain", "--untracked-files=all", ...scope]).split("\n")) {
       if (!line.startsWith("??")) continue;
       const path = parsePorcelainLine(line);
-      if (!path || known.has(path)) continue;
+      if (!path || isIgnored(path) || known.has(path)) continue;
       known.add(path);
       files.push({ path, status: "untracked", from: null });
     }
@@ -236,14 +262,14 @@ export function worktreeRef(task) {
 }
 
 export function readTaskChanges(task) {
-  return mergeChangedFiles(task.changed_files, readWorktreeChanges(task.worktree_path, worktreeRef(task)));
+  return filterWorkspaceSetupChanges(task, mergeChangedFiles(task.changed_files, readWorktreeChanges(task.worktree_path, worktreeRef(task))));
 }
 
 // Compare output at this run's start/end, rather than treating the previous
 // run's committed or uncommitted work as fresh evidence. If the bounded read
 // cannot prove the full state, leave the fingerprint unknown.
 export function snapshotTaskOutput(task) {
-  const diff = readWorktreeDiff(task.worktree_path, worktreeRef(task), { maxChars: 2_000_000 });
+  const diff = readWorktreeDiff(task.worktree_path, worktreeRef(task), { maxChars: 2_000_000, ignorePaths: workspaceSetupIgnorePaths(task) });
   if (diff.error || diff.truncated_files > 0 || diff.files.some((file) => file.patch == null)) return null;
   try {
     let remaining = 2_000_000;

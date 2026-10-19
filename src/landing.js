@@ -9,7 +9,7 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, rmSync } from "node:fs";
 import { join, relative } from "node:path";
-import { parsePorcelainLine, resolveWorktreeBase, worktreeRef, readWorktreeChanges, readWorktreeDiff } from "./worktree.js";
+import { filterWorkspaceSetupChanges, parsePorcelainLine, resolveWorktreeBase, worktreeRef, readWorktreeChanges, readWorktreeDiff, workspaceSetupIgnorePaths } from "./worktree.js";
 import { findOutsideOwnedChanges } from "./owned-changes.js";
 
 const defaultGitBin = process.env.GIT_BIN?.trim() || "git";
@@ -137,9 +137,9 @@ export function landWorker(task, { onto = null, commitMessage = null, ignoreAcce
   const base = resolveWorktreeBase(task.worktree_path, worktreeRef(task));
   if (!base) return { error: "no_base_commit", reason: "the commit this worker started from is unknown, so its commits cannot be told apart" };
   if (!allowOutsideOwned) {
-    const diff = readWorktreeDiff(task.worktree_path, worktreeRef(task), { maxChars: 0 });
+    const diff = readWorktreeDiff(task.worktree_path, worktreeRef(task), { maxChars: 0, ignorePaths: workspaceSetupIgnorePaths(task) });
     if (diff.error) return { error: "ownership_unverified", reason: "cannot prove the complete diff before landing", diff_error: diff.error };
-    const paths = [...readWorktreeChanges(task.worktree_path, worktreeRef(task)),
+    const paths = [...filterWorkspaceSetupChanges(task, readWorktreeChanges(task.worktree_path, worktreeRef(task))),
       ...diff.files.flatMap((file) => [file.path, file.from].filter(Boolean).map((path) => join(task.worktree_path, path)))];
     const { outside } = findOutsideOwnedChanges(task, [...new Set(paths)]);
     if (outside.length) return { error: "outside_owned_paths", reason: "worker changes exceed declared ownedPaths; review them and obtain explicit authorization before allowing an exception", outside_paths: outside.map((entry) => relative(task.worktree_path, entry)) };
@@ -154,7 +154,9 @@ export function landWorker(task, { onto = null, commitMessage = null, ignoreAcce
   let committedForWorker = null;
   if (uncommitted.length > 0 && commitMessage) {
     try {
-      git(task.worktree_path, ["add", "-A"]);
+      const owned = findOutsideOwnedChanges(task, []).mapping.map((entry) => relative(task.worktree_path, entry.worker));
+      if (owned.length === 0) return { error: "outside_owned_paths", reason: "the worker left uncommitted changes but owns no landable path" };
+      git(task.worktree_path, ["add", "-A", "--", ...owned]);
       if (hasStagedChanges(task.worktree_path)) {
         git(task.worktree_path, ["commit", "-q", "-m", commitMessage]);
         committedForWorker = git(task.worktree_path, ["rev-parse", "HEAD"]).trim();

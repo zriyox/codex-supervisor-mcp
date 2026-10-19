@@ -59,7 +59,7 @@ import {
 import { readNativeGoal, readNativeGoalState } from "./goal-store.js";
 import { collectWorkerChanges } from "./worker-changes.js";
 import { buildHostGoalSync } from "./prompt.js";
-import { baseBehind, readTaskChanges, readWorktreeDiff, splitPatchHunks, worktreeRef } from "./worktree.js";
+import { baseBehind, readTaskChanges, readWorktreeDiff, splitPatchHunks, workspaceSetupIgnorePaths, worktreeRef } from "./worktree.js";
 import { summarizeVerification } from "./event-parser.js";
 import { readPreflightResult } from "./worker-preflight.js";
 import { acceptanceVerdict, runAcceptance } from "./acceptance.js";
@@ -1727,7 +1727,7 @@ server.registerTool(
       return textResult({ error: "no_worktree", task_id, external_outputs: externalOutputView(task, maxChars), reason: "this worker ran in place (its cwd is not a git repository or the worktree could not be created), so there is no isolated diff to read; call get_worker_result with includeFiles: true for the files it touched" });
     }
     if (!file && maxChars !== undefined) {
-      const diff = readWorktreeDiff(task.worktree_path, worktreeRef(task), { maxChars, paths: paths ?? [] });
+      const diff = readWorktreeDiff(task.worktree_path, worktreeRef(task), { maxChars, paths: paths ?? [], ignorePaths: workspaceSetupIgnorePaths(task) });
       return textResult({
         task_id,
         title: task.title,
@@ -1738,7 +1738,7 @@ server.registerTool(
         external_outputs: externalOutputView(task, maxChars)
       });
     }
-    const diff = readWorktreeDiff(task.worktree_path, worktreeRef(task), { maxChars: 10_000_000, paths: paths ?? [] });
+    const diff = readWorktreeDiff(task.worktree_path, worktreeRef(task), { maxChars: 10_000_000, paths: paths ?? [], ignorePaths: workspaceSetupIgnorePaths(task) });
     if (diff.error) return textResult({ ...diff, task_id });
     const files = diff.files.map((entry) => {
       const parsed = splitPatchHunks(entry);
