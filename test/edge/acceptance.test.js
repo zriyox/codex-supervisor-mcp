@@ -382,11 +382,17 @@ test("a cancelled worker runs no checks; an interrupted run is reconciled and re
     .run(JSON.stringify({ status: "running", passed: null, run: 1, supervisor_pid: 2 ** 22 - 1, started_at: new Date().toISOString() }), id);
   db.close();
   await withMcp({ SUPERVISOR_HOME: home }, async ({ call }) => {
-    const waited = await call("wait_codex_workers", { task_ids: [id], compact: true, timeoutMs: 3000 });
+    // The row is half-written until reconciliation has proved both owner
+    // processes are gone and the grace period has elapsed. Then it becomes
+    // resumable lost work instead of staying completed forever.
+    const waited = await call("wait_codex_workers", { task_ids: [id], compact: true, timeoutMs: 8000 });
     assert.equal(waited.timed_out, false, "a dead supervisor pid settles the wait");
+    assert.equal(waited.termination_reason, "settled");
     assert.equal(waited.workers[0].acceptance, "interrupted");
+    assert.equal(waited.workers[0].status, "lost");
     const status = await call("get_codex_worker_status", { task_id: id });
     assert.match(status.current_action, /interrupted/);
+    assert.match(status.error, /before acceptance/);
     const refused = await call("land_codex_worker", { task_id: id });
     assert.equal(refused.error, "acceptance_not_run");
   });

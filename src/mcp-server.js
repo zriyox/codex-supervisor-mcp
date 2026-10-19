@@ -210,7 +210,9 @@ function isSettled(task) {
   // Acceptance is running in the supervisor process that owned the worker;
   // the codex pid is already dead, so that process is what to wait on.
   if (task.acceptance_results?.status === "running") return !isPidAlive(task.acceptance_results.supervisor_pid);
-  if (["interrupted", "cancelled"].includes(task.acceptance_results?.status)) return true;
+  if (["interrupted", "cancelled"].includes(task.acceptance_results?.status)) {
+    return task.exit_code !== null && task.exit_code !== undefined;
+  }
   if (task.exit_code !== null && task.exit_code !== undefined) return true;
   // A dead Codex pid does not prove that its owner's close handler finished
   // draining the stream and writing the exit status. Leave the half-written

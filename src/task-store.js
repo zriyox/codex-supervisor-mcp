@@ -667,11 +667,17 @@ export async function reconcileDetachedActiveTasks() {
   await reconcileInterruptedAcceptance();
   const incomplete = (await readTasks()).filter((task) =>
     ["completed", "failed"].includes(task.status) && task.exit_code == null && task.started_at
-    && !isPidAlive(task.pid) && !isPidAlive(task.run_host_pid) && !task.acceptance_results
+    && !isPidAlive(task.pid) && !isPidAlive(task.run_host_pid)
+    && (!task.acceptance_results || ["interrupted", "cancelled"].includes(task.acceptance_results.status))
     && Date.now() - Date.parse(task.updated_at) > 5000);
   for (const task of incomplete) {
     await writeTask({ ...task, status: "lost", phase: null,
-      error: "Worker ended but its supervisor did not record the process exit; recover this run before treating it as complete",
+      error: task.acceptance_results?.status === "interrupted"
+        ? "Worker ended but its supervisor did not record the process exit before acceptance; resume this run"
+        : "Worker ended but its supervisor did not record the process exit; recover this run before treating it as complete",
+      current_action: task.acceptance_results?.status === "interrupted"
+        ? "Acceptance interrupted: worker process exit was not recorded; resume this run"
+        : "Resume required: process exit was not recorded",
       updated_at: new Date().toISOString() });
   }
   const tasks = await readActiveTasks();
