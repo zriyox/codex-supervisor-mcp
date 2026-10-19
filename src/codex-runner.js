@@ -367,7 +367,14 @@ async function trackRunInHost({ record, args, prompt, logPath, spawnOptions = {}
   const externalBefore = await captureExternalOutputs(record.guard_policy?.externalOutputs ?? [], { checkBaseline: (record.run_count ?? 0) === 0 });
   const owned = [...findOutsideOwnedChanges(record, []).mapping.map((entry) => entry.worker), ...externalBefore.map((entry) => entry.path)];
   const guardPolicy = { cwd: record.cwd, worktree: record.cwd, sandbox: record.sandbox, ownedPaths: owned, ...(record.guard_policy ?? {}),
-    allowedCommands: [...(record.guard_policy?.allowedCommands ?? []), ...(record.acceptance ?? []).map((check) => typeof check === "string" ? check : check.command)] };
+    allowedCommands: [
+      ...(record.guard_policy?.allowedCommands ?? []),
+      ...(record.acceptance ?? []).map((check) => typeof check === "string" ? check : check.command),
+      // This CLI writes only data/stages/<this task>.json. It is part of the
+      // runtime contract, not an ad-hoc command the model must declare. The
+      // task id comes from the injected environment; stage.js has no override.
+      'node "$CODEX_SUPERVISOR_STAGE_CLI"*'
+    ] };
   const guard = fileURLToPath(new URL("./tool-guard.js", import.meta.url));
   const stageCli = fileURLToPath(new URL("./stage.js", import.meta.url));
   const quoteCommand = (path) => process.platform === "win32" ? `"${path.replace(/"/g, '""')}"` : `'${path.replace(/'/g, "'\\''")}'`;
