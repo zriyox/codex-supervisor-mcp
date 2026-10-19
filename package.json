@@ -87,6 +87,7 @@
     "cleanup": "node ./src/cleanup.js",
     "test": "node ./src/bin-resolver-test.js && node ./src/truncate-test.js && node ./src/status-test.js && node ./src/migration-test.js && node ./src/setup-test.js && node ./src/setup-windows-test.js && node ./src/regression-test.js && node --test test/edge/*.test.js",
     "test:real": "node ./src/real-codex-test.js",
+    "test:real:multi": "node ./src/multi-project-real-test.js",
     "smoke": "node ./src/smoke-test.js",
     "smoke:followup": "node ./src/followup-smoke-test.js",
     "smoke:mcp": "node ./src/mcp-smoke-test.js",
