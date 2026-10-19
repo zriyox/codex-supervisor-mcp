@@ -51,7 +51,7 @@ worker 默认不是调度员：启动时会禁用它继承到的 `codex-supervis
 
 同批公共门禁用 `describe_session.default_acceptance`，自动追加本路验收；更新目标/门禁传 `expected_revision`，避免旧窗口覆盖。需要用户拍板时设 `approval_state: waiting_user`，不得自动resume；获批改approved并同步宿主goal。回执host_goal_sync给当前策略的/goal命令；宿主已有原生goal时，用/goal替换条件，支持ProposeGoal时提议同一condition并走宿主批准。这个条件要求读取最新session revision，批准旧失败或waiting_user后不再追旧目标；工具不偷偷改/禁用Stop hook。
 
-wait默认60秒和compact，带includeEvents则详细返回；客户端带progress token时每30秒收到通知。已实测Claude2.1.299在35秒idle下收到三次progress，65秒wait正常返回；通知不能唤醒关闭的宿主。/loop实测可定时调用，主窗口须保持运行。
+wait默认60秒和compact，带includeEvents则详细返回；默认不推周期 heartbeat，只有显式 `emitProgress: true` 才在客户端带 progress token 时每30秒通知。需要一条长 wait 被宿主转后台后只收终态，就保持默认；需要桌面进度才 opt-in。返回的 `termination_reason` 区分 `settled` / `budget_exhausted` / `client_cancelled`，通知不能唤醒关闭的宿主。/loop实测可定时调用，主窗口须保持运行。
 
 派单写forbid红线、allowedCommands验证命令；runtime守卫按次注入并随resume/followup继承。apply_patch核对ownedPaths；安全只读检查（rg/cat/sed无-i/git只读/jq无-i/find无-exec或-delete）默认允许且不占其他 worker 的写路径，写入/执行/有副作用的 Shell 命令必须显式声明；声明脚本可以有副作用，须先核对，不能当万能文件沙箱。no_work表示本轮write无输出变化且没跑命令；先看run_evidence，不拿上轮提交/命令当本轮完成。
 

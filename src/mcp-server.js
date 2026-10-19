@@ -947,6 +947,7 @@ server.registerTool(
       timeoutMinutes: z.number().int().min(1).max(360).default(1),
       timeoutMs: z.number().int().min(1000).max(21600000).optional(),
       pollMs: z.number().int().min(250).max(10000).default(1000),
+      emitProgress: z.boolean().default(false),
       // Off by default. A wait is the call clients background and then replay
       // as a notification, so its payload has to stay small; ten events per
       // worker was the bulk of it. Ask for events explicitly, or read
@@ -971,6 +972,7 @@ server.registerTool(
     timeoutMinutes,
     timeoutMs,
     pollMs,
+    emitProgress,
     includeEvents,
     eventLimit,
     eventMaxChars,
@@ -984,15 +986,16 @@ server.registerTool(
     const progressToken = extra?._meta?.progressToken;
     let lastProgressAt = -Infinity;
 
+    let clientCancelled = false;
     while (Date.now() - startedAt < effectiveTimeoutMs) {
-      if (extra?.signal.aborted) break;
+      if (extra?.signal.aborted) { clientCancelled = true; break; }
       await reconcileDetachedActiveTasks();
       tasks = (await getTasks(task_ids)).filter(Boolean);
       const settledCount = tasks.filter(isSettled).length;
       const isDone = mode === "any" ? settledCount > 0 : settledCount === task_ids.length;
       if (isDone) break;
       const elapsed = Date.now() - startedAt;
-      if (progressToken != null && elapsed - lastProgressAt >= 30000) {
+      if (emitProgress && progressToken != null && elapsed - lastProgressAt >= 30000) {
         await extra.sendNotification({ method: "notifications/progress", params: {
           progressToken, progress: elapsed, total: effectiveTimeoutMs,
           message: `${settledCount}/${task_ids.length} workers settled; wait budget only`
@@ -1029,6 +1032,7 @@ server.registerTool(
       mode,
       timed_out: timedOut,
       still_running: timedOut,
+      termination_reason: clientCancelled ? "client_cancelled" : timedOut ? "budget_exhausted" : "settled",
       next_step: timedOut
         ? `Workers are still running; the ${budgetLabel} wait budget ran out, not the workers. Call wait_codex_workers again with the same task_ids, or use get_orchestration_overview for a cheap progress read. Raise timeoutMinutes only if your client's MCP tool timeout allows it.`
         : null,
