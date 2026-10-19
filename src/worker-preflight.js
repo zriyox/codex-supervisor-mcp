@@ -27,6 +27,13 @@ export function normalizeObservedCommand(command) {
   let body = wrapped[1].trim();
   const quote = body[0];
   if ((quote === "'" || quote === '"') && body.at(-1) === quote) body = body.slice(1, -1);
+  // Codex may display the wrapped command with JSON-style escaped quotes.
+  // Decode those before reversing zsh's display-only quote insertions.
+  body = body.replace(/\\"/g, '"');
+  // An interactive zsh protects history expansion and quoted literals by
+  // inserting "' around them, for example if("'!ready) and ('"'setup').
+  // Both are display artifacts, not part of the command that ran.
+  body = body.replace(/"'/g, "");
   // Codex displays a shell command that already contains single quotes by
   // closing and reopening the outer quote around them: -run '"^Test$'"'.
   // Decode that display-only wrapping before comparing it with the contract.
