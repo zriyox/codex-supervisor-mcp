@@ -80,7 +80,10 @@ try {
   };
   const probes = [
     "node --version",
-    "test -f node_modules/example-dep/index.js && test -f vendor-lib/lib.txt && test -f .prepared/status && test -f 资料/说明.txt"
+    "test -f node_modules/example-dep/index.js",
+    "test -f vendor-lib/lib.txt",
+    "test -f .prepared/status",
+    "test -f 资料/说明.txt"
   ];
   const chineseProbe = "head -n 1 资料/说明.txt | grep 中文";
 
