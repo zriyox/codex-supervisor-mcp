@@ -54,6 +54,7 @@ export function buildRuntimeContract({
   writableRoots,
   context,
   contracts,
+  workspaceSetup = null,
   workspaceKind = "git_worktree",
   workspaceManifestSha256 = null
 }) {
@@ -71,7 +72,8 @@ export function buildRuntimeContract({
     context: (context ?? [])
       .map((entry) => ({ path: resolve(entry.path), sha256: entry.sha256 ?? null }))
       .sort((left, right) => left.path.localeCompare(right.path)),
-    contracts: uniqueSorted(contracts)
+    contracts: uniqueSorted(contracts),
+    workspace_setup: stableValue(workspaceSetup)
   });
 }
 

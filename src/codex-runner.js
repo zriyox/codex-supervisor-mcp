@@ -1,8 +1,8 @@
 import { createWriteStream, existsSync } from "node:fs";
-import { mkdir, rm, stat } from "node:fs/promises";
+import { lstat, mkdir, realpath, rm, stat, symlink } from "node:fs/promises";
 import { createHash, randomUUID } from "node:crypto";
 import { execFileSync, spawn } from "node:child_process";
-import { join, resolve, sep, dirname, isAbsolute } from "node:path";
+import { basename, join, resolve, relative, sep, dirname, isAbsolute } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   appendTaskEvent,
@@ -167,6 +167,71 @@ async function ensureWorktree(cwd, taskId, baseRef = null) {
   }
 }
 
+function insidePath(parent, child) {
+  const rel = relative(parent, child);
+  return rel === "" || (!rel.startsWith(`..${sep}`) && rel !== ".." && !isAbsolute(rel));
+}
+
+function normalizeWorkspaceSetup(value, projectRoot) {
+  if (value == null) return null;
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("workspaceSetup must be an object");
+  const links = (value.links ?? []).map((entry) => {
+    if (!entry || typeof entry.path !== "string" || !entry.path.trim()
+      || typeof entry.source !== "string" || !entry.source.trim()) throw new Error("workspaceSetup.links requires path and source");
+    const path = entry.path.trim();
+    if (isAbsolute(path) || path.split(/[\\/]/).includes("..")) throw new Error(`workspaceSetup link path must stay inside the worktree: ${path}`);
+    return { path, source: resolve(projectRoot, entry.source.trim()) };
+  });
+  const commands = (value.commands ?? []).map((command) => String(command).trim()).filter(Boolean);
+  if (links.length > 20 || commands.length > 20) throw new Error("workspaceSetup accepts at most 20 links and 20 commands");
+  const submodules = value.submodules === true;
+  return links.length || submodules || commands.length ? { links, submodules, commands } : null;
+}
+
+async function prepareWorktreeWorkspace(setup, projectRoot, worktreePath, taskId) {
+  if (!setup) return;
+  for (const link of setup.links) {
+    if (!existsSync(link.source)) throw new Error(`workspaceSetup link source does not exist: ${link.source}`);
+    const destination = resolve(worktreePath, link.path);
+    if (!insidePath(worktreePath, destination)) throw new Error(`workspaceSetup link escapes the worktree: ${link.path}`);
+    await mkdir(dirname(destination), { recursive: true });
+    if (existsSync(destination)) {
+      const existing = await lstat(destination);
+      if (!existing.isSymbolicLink()) throw new Error(`workspaceSetup link destination already exists: ${link.path}`);
+      const [actual, expected] = await Promise.all([realpath(destination), realpath(link.source)]);
+      if (actual !== expected) throw new Error(`workspaceSetup link destination points elsewhere: ${link.path}`);
+      continue;
+    }
+    const sourceInfo = await stat(link.source);
+    await symlink(link.source, destination, process.platform === "win32" ? "junction" : sourceInfo.isDirectory() ? "dir" : "file");
+    if (basename(link.path) === "node_modules" && sourceInfo.isDirectory()) {
+      for (const name of [".vite", ".vite-temp", ".cache"]) await mkdir(join(link.source, name), { recursive: true });
+    }
+  }
+  if (setup.submodules) {
+    await runCommand(defaultGitBin, ["-c", "protocol.file.allow=always", "-C", worktreePath, "submodule", "update", "--init", "--recursive"]);
+  }
+  if (setup.commands.length) {
+    const result = await runAcceptance(setup.commands, { cwd: worktreePath, taskId, timeoutMs: DEFAULT_ACCEPTANCE_TIMEOUT_MS });
+    if (!result.passed) {
+      const failing = result.checks.find((check) => !check.passed);
+      throw new Error(`workspaceSetup command failed: ${failing?.command ?? "unknown"}${failing?.output_tail ? `\n${failing.output_tail}` : ""}`);
+    }
+  }
+}
+
+function workspaceSetupCacheRoots(record) {
+  const roots = [];
+  for (const link of record.workspace_metadata?.setup?.links ?? []) {
+    if (basename(link.path) !== "node_modules") continue;
+    for (const name of [".vite", ".vite-temp", ".cache"]) {
+      const candidate = resolveWritableRoot(join(link.source, name));
+      if (!candidate.error) roots.push(candidate.path);
+    }
+  }
+  return roots;
+}
+
 function sleep(ms) {
   return new Promise((resolvePromise) => setTimeout(resolvePromise, ms));
 }
@@ -311,7 +376,12 @@ async function trackRunInHost({ record, args, prompt, logPath, spawnOptions = {}
   // must not inherit this supervisor and create a second orchestration tree.
   configArgs.push(...supervisorMcpDisableArgs());
   configArgs.push("-c", `sandbox_workspace_write.network_access=${record.guard_policy?.networkAccess === true}`);
-  const sandboxWritableRoots = [...new Set([...externalBefore.map((file) => dirname(file.path)), ...cacheRoots(), ...(record.guard_policy?.writableRoots ?? [])])];
+  const sandboxWritableRoots = [...new Set([
+    ...externalBefore.map((file) => dirname(file.path)),
+    ...cacheRoots(),
+    ...workspaceSetupCacheRoots(record),
+    ...(record.guard_policy?.writableRoots ?? [])
+  ])];
   if (sandboxWritableRoots.length) configArgs.push("-c", `sandbox_workspace_write.writable_roots=${JSON.stringify(sandboxWritableRoots)}`);
   // Insert before the prompt/session positional arguments for exec/resume.
   const guardedArgs = [...args.slice(0, -1), ...configArgs, args.at(-1)];
@@ -806,6 +876,7 @@ export async function createCodexWorker({
   followupOf = null,
   workspaceKind = null,
   inPlaceAuthorization = null,
+  workspaceSetup = null,
   baseRef = null,
   preflightId = null,
   preflight = null,
@@ -874,6 +945,8 @@ export async function createCodexWorker({
   });
   const projectRoot = workspace.sourceRoot;
   const normalizedOwnedPaths = normalizeOwnedPaths([...ownedPaths, ...externalOutputs.map((entry) => entry.path)], projectRoot);
+  const normalizedWorkspaceSetup = normalizeWorkspaceSetup(workspaceSetup, projectRoot);
+  if (normalizedWorkspaceSetup && workspace.kind !== "git_worktree") throw new Error("workspaceSetup is only supported for git_worktree workers");
   const conflicts = await findOwnershipConflicts(normalizedOwnedPaths);
   if (conflicts.length > 0) throw ownershipConflictError(conflicts);
 
@@ -897,6 +970,15 @@ export async function createCodexWorker({
     const error = new Error("workspaceKind git_worktree could not create an isolated worktree; use read_only_in_place for a non-writing inspection or initialize and commit the repository first");
     error.code = "git_worktree_unavailable";
     throw error;
+  }
+  if (normalizedWorkspaceSetup) {
+    try {
+      await prepareWorktreeWorkspace(normalizedWorkspaceSetup, projectRoot, worktreePath, id);
+    } catch (error) {
+      await runCommand(defaultGitBin, ["-C", projectRoot, "worktree", "remove", worktreePath]).catch(() => {});
+      await runCommand(defaultGitBin, ["-C", projectRoot, "branch", "-D", `codex/${id}`]).catch(() => {});
+      throw error;
+    }
   }
   const effectiveCwd = worktreePath ?? workspace.executionCwd;
   if (preflight && (!Array.isArray(preflight.probeCommands) || preflight.probeCommands.length === 0
@@ -930,6 +1012,7 @@ export async function createCodexWorker({
     writableRoots: guardPolicy.writableRoots,
     context,
     contracts,
+    workspaceSetup: normalizedWorkspaceSetup,
     workspaceKind: workspace.kind,
     workspaceManifestSha256: workspace.beforeManifest?.sha256 ?? null
   });
@@ -953,7 +1036,8 @@ export async function createCodexWorker({
       before_manifest: workspace.beforeManifest,
       in_place_authorization: workspace.kind === "in_place_write" ? String(inPlaceAuthorization).trim() : null,
       landable: workspace.landable,
-      cleanable: workspace.cleanable
+      cleanable: workspace.cleanable,
+      setup: normalizedWorkspaceSetup
     },
     sandbox,
     model,
@@ -1335,7 +1419,8 @@ export async function createFollowupWorker({
   maxRunMs,
   maxTotalMs,
   workspaceKind,
-  inPlaceAuthorization
+  inPlaceAuthorization,
+  workspaceSetup
 }) {
   const parent = await getTask(taskId);
   if (!parent) throw new Error(`task not found: ${taskId}`);
@@ -1389,6 +1474,7 @@ export async function createFollowupWorker({
     followupOf: parent.id,
     workspaceKind: workspaceKind ?? (parent.workspace_kind === "legacy" ? null : parent.workspace_kind),
     inPlaceAuthorization: inPlaceAuthorization ?? parent.workspace_metadata?.in_place_authorization ?? null,
+    workspaceSetup: workspaceSetup ?? parent.workspace_metadata?.setup ?? null,
     baseRef: baseRef ?? null,
     // Inherited unless given; the follow-up runs in a fresh worktree cut
     // from the project HEAD, so the parent's checks only pass there once

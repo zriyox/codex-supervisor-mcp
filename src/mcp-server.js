@@ -566,6 +566,14 @@ const acceptanceCheck = z.union([
   }).strict()
 ]);
 const acceptanceInput = z.union([z.string().min(1), z.array(acceptanceCheck).max(10)]);
+const workspaceSetupInput = z.object({
+  links: z.array(z.object({
+    path: z.string().min(1),
+    source: z.string().min(1)
+  }).strict()).max(20).optional(),
+  submodules: z.boolean().optional(),
+  commands: z.array(z.string().min(1)).max(20).optional()
+}).strict();
 
 const observerId = process.env.CODEX_SUPERVISOR_OBSERVER_ID?.trim() || `mcp-${randomUUID()}`;
 const deltaObserverId = process.env.CODEX_SUPERVISOR_DELTA_OBSERVER_ID?.trim() || `${observerId}:delta`;
@@ -672,6 +680,7 @@ server.registerTool(
       baseRef: z.string().min(1).optional(),
       workspaceKind: z.enum(["git_worktree", "read_only_in_place", "scratch", "in_place_write"]).optional(),
       inPlaceAuthorization: z.string().min(1).max(2000).optional(),
+      workspaceSetup: workspaceSetupInput.optional(),
       probeCommands: z.array(z.string().min(1)).min(1).max(20)
     }
   },
@@ -759,6 +768,7 @@ server.registerTool(
       baseRef: z.string().min(1).optional(),
       workspaceKind: z.enum(["git_worktree", "read_only_in_place", "scratch", "in_place_write"]).optional(),
       inPlaceAuthorization: z.string().min(1).max(2000).optional(),
+      workspaceSetup: workspaceSetupInput.optional(),
       // A successful preflight_codex_worker task id. When present, this worker
       // is refused unless base commit and the complete runtime contract match.
       preflight_id: z.string().min(1).optional(),
@@ -813,6 +823,7 @@ server.registerTool(
       maxTotalMs: z.number().int().min(1000).max(604800000).optional(),
       workspaceKind: z.enum(["git_worktree", "read_only_in_place", "scratch", "in_place_write"]).optional(),
       inPlaceAuthorization: z.string().min(1).max(2000).optional(),
+      workspaceSetup: workspaceSetupInput.optional(),
       goal: z
         .object({
           objective: z.string().min(1),

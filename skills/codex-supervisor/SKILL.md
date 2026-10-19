@@ -27,6 +27,7 @@ worker 默认不是调度员：启动时会禁用它继承到的 `codex-supervis
 | `cwd` | Git 项目根，或非 Git 输入目录；实际执行目录由 `workspaceKind` 决定，不能默认写原目录 |
 | `workspaceKind` | Git 代码默认 `git_worktree`；非 Git 只读用 `read_only_in_place`，联网研究用 `scratch`，要改用户非 Git 目录只能显式 `in_place_write` |
 | `inPlaceAuthorization` | 仅 `in_place_write`：写明用户授权原因；同时必须有非空 `ownedPaths` 和 `acceptance`，系统记录前后 manifest |
+| `workspaceSetup` | 仅 Git worktree，在 worker 启动前完成环境准备：`links` 把主仓依赖链接进 worktree；`submodules: true` 初始化子模块；`commands` 跑 `nuxi prepare` 等准备工作。setup 失败会在派单阶段回收 worktree。链接名为 `node_modules` 时自动把 `.vite`、`.vite-temp`、`.cache` 放进该 worker 可写缓存根 |
 | `acceptance` | 这一步"做完了"的判据，worker 退出后 supervisor 在它的 worktree 里逐条跑。写 worker 不能只用 `test -s/-f`、`[ -e ]` 这类文件存在性检查；要有真实 test、endpoint probe 或结构化执行证据。识别到的 test runner 输出 `no tests to run` / `[no test files]` 即使 exit 0 也失败。必跑用例、skip、旧报告和失败身份用 `{command,reportPath,baseline}` 结构化验收证明；远端机器的检查包进 `ssh` |
 | `forbid` / `allowedCommands` | 原样声明红线与验证命令；守卫拒绝未声明Shell程序，编辑用apply_patch |
 | `writableRoots` | 只有需要凭据目录时才传（绝对路径、已存在、自动解析软链、只对 workspace-write 生效）：ssh/远程测试 → `["~/.ssh"]`；kubectl → `["~/.kube"]`；推私有镜像 → `["~/.docker"]`；aws cli → `["~/.aws"]`；签名提交 → `["~/.gnupg"]`。缓存目录不用写，已经自动加 |
@@ -78,6 +79,8 @@ check_workers可对已死的第1轮lost/no_work/invalid_report自动resume一次
 远端编译/ssh在workspace-write显式networkAccess:true，默认false，resume/followup继承；不要用danger-full-access代替联网配置。需要时声明maxRunMs/maxTotalMs，超限保留partial work并提示处理，不自动恢复；wait预算与quota分开。
 
 沙箱只放工作区、临时目录、OS cache目录（macOS ~/Library/Caches、Linux ~/.cache、Windows %LOCALAPPDATA%）以及home下已存在的工具链缓存目录（.cargo/.npm/.yarn/.pnpm-store/.bun/.m2/.gradle/.nuget/.ivy2/.bundle/.composer/.pub-cache/.mix/.hex/.stack/.cpanm/.deno/.conda、go/pkg）。Go build cache（平台默认 `go-build` 或显式 `GOCACHE`）会单独解析 realpath 并放行真实目录，所以它指向外置盘 symlink 时 worker 也能用；其他语言也不需要逐个加环境变量。**凭据目录一律不自动放开**（.ssh/.gnupg/.config/.aws/.docker/.kube/.netrc/.git-credentials/~/Library/Keychains）：ssh 连服务器要写 known_hosts、kubectl、推私有镜像、签名提交这类需求，派单时按参数表显式传 writableRoots，只在这一路生效、随 resume/followup 继承。SUPERVISOR_NO_AUTO_CACHE_ROOTS=1 关掉全部自动缓存根，显式声明的照常生效。Codex 拒绝含软链的可写根，所以自动 cache 与 `writableRoots` 都先按 realpath 解析；解析不到无软链路径的根直接不传。其他 cache 在别处（如 ~/.m2、~/.gradle、vendor 镜像）就传 `writableRoots:[绝对路径]`（已存在目录、最多20个、只对workspace-write生效、随resume/followup继承）；能只读复用就不用传。
+
+前端多 worktree 的标准派单不要让人手补目录：`workspaceSetup: { links: [{ path: "node_modules", source: "node_modules" }], commands: ["npx nuxi prepare"] }`；后端有 proto 等子模块时用 `workspaceSetup: { submodules: true }`。同一个 setup 必须同时传给 preflight 和目标 worker，contract 才会匹配。
 
 Codex需0.162+支持hooks/output-schema，能力不够派单start_failed先修CLI。goal查询看native_goal_read，missing与locked/read_error分开；budget/usage限制也要处理。cleanup保留ignored成果、共享证据及未解决attention。
 
