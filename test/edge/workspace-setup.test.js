@@ -64,11 +64,18 @@ test("workspaceSetup links dependencies, runs prepare, and exposes the link sour
 
     const runs = (await readFile(argsLog, "utf8")).trim().split("\n").map((line) => JSON.parse(line));
     const canonicalDir = await realpath(dir);
-    const expected = [
+    const canonical = async (entry) => {
+      const resolved = await realpath(entry);
+      return process.platform === "win32" ? resolved.toLowerCase() : resolved;
+    };
+    const expected = await Promise.all([
       join(canonicalDir, "node_modules"),
       ...[".vite", ".vite-temp", ".cache"].map((name) => join(canonicalDir, "node_modules", name))
-    ];
-    for (const run of runs.slice(-2)) assert.deepEqual(expected.filter((root) => !writableRoots(run.args).includes(root)), []);
+    ].map(canonical));
+    for (const run of runs.slice(-2)) {
+      const actual = await Promise.all(writableRoots(run.args).map(canonical));
+      assert.deepEqual(expected.filter((root) => !actual.includes(root)), [], JSON.stringify({ expected, actual }));
+    }
   });
 });
 
@@ -107,7 +114,7 @@ test("workspaceSetup initializes submodules from the shared object store", async
     assert.ok(worker.id, JSON.stringify(worker));
     await waitFor(call, worker.id, settled);
     const row = await call("get_codex_worker_status", { task_id: worker.id });
-    assert.equal(await readFile(join(row.worktree_path, "proto", "first.txt"), "utf8"), "one\n");
+    assert.equal((await readFile(join(row.worktree_path, "proto", "first.txt"), "utf8")).replaceAll("\r\n", "\n"), "one\n");
   });
 });
 
