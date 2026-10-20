@@ -7,6 +7,7 @@ import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { DatabaseSync } from "node:sqlite";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 
@@ -91,6 +92,27 @@ export async function waitFor(call, taskId, predicate, timeoutMs = 20000) {
   }
   const why = last ? { status: last.status, phase: last.phase, exit_code: last.exit_code, error: last.error, last_message: last.last_message?.slice(0, 200) } : null;
   throw new Error(`timed out waiting for ${taskId}: ${JSON.stringify(why)}`);
+}
+
+// A terminal task row can be visible before the independent run host has
+// finished its final write and exited. Cleanup deliberately refuses that
+// overlap, so tests that inspect cleanup wait for the owner to go away.
+export async function waitForRunHostExit(home, taskId, timeoutMs = 20000) {
+  const db = new DatabaseSync(join(home, "data", "supervisor.sqlite"));
+  db.exec("PRAGMA busy_timeout=15000");
+  const deadline = Date.now() + timeoutMs;
+  try {
+    for (;;) {
+      const row = db.prepare("SELECT run_host_pid AS pid FROM tasks WHERE id=?").get(taskId);
+      let alive = false;
+      try { process.kill(row?.pid, 0); alive = true; } catch {}
+      if (!alive) return;
+      if (Date.now() >= deadline) throw new Error(`timed out waiting for run host of ${taskId} to exit`);
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+  } finally {
+    db.close();
+  }
 }
 
 export function dispatchArgs(title, cwd, extra = {}) {

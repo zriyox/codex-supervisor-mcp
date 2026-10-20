@@ -5,7 +5,7 @@ import { existsSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { dispatchArgs, git, makeRepo, repoRoot, tempHome, waitFor, withMcp } from "./helpers.js";
+import { dispatchArgs, git, makeRepo, repoRoot, tempHome, waitFor, waitForRunHostExit, withMcp } from "./helpers.js";
 
 function runCleanup(home, args) {
   return JSON.parse(execFileSync(process.execPath, [join(repoRoot, "src", "cleanup.js"), ...args], {
@@ -45,6 +45,7 @@ test("cleanup plan only removes verified-safe worktrees and preserves the eviden
       }
     }
   });
+  await Promise.all(Object.values(workers).map((worker) => waitForRunHostExit(home, worker.id)));
   await writeFile(join(workers.dirty.worktree_path, "precious.txt"), "keep\n");
   const logPath = join(home, "data", "runs", `${workers.safe.id}.jsonl`);
   const branch = `codex/${workers.safe.id}`;
