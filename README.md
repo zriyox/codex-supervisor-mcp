@@ -65,12 +65,15 @@ codex mcp add codex-supervisor -- npx -y codex-supervisor-mcp
 主线程背后做的事（你也可以自己调工具）：
 
 ```
-create_codex_worker ×3   每路带 session_id、session_title、ownedPaths、goal
+preflight_codex_worker  同 workspace/base/sandbox/guard 先跑必要 probe
+get_worker_preflight    确认 passed；contract 变化就重跑
+create_codex_worker ×3  每路带 preflight_id、session_id、ownedPaths、goal
 wait_codex_workers       默认等 60 秒，到点返回快照，没完就接着等
 get_worker_result ×3     收每路的汇报，带它真跑过的命令和退出码
+get_worker_diff ×3       看实际改动；证据对得上再决定是否 land
 ```
 
-每路的改动在各自的 `codex/<taskId>` 分支上，合不合、怎么合由主线程定。
+每路的改动在各自的 `codex/<taskId>` 分支上。验收和 diff 都过了，主线程用 `land_codex_worker` 带 `commitMessage` 合入；worker 不自行提交。
 
 ### 3. 开看板
 
@@ -99,7 +102,7 @@ node "$CODEX_SUPERVISOR_STAGE_CLI" "gate:s3" --detail "integration queue"
 | 我 | | 定需求，拍板，看汇报 |
 | 规划会话 | 需求和文档仓 | 聊需求，写详设，每一块活写一份任务书，末尾附一段发给主脑的话 |
 | 主脑会话 | 代码仓的一个 worktree | 读任务书，派 Codex worker，核每路的 diff，把结果填回任务书，向我汇报。不写业务代码 |
-| Codex worker | 各自的 worktree | 一个 worker 做一步，一个提交，在远端机器上编译和验证。不 push，不合并 |
+| Codex worker | 各自的 worktree | 一个 worker 做一个能独立验收的功能包，在远端机器上修改、运行验收。不 commit、不 push、不合并 |
 
 两个会话之间只传一段文字，粘进主脑会话用 `/goal` 接上。结构固定：
 
@@ -109,12 +112,13 @@ node "$CODEX_SUPERVISOR_STAGE_CLI" "gate:s3" --detail "integration queue"
 【背景】   这一块为什么做，上一块留下了什么
 【先读】   哪几份文档的哪几节。几份说法不一样时以哪份为准
 【仓和分支】工作目录在哪，各分支现在在哪个提交，哪些分支只读
-【做什么】 照任务书第几节那张表做。一步一个提交，这步验证过了才做下一步。表里没有的不做
+【做什么】 照任务书第几节那张表做。按能独立验收的功能包拆，表里没有的不做。worker 不自行 commit
 【派活】   先 search_works 看有没有派过，别重复
            整批用同一个 session_id
-           改同一批文件就串行，文件完全不重叠才并行，每路 ownedPaths 写清
-           一个 worker 只做一步。task 写全：背景、文档出处、要改的文件、验证命令、输出格式
-           验证命令同时填 acceptance，supervisor 替你跑，它说过了不算
+           改同一批文件就串行，写入范围不重叠才并行。ownedPaths 覆盖实现、测试、路由、DI、配置和迁移
+           依赖先写 workspaceSetup；写 worker 先过同 contract 的 preflight
+           task 写全：背景、文档出处、完整写集、验证命令、输出格式
+           验证命令同时填 acceptance；worker 用 CODEX_SUPERVISOR_ACCEPTANCE_CLI 自查
            worker 交回来先看 diff。它说过了不算，你看到才算
 【构建和测试】全走远端机器，本机不跑
 【红线】   不改什么，不推什么，不读什么
@@ -128,18 +132,16 @@ node "$CODEX_SUPERVISOR_STAGE_CLI" "gate:s3" --detail "integration queue"
 search_works            查这批活派过没有
 preflight_codex_worker  同环境跑 probe，确认 sandbox / guard / base / cache 真可用
 get_worker_preflight    核 probe 的实际 command evidence；passed 才能派目标 worker
-create_codex_worker     一步一个 worker，同一个 session_id，ownedPaths 不重叠
+create_codex_worker     一个功能包一个 worker，同一个 session_id，ownedPaths 不重叠
 wait_codex_workers      60 秒一轮，compact: true，没完接着调
 get_worker_result       它说自己做了什么，verification 里是它真跑过的命令
 get_worker_diff         它实际做了什么
 ask_codex_worker        对不上就问它为什么，只读，不动它的线程
-resume_codex_worker     要改就追一条，让它 amend 进原来那个提交；主线走远了带 rebaseOnto
-land_codex_worker       核过了，落进集成分支
+resume_codex_worker     要改就继续同一线程；主线走远了带 rebaseOnto
+land_codex_worker       核过了，带 commitMessage 代提交并落进集成分支
 ```
 
-上一块活 25 步，主脑会话一个人从第 1 步盯到第 25 步，上下文里只有任务书和每路交回来的汇报，没被 worker 的过程撑爆。
-
-为什么一个 worker 只做一步：第 5 步做错了，让做第 5 步的那个 worker `resume_codex_worker` 一下，改完 `--amend` 并回它自己那个提交，主脑再核一次，过了才落进集成分支。要是一个 worker 连做了 5、6、7 三步，第 5 步错了就没法这样改，6 和 7 的提交已经叠在 5 上面，改 5 得连 6、7 一起重做。
+功能包在 land 前仍可 `resume_codex_worker` 继续修改。真正需要拆开的原因是写集冲突、依赖顺序或独立验收，不是“每一步都必须换一个模型线程”。
 
 ## 看板里有什么
 
@@ -159,13 +161,13 @@ land_codex_worker       核过了，落进集成分支
 
 | 工具 | 入参 | 作用 |
 |---|---|---|
-| `check_workers` | 无参 | 交付新终态、验收失败和需处理goal；新格式第1轮lost/no_work自动恢复一次，未变返回quiet；用宿主定时唤醒调用，每个主线程设独立CODEX_SUPERVISOR_OBSERVER_ID可在重启后接回 |
+| `check_workers` | 无参 | 交付新终态、验收失败和需处理goal；新格式第1轮 `lost` / `no_work` / `invalid_report` 自动恢复一次，未变返回quiet；用宿主定时唤醒调用，每个主线程设独立CODEX_SUPERVISOR_OBSERVER_ID可在重启后接回 |
 | `overview_delta` | `cursor` | 主线程默认轮询入口：只返回 active / needs_attention / ready_to_land / ready_to_clean、cursor 后变化、短版 attention_reason / next_action 和 next_cursor；不返回全量历史、prompt、diff、event 或 worker capsule |
 | `check_acceptance` | `cwd`, `acceptance`, `baseRef`, `timeoutMs` | 派单前实际运行给定验收命令，不建 worker，不证明 worker 完成；数量 grep 会提示不能证明失败名单和必跑执行 |
 | `preflight_codex_worker` | `cwd`, `workspaceKind`, `inPlaceAuthorization`, `workspaceSetup`, `ownedPaths`, `probeCommands`, `baseRef`, `sandbox`, `allowedCommands`, `context`, `contracts`, `networkAccess`, `writableRoots` | 用与目标 worker 相同的 workspace/base/sandbox/guard 起短 probe worker；它必须实际跑完每条 probe command。probe 自动获得本次 guard-only 允许，但不进入目标 worker contract；联网和凭据目录仍须显式授权 |
 | `get_worker_preflight` | `task_id` | 返回 probe 的实际 command evidence、运行环境 contract hash、worker outcome 和 `running/passed/failed`；probe 全部执行通过时，报告 JSON 错误或已 exit 0 的 close-handler 缺失只留诊断，不误判环境失败 |
 | `create_codex_worker` | `task`, `cwd`, `workspaceKind`, `inPlaceAuthorization`, `workspaceSetup`, **`ownedPaths`**, **`goal`**, `preflight_id`, `forbid`, `allowedCommands`, `context`, `contracts`, `externalOutputs`, `networkAccess`, `writableRoots`, `maxRunMs`, `maxTotalMs`, `acceptance`, `session_id`, `session_title`, `session_note`, `dependsOn`, `baseRef`, `sandbox`, `model`, `reasoningEffort`, `title`, `skipGitRepoCheck` | Git 默认隔离 worktree；非 Git 写入必须选 `scratch` 或有授权、paths、acceptance 的 `in_place_write`。`workspaceSetup` 在起 worker 前链接依赖、初始化子模块、跑 prepare；`preflight_id` 给了就必须是通过的同环境 probe |
-| `create_codex_followup_worker` | `task_id`, `followup_prompt`, `session_id`, 其余同上 | 开一个新会话，把老 worker 的 prompt、状态、近期事件拼进去 |
+| `create_codex_followup_worker` | `task_id`, `followup_prompt`, `session_id`, `session_title`, `title`, `cwd`, `sandbox`, `model`, `ownedPaths`, `forbid`, `allowedCommands`, `context`, `contracts`, `externalOutputs`, `networkAccess`, `writableRoots`, `workspaceKind`, `workspaceSetup`, `goal`, `baseRef`, `acceptance` | 开一个新会话，把老 worker 的 prompt、状态、近期事件拼进去；不支持 `preflight_id`、`dependsOn`、`skipGitRepoCheck` |
 | `resume_codex_worker` | `task_id`, `prompt`, `rebaseOnto`, `acceptance`, `context` | 接同一个 Codex 会话继续跑，`thread_id` 不变。`rebaseOnto` 先把 worktree 挪到主线新头（stash、跳过已合入补丁、重放新增提交、放回），冲突原样退回不起 worker |
 | `wait_codex_workers` | `task_ids`, `mode`(any/all), `timeoutMinutes`, `timeoutMs`, `compact`, `emitProgress`, `includeEvents`, `eventLimit`, `eventMaxChars`, `eventKinds` | 等终态。默认 60 秒且不推周期 heartbeat；显式 `emitProgress: true` 才每 30 秒通知。`termination_reason` 区分 settled / budget_exhausted / client_cancelled；`compact` 每路一行 |
 | `get_orchestration_overview` | `status`, `limit` | 全部 worker 的状态表，封顶 7000 字节。带 `version` 和 `update` |
@@ -199,11 +201,25 @@ land_codex_worker       核过了，落进集成分支
 | `check_for_update` | `force` | 问 registry 有没有新版本 |
 | `cancel_codex_worker` | `task_id` | 终止 worker。跨进程按 pid 兜底，先确认那个 pid 跑的是 codex |
 
-必填的两个：`ownedPaths`（派单前和在跑的 worker 求交集，重叠就拒，只在派单时查）和 `goal.objective`（worker 会建成 Codex 原生 goal）。`session_id` 不传就归不了组，一批活传同一个值。
+MCP schema 必填两个：`ownedPaths` 和 `goal.objective`。写 worker 还必须通过上面的 preflight 工作流门禁；`preflight_id` 暂时保留为 optional 只为兼容旧客户端，不是正常流程可以跳过。`ownedPaths` 的写冲突在派单时预留，运行时 guard 会查直接写入，land 会再查完整 diff。
 
 `acceptance` 在 Bash 中启用 `errexit` 和 `pipefail`：未处理的失败会停止检查，`npm test | tail` 中的测试失败也会保留。worker 自查必须运行 `node "$CODEX_SUPERVISOR_ACCEPTANCE_CLI"`，它执行同一份 supervisor 验收契约；不要手抄到 zsh，变量拆词等交互壳差异不会污染证据。写 worker 不能只用 `test -s`、`test -f` 或 `[ -e ]` 这类文件存在性命令交付；要加真实 test、endpoint probe 或结构化执行证据。识别到的 test runner 输出 `no tests to run` / `[no test files]` 时，即使退出码是 0 也判失败。预期失败用 `if` 或 `||` 显式处理；超时始终判失败，即使命令收到终止信号后退出 0。Windows 需要 Git for Windows 的 Bash；找不到会报错。显示的输出会裁剪，退出码不会因此改变。
 
 `package.json` 仓库里，如果 `acceptance` 使用 `npm`、`pnpm`、`vitest`、`vue-tsc`、`eslint`、`nuxi` 等本地 JavaScript 工具，而派单没有 `workspaceSetup`，会直接拒绝为 `workspace_setup_required`。这条是 runtime 硬门禁，不再靠模型记得手工链接依赖。
+
+前端 worktree 的标准配置：
+
+```json
+{
+  "workspaceSetup": {
+    "links": [{ "path": "node_modules", "source": "node_modules" }],
+    "submodules": true,
+    "commands": ["npx nuxi prepare"]
+  }
+}
+```
+
+同一份配置要同时传给 `preflight_codex_worker` 和目标 `create_codex_worker`，否则 runtime contract 不匹配。
 
 普通 worker 启动时会关闭它继承到的 `codex-supervisor` MCP，不能再派 worker、resume、cancel 或改编排状态；主线程是唯一编排者。其他业务 MCP 不受影响；旁问 fork 仍关闭全部 MCP，因为它只允许只读回答。
 
@@ -361,7 +377,7 @@ rm -rf ~/.claude/skills/codex-supervisor ~/.agents/skills/codex-supervisor ~/.co
 - 默认 `workspace-write` 沙箱里 worker 提交不了（Codex 把 `.git` 设成只读）。收活时 `land_codex_worker` 带 `commitMessage` 替它提交；不要为了提交改用 `danger-full-access`。
 - worktree 从一个提交切，你工作区里没 commit 的东西不在里面。
 - 只隔离工作目录。临时目录、数据库、端口是共用的。
-- `ownedPaths` 只在派单时查，拦不住 worker 新建清单外的文件。收活看 diff。
+- `ownedPaths` 的冲突预留只在派单时计算；运行时 guard 会拦直接文件写入，land 会再查完整 diff。声明脚本仍可能产生清单外副作用，不能把它当完整文件系统沙箱。
 - 验收是 `acceptance` 里写了什么就查什么。没写的事它不会替你查，`verification` 只是 worker 自己跑过的命令，剩下的靠主线程看 diff。
 - 一次 `wait_codex_workers` 等不到底，客户端的 MCP 工具超时是硬墙，靠反复调。
 - `search_works` 是子串匹配，几百条够用。

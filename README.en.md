@@ -64,12 +64,15 @@ Say it in plain words in Claude Code; the skill makes it follow the right steps:
 What the main thread does underneath (you can call the tools yourself):
 
 ```
-create_codex_worker ×3   each with session_id, session_title, ownedPaths, goal
+preflight_codex_worker   run required probes with the target workspace/base/sandbox/guard
+get_worker_preflight     require passed; rerun when the contract changes
+create_codex_worker ×3   each with preflight_id, session_id, ownedPaths, goal
 wait_codex_workers       60 seconds by default, then a snapshot, call again until done
 get_worker_result ×3     each worker's report, with the commands it really ran
+get_worker_diff ×3       inspect the real change before deciding to land
 ```
 
-Each worker's changes sit on its own `codex/<taskId>` branch; whether and how to merge is the main thread's call.
+Each worker's changes sit on its own `codex/<taskId>` branch. After acceptance and diff review, the main thread lands them with `land_codex_worker` and `commitMessage`; the worker does not commit.
 
 ### 3. Open the board
 
@@ -90,7 +93,7 @@ Anything that speaks MCP can be the main thread; this is just my way. I run two 
 | Me | | Decide what to build, make the calls, read the reports |
 | Planning session | The requirements and docs repository | Talk through the requirement, write the design, write one brief per block of work with a paragraph for the main brain at the end |
 | Main-brain session | A worktree of the code repository | Read the brief, dispatch Codex workers, check every worker's diff, write results back into the brief, report to me. Writes no business code |
-| Codex workers | Their own worktrees | One worker per step, one commit per step, build and verify on a remote machine. No push, no merge |
+| Codex workers | Their own worktrees | One worker per independently verifiable feature package. It edits and runs acceptance. It does not commit, push or merge |
 
 One block of text passes between the two sessions, pasted into the main-brain session and handed over with `/goal`. Its shape is fixed:
 
@@ -100,12 +103,14 @@ One block of text passes between the two sessions, pasted into the main-brain se
 [Background]  Why this block exists, what the previous one left behind
 [Read first]  Which sections of which documents. Which one wins when they disagree
 [Repos]       Where the worktrees are, which commit each branch is on, which branches are read-only
-[Do]          Follow the table in section N of the brief. One commit per step; verify a step before starting the next. Nothing outside the table
+[Do]          Follow the table in section N of the brief. Split by independently verifiable feature packages. Nothing outside the table. Workers do not commit
 [Dispatch]    search_works first, do not dispatch twice
               One session_id for the whole batch
-              Serial when steps touch the same files, parallel only when ownedPaths do not overlap
-              One worker per step. Write the task in full: background, where in the docs, files to change, verify command, output format
-              Put the verify command in acceptance too; the supervisor runs it, the worker's word does not count
+              Serial when writes overlap, parallel only with disjoint write sets
+              ownedPaths covers implementation, tests, routing, DI, configuration and migrations
+              Prepare dependencies with workspaceSetup; every writer passes preflight with the same contract
+              Write the task in full: background, where in the docs, complete write set, verify command, output format
+              Put the verify command in acceptance too; the worker self-checks through CODEX_SUPERVISOR_ACCEPTANCE_CLI
               Read the diff when a worker returns. Its word is not enough; what you see is
 [Build/test]  Everything on the remote machine, nothing locally
 [Red lines]   What not to change, push or read
@@ -117,18 +122,16 @@ What the main brain calls in one round:
 
 ```
 search_works            has this batch been dispatched before
-create_codex_worker     one worker per step, same session_id, ownedPaths disjoint
+create_codex_worker     one worker per feature package, same session_id, ownedPaths disjoint
 wait_codex_workers      60 seconds a round, compact: true, call again until done
 get_worker_result       what it says it did; verification is what it really ran
 get_worker_diff         what it actually did
 ask_codex_worker        when the two differ, ask why; read-only, its thread untouched
-resume_codex_worker     when it must change something, one follow-up, amended into the same commit; rebaseOnto when main has moved
-land_codex_worker       checked, then landed on the integration branch
+resume_codex_worker     continue the same thread when it must change something; rebaseOnto when main has moved
+land_codex_worker       reviewed; commit with commitMessage and land on the integration branch
 ```
 
-The last block was 25 steps. One main-brain session watched all 25, with nothing in its context but the brief and each worker's report; the workers' output never reached it.
-
-Why one worker does one step: when step 5 is wrong, the worker that did step 5 gets one `resume_codex_worker`, amends its own commit, the main brain checks again, and only then lands it. A worker that did steps 5, 6 and 7 cannot be fixed that way: 6 and 7 already sit on top of 5, so fixing 5 means redoing them too.
+A feature package can still be resumed before landing. Split it when writes conflict, dependencies need sequencing, or the work has separate acceptance, not because every step needs a new model thread.
 
 ## What the board shows
 
@@ -148,18 +151,18 @@ Thirty-nine.
 
 | Tool | Arguments | What it does |
 |---|---|---|
-| `check_workers` | none | Report newly settled runs and actionable changes; recover a new-format first lost/no_work run once. Unchanged state is quiet. Call from a host-scheduled loop and use a distinct CODEX_SUPERVISOR_OBSERVER_ID for each reconnecting main thread |
+| `check_workers` | none | Report newly settled runs and actionable changes; recover a new-format first `lost`, `no_work` or `invalid_report` run once. Unchanged state is quiet. Call from a host-scheduled loop and use a distinct CODEX_SUPERVISOR_OBSERVER_ID for each reconnecting main thread |
 | `overview_delta` | `cursor` | Main-thread incremental view: counters, changed summaries, short attention reason / next action and next_cursor; no prompt, diff, event or capsule history |
 | `check_acceptance` | `cwd`, `acceptance`, `baseRef`, `timeoutMs` | Execute supplied checks before dispatch, without creating a worker or proving completion; warns that failure-count greps do not establish an approved failure list or required execution |
-| `preflight_codex_worker` | `cwd`, `workspaceKind`, `inPlaceAuthorization`, `ownedPaths`, `probeCommands`, `baseRef`, `sandbox`, `allowedCommands`, `context`, `contracts`, `networkAccess`, `writableRoots` | Run a short probe worker under the exact workspace/base/sandbox/guard contract intended for the later worker; wait for `get_worker_preflight` to report passed before dispatch |
+| `preflight_codex_worker` | `cwd`, `workspaceKind`, `inPlaceAuthorization`, `workspaceSetup`, `ownedPaths`, `probeCommands`, `baseRef`, `sandbox`, `allowedCommands`, `context`, `contracts`, `networkAccess`, `writableRoots` | Run a short probe worker under the exact workspace/base/sandbox/guard contract intended for the later worker; wait for `get_worker_preflight` to report passed before dispatch |
 | `get_worker_preflight` | `task_id` | Read probe command evidence and the immutable runtime contract hash |
-| `create_codex_worker` | `task`, `cwd`, `workspaceKind`, `inPlaceAuthorization`, **`ownedPaths`**, **`goal`**, `forbid`, `allowedCommands`, `context`, `contracts`, `externalOutputs`, `networkAccess`, `writableRoots`, `maxRunMs`, `maxTotalMs`, `acceptance`, `session_id`, `session_title`, `session_note`, `dependsOn`, `baseRef`, `sandbox`, `model`, `reasoningEffort`, `title`, `skipGitRepoCheck` | Git defaults to an isolated worktree. A non-Git write must choose `scratch`, or an authorized `in_place_write` with paths and acceptance. |
-| `create_codex_followup_worker` | `task_id`, `followup_prompt`, `session_id`, plus the above | A new session seeded with the old worker's prompt, status and recent events |
+| `create_codex_worker` | `task`, `cwd`, `workspaceKind`, `inPlaceAuthorization`, `workspaceSetup`, **`ownedPaths`**, **`goal`**, `preflight_id`, `forbid`, `allowedCommands`, `context`, `contracts`, `externalOutputs`, `networkAccess`, `writableRoots`, `maxRunMs`, `maxTotalMs`, `acceptance`, `acceptanceTimeoutMs`, `session_id`, `session_title`, `session_note`, `dependsOn`, `baseRef`, `sandbox`, `model`, `reasoningEffort`, `title`, `skipGitRepoCheck` | Git defaults to an isolated worktree. A non-Git write must choose `scratch`, or an authorized `in_place_write` with paths and acceptance. `workspaceSetup` prepares dependencies before the worker starts; when `preflight_id` is present its complete runtime contract must match. |
+| `create_codex_followup_worker` | `task_id`, `followup_prompt`, `session_id`, `session_title`, `title`, `cwd`, `sandbox`, `model`, `ownedPaths`, `forbid`, `allowedCommands`, `context`, `contracts`, `externalOutputs`, `networkAccess`, `writableRoots`, `workspaceKind`, `workspaceSetup`, `goal`, `baseRef`, `acceptance` | A new session seeded with the old worker's prompt, status and recent events. It does not accept `preflight_id`, `dependsOn` or `skipGitRepoCheck`. |
 | `resume_codex_worker` | `task_id`, `prompt`, `rebaseOnto`, `acceptance`, `context` | Continue the same Codex conversation; `thread_id` stays. `rebaseOnto` first moves the worktree onto the project's newer commit (stash, skip integrated patches, replay new commits, unstash); a conflict puts it back and does not start the worker |
-| `wait_codex_workers` | `task_ids`, `mode` (any/all), `timeoutMinutes`, `timeoutMs`, `compact`, `includeEvents`, `eventLimit`, `eventMaxChars`, `eventKinds` | Wait for terminal states. 60 seconds by default, then a snapshot while the workers keep running; `compact` returns one line per worker with `idle_seconds` / `command_running`, so a long command and a stuck worker look different |
+| `wait_codex_workers` | `task_ids`, `mode` (any/all), `timeoutMinutes`, `timeoutMs`, `pollMs`, `compact`, `emitProgress`, `includeEvents`, `eventLimit`, `eventMaxChars`, `eventKinds` | Wait for terminal states. 60 seconds by default. `termination_reason` distinguishes settled, exhausted budget and client cancellation. `emitProgress: true` emits progress every 30 seconds when the client supplies a progress token. `compact` returns one row per worker |
 | `get_orchestration_overview` | `status`, `limit` | Every worker in one table, capped at 7000 bytes. Carries `version` and `update` |
 | `get_worker_result` | `task_id`, `limit`, `maxChars`, `includeFiles` | The worker's own report, clipped past 6000 bytes with `truncated` and the size to ask for. `acceptance` is whether the supervisor's own checks passed, `verification` the commands the worker ran with exit codes, `base_behind` how far main has moved (`behind` is `null` with a note when `contains_base` is false, meaning the directory switched lines) |
-| `get_worker_diff` | `task_id`, `maxChars`, `paths` | What the worker actually changed: patches from the worktree's start to its working tree, committed or not. `maxChars` bounds the answer; files past it are listed without a patch |
+| `get_worker_diff` | `task_id`, `file`, `hunk`, `pageSize`, `cursor`, `maxChars`, `paths` | What the worker actually changed. The default response is a complete file/hunk index. Select one file and page hunks with `hunk` or `cursor`; `maxChars` without `file` keeps the legacy bounded full-diff mode |
 | `ask_codex_worker` | `task_id`, `question`, `timeoutMs`, `maxChars`, `fresh`, `end` | Ask the worker on the side. Its thread is forked into a read-only session with no network and no MCP tools; the worker itself is untouched. A resumed worker gets a new fork by itself, `fresh` forces one, `end` deletes it |
 | `land_codex_worker` | `task_id`, `onto`, `commitMessage`, `ignoreAcceptance`, `allowOutsideOwned` | Cherry-pick the worker's `codex/<id>` commits onto the current branch of the dispatch directory: clean target only, a conflict rolls back, a failed acceptance is refused. A malformed report summary no longer blocks an explicit landing when acceptance and the reviewed diff are sound. `commitMessage` first commits its uncommitted edits as one commit; `ignoreAcceptance` lands anyway |
 | `verify_delivery_push` | `task_id`, `remote`, `branch` | Fetch a remote branch and prove landed_head is reachable; records push_verified and creates a cleanup plan without pushing or deploying |
@@ -188,11 +191,27 @@ Thirty-nine.
 | `check_for_update` | `force` | Ask the registry for a newer version |
 | `cancel_codex_worker` | `task_id` | Stop a worker. Falls back to the pid across processes, after confirming that pid runs codex |
 
-Two are required: `ownedPaths` (checked against every running worker before dispatch, overlap refuses the call, dispatch-time only) and `goal.objective` (the worker turns it into a native Codex goal). Without `session_id` nothing groups the batch; use one value for the whole batch.
+Two fields are required by the MCP schema: `ownedPaths` and `goal.objective`. A writer must also pass the workflow preflight gate described above; the schema keeps `preflight_id` optional for old clients, which is a compatibility escape hatch, not the normal path. `ownedPaths` overlap is reserved at dispatch, the runtime guard checks direct file writes, and landing checks the complete diff.
 
 `acceptance` runs in Bash with `errexit` and `pipefail`: an unhandled failure stops the check, including a failing test in `npm test | tail`. Workers run `node "$CODEX_SUPERVISOR_ACCEPTANCE_CLI"` for the exact supervisor contract instead of retyping checks in an interactive zsh. Handle expected failures explicitly with `if` or `||`; a timeout always fails, even when the command exits 0 after termination. Windows requires Git for Windows Bash and reports an error when it is missing. Displayed output is clipped without changing the exit code.
 
 In a repository with `package.json`, acceptance that uses local JavaScript tooling such as `npm`, `pnpm`, `vitest`, `vue-tsc`, `eslint` or `nuxi` is rejected with `workspace_setup_required` unless `workspaceSetup` was provided. Dependency preparation is now a runtime gate, not a reminder for the model.
+
+The standard frontend worktree setup is:
+
+```json
+{
+  "workspaceSetup": {
+    "links": [{ "path": "node_modules", "source": "node_modules" }],
+    "submodules": true,
+    "commands": ["npx nuxi prepare"]
+  }
+}
+```
+
+Pass the same setup to `preflight_codex_worker` and the target `create_codex_worker`; otherwise the runtime contracts do not match.
+
+When dispatch omits `goal.tokenBudget`, the worker must omit `token_budget` entirely. The runtime guard rejects `0`, `1`, `null` and any invented value. If a budget is supplied explicitly, the worker must use that exact positive integer.
 
 Acceptance commands receive `CODEX_SUPERVISOR_TASK_ID`, `CODEX_SUPERVISOR_BASE_COMMIT` and `CODEX_SUPERVISOR_RUN`: the current task, run base and run number, refreshed after rebase/resume.
 
@@ -205,6 +224,8 @@ Session default_acceptance is prepended to local checks; resume uses the latest 
 Wait defaults to 60 seconds and compact rows; includeEvents selects details unless compact is explicit. Clients supplying a progress token receive notifications every 30 seconds. MCP SDK and real Claude 2.1.299 are verified: a 65-second wait succeeds with a 35-second idle timeout after three progress notifications. Native /loop scheduling is also verified.
 
 Each run injects the shipped PreToolUse guard: apply_patch checks every target including renames and symlinks; forbid rejects red lines. Shell allows simple reads and explicitly declared allowedCommands/acceptance. Declared validation scripts run with dispatcher privileges and may have side effects; this is not a filesystem sandbox for arbitrary programs. Resume/follow-up inherit the policy without changing global hooks. Empty write runs use current output and command evidence and surface no_work; read-only tasks are not empty merely for having no diff.
+
+Workers are not dispatchers. A worker starts with the codex-supervisor MCP server disabled, so it cannot dispatch, resume, cancel or edit another session. Business MCP servers remain available. Side-chat forks disable every MCP server.
 
 A model with no separate `apply_patch` tool (measured with Codex 0.162 + DeepSeek/cc-switch) sends the patch as a shell call: `apply_patch <<'EOF' ... EOF`. The guard accepts that shape and judges every target path with the same ownedPaths rule, so such a model can still edit; an unquoted heredoc, or one followed by `&&`/`;`, is refused.
 
@@ -283,6 +304,7 @@ A terminal state lands in two steps: `turn.completed` sets `completed`, the proc
 | `CODEX_SUPERVISOR_SKIP_SKILL_SYNC` | unset | `1` turns the skill sync at server start off |
 | `CODEX_SUPERVISOR_SKIP_SETUP` | unset | `1` skips the `postinstall` setup |
 | `CODEX_SUPERVISOR_NPM` | unset | npm for the auto-update; default is the one shipped with the running node |
+| `CODEX_SUPERVISOR_HANDOFF_TOKEN_THRESHOLD` | `300000` | Native-goal token count that marks a worker `handoff_recommended`; `0` disables the warning |
 
 GUI clients (Claude Desktop, Cursor, Windsurf) are not automatic registration targets of this installer: add this to their MCP config file, and since their `PATH` often lacks `codex`, give `CODEX_BIN` explicitly:
 
@@ -339,7 +361,7 @@ rm -rf ~/.claude/skills/codex-supervisor ~/.agents/skills/codex-supervisor ~/.co
 - In the default `workspace-write` sandbox a worker cannot commit (Codex keeps `.git` read-only). Use `land_codex_worker` with `commitMessage`; do not switch to `danger-full-access` just to commit.
 - The worktree is cut from a commit; uncommitted work in your checkout is not in it.
 - Only the working directory is isolated. Temp directories, databases and ports are shared.
-- `ownedPaths` is checked at dispatch only; it does not stop a worker from creating files outside its list. Read the diff.
+- `ownedPaths` overlap is reserved at dispatch. The runtime guard checks direct file edits and landing checks the complete diff. Declared scripts can still produce side effects outside the list, so this is not a complete filesystem sandbox.
 - Acceptance checks exactly what `acceptance` says. Anything not written there is not checked; `verification` is only what the worker ran itself, and the rest is the main thread reading the diff.
 - One `wait_codex_workers` cannot wait to the end; the client's MCP tool timeout is a hard wall. Call it again.
 - `search_works` is substring matching, fine for hundreds of works.
