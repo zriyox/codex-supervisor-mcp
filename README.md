@@ -203,7 +203,7 @@ land_codex_worker       核过了，带 commitMessage 代提交并落进集成�
 
 MCP schema 必填两个：`ownedPaths` 和 `goal.objective`。写 worker 还必须通过上面的 preflight 工作流门禁；`preflight_id` 暂时保留为 optional 只为兼容旧客户端，不是正常流程可以跳过。`ownedPaths` 的写冲突在派单时预留，运行时 guard 会查直接写入，land 会再查完整 diff。
 
-`acceptance` 在 Bash 中启用 `errexit` 和 `pipefail`：未处理的失败会停止检查，`npm test | tail` 中的测试失败也会保留。worker 自查必须运行 `node "$CODEX_SUPERVISOR_ACCEPTANCE_CLI"`，它执行同一份 supervisor 验收契约；不要手抄到 zsh，变量拆词等交互壳差异不会污染证据。写 worker 不能只用 `test -s`、`test -f` 或 `[ -e ]` 这类文件存在性命令交付；要加真实 test、endpoint probe 或结构化执行证据。识别到的 test runner 输出 `no tests to run` / `[no test files]` 时，即使退出码是 0 也判失败。预期失败用 `if` 或 `||` 显式处理；超时始终判失败，即使命令收到终止信号后退出 0。Windows 需要 Git for Windows 的 Bash；找不到会报错。显示的输出会裁剪，退出码不会因此改变。
+`acceptance` 在 Bash 中启用 `errexit` 和 `pipefail`：未处理的失败会停止检查，`npm test | tail` 中的测试失败也会保留。worker 自查必须运行 `node "$CODEX_SUPERVISOR_ACCEPTANCE_CLI"`，它只读 supervisor 状态库中的验收契约，不需要写数据目录；不要手抄到 zsh，变量拆词等交互壳差异不会污染证据。写 worker 不能只用 `test -s`、`test -f` 或 `[ -e ]` 这类文件存在性命令交付；要加真实 test、endpoint probe 或结构化执行证据。识别到的 test runner 输出 `no tests to run` / `[no test files]` 时，即使退出码是 0 也判失败。预期失败用 `if` 或 `||` 显式处理；超时始终判失败，即使命令收到终止信号后退出 0。Windows 需要 Git for Windows 的 Bash；找不到会报错。显示的输出会裁剪，退出码不会因此改变。
 
 `package.json` 仓库里，如果 `acceptance` 使用 `npm`、`pnpm`、`vitest`、`vue-tsc`、`eslint`、`nuxi` 等本地 JavaScript 工具，而派单没有 `workspaceSetup`，会直接拒绝为 `workspace_setup_required`。这条是 runtime 硬门禁，不再靠模型记得手工链接依赖。
 
@@ -220,6 +220,8 @@ MCP schema 必填两个：`ownedPaths` 和 `goal.objective`。写 worker 还必�
 ```
 
 同一份配置要同时传给 `preflight_codex_worker` 和目标 `create_codex_worker`，否则 runtime contract 不匹配。
+
+`workspaceSetup.links.source` 按派单的 `cwd` 解析，也可以直接写绝对路径；`path` 始终是 worktree 内的相对目标。源目录必须先存在。
 
 普通 worker 启动时会关闭它继承到的 `codex-supervisor` MCP，不能再派 worker、resume、cancel 或改编排状态；主线程是唯一编排者。其他业务 MCP 不受影响；旁问 fork 仍关闭全部 MCP，因为它只允许只读回答。
 

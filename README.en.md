@@ -193,7 +193,7 @@ Thirty-nine.
 
 Two fields are required by the MCP schema: `ownedPaths` and `goal.objective`. A writer must also pass the workflow preflight gate described above; the schema keeps `preflight_id` optional for old clients, which is a compatibility escape hatch, not the normal path. `ownedPaths` overlap is reserved at dispatch, the runtime guard checks direct file writes, and landing checks the complete diff.
 
-`acceptance` runs in Bash with `errexit` and `pipefail`: an unhandled failure stops the check, including a failing test in `npm test | tail`. Workers run `node "$CODEX_SUPERVISOR_ACCEPTANCE_CLI"` for the exact supervisor contract instead of retyping checks in an interactive zsh. Handle expected failures explicitly with `if` or `||`; a timeout always fails, even when the command exits 0 after termination. Windows requires Git for Windows Bash and reports an error when it is missing. Displayed output is clipped without changing the exit code.
+`acceptance` runs in Bash with `errexit` and `pipefail`: an unhandled failure stops the check, including a failing test in `npm test | tail`. Workers run `node "$CODEX_SUPERVISOR_ACCEPTANCE_CLI"` for the exact supervisor contract instead of retyping checks in an interactive zsh. The self-check opens the supervisor database read-only, so it needs no write access to the state directory. Handle expected failures explicitly with `if` or `||`; a timeout always fails, even when the command exits 0 after termination. Windows requires Git for Windows Bash and reports an error when it is missing. Displayed output is clipped without changing the exit code.
 
 In a repository with `package.json`, acceptance that uses local JavaScript tooling such as `npm`, `pnpm`, `vitest`, `vue-tsc`, `eslint` or `nuxi` is rejected with `workspace_setup_required` unless `workspaceSetup` was provided. Dependency preparation is now a runtime gate, not a reminder for the model.
 
@@ -210,6 +210,8 @@ The standard frontend worktree setup is:
 ```
 
 Pass the same setup to `preflight_codex_worker` and the target `create_codex_worker`; otherwise the runtime contracts do not match.
+
+`workspaceSetup.links.source` resolves against the dispatch `cwd` and may also be absolute; `path` is always a relative destination inside the worktree. The source must already exist.
 
 When dispatch omits `goal.tokenBudget`, the worker must omit `token_budget` entirely. The runtime guard rejects `0`, `1`, `null` and any invented value. If a budget is supplied explicitly, the worker must use that exact positive integer.
 

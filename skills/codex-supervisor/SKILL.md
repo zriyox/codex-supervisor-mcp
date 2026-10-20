@@ -47,11 +47,11 @@ description: 用 Codex CLI 并行做可独立验收的功能包，每路一个 G
 | `task` | 写清目标、背景、要改的交付面、边界和验收。不要写“优化一下”。最终报告格式由 supervisor 追加，不在这里重复 |
 | `cwd` | Git 项目根，或非 Git 输入目录；实际执行目录由 `workspaceKind` 决定 |
 | `workspaceKind` | Git 代码默认 `git_worktree`；非 Git 只读用 `read_only_in_place`；联网研究用 `scratch`；明确授权修改非 Git 目录才用 `in_place_write` |
-| `workspaceSetup` | Git worktree 启动前准备依赖。支持 `links`、`submodules`、`commands`。链接 `node_modules` 时会给 `.vite`、`.vite-temp`、`.cache` 可写缓存根 |
+| `workspaceSetup` | Git worktree 启动前准备依赖。支持 `links`、`submodules`、`commands`。`links.source` 按 `cwd` 解析，也可写绝对路径；链接 `node_modules` 时会给 `.vite`、`.vite-temp`、`.cache` 可写缓存根 |
 | `ownedPaths` | 必填。完整写入范围；不同 worker 的写入范围不能重叠。读取不排他。`[]` 只用于不 land 的只读或研究 worker |
 | `sandbox` | 默认 `workspace-write`。这个沙箱不能 commit，这是正常边界；不要为了提交改用 `danger-full-access` |
 | `preflight_id` | 写 worker 必填。preflight 的 base、`workspaceKind`、`sandbox`、`workspaceSetup`、`ownedPaths`、命令、context、contracts、network、可写根有任何变化都要重跑 |
-| `acceptance` | worker 退出后由 supervisor 在 worktree 里执行。worker 自查统一运行 `node "$CODEX_SUPERVISOR_ACCEPTANCE_CLI"`，不要手抄到 zsh。每个检查必须真实证明功能 |
+| `acceptance` | worker 退出后由 supervisor 在 worktree 里执行。worker 自查统一运行 `node "$CODEX_SUPERVISOR_ACCEPTANCE_CLI"`，不要手抄到 zsh；CLI 只读状态库，不需要也不能写 supervisor 数据。每个检查必须真实证明功能 |
 | `allowedCommands` | 声明会执行、会写入或有副作用的验证命令。read 命令有安全白名单；命令末尾 `*` 表示只匹配单条命令的前缀 |
 | `forbid` | 明确禁止的命令片段。forbid 优先于 allowedCommands 和 acceptance |
 | `goal.objective` | 必填。worker 会创建 Codex 原生 goal |

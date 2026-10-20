@@ -1,6 +1,27 @@
 #!/usr/bin/env node
+import { DatabaseSync } from "node:sqlite";
 import { DEFAULT_ACCEPTANCE_TIMEOUT_MS, runAcceptance } from "./acceptance.js";
-import { getTask } from "./task-store.js";
+import { dbPath } from "./paths.js";
+
+function readTask(taskId) {
+  let db;
+  try {
+    // A worker runs this command inside its sandbox. Reading the contract must
+    // not initialize the schema, switch the journal mode or create state dirs.
+    db = new DatabaseSync(dbPath, { readOnly: true });
+    db.exec("PRAGMA busy_timeout=15000;");
+    const row = db.prepare(`
+      SELECT acceptance, acceptance_timeout_ms, worktree_path, cwd, base_commit, run_count
+      FROM tasks WHERE id = ?
+    `).get(taskId);
+    if (!row) return null;
+    let acceptance = null;
+    try { acceptance = row.acceptance ? JSON.parse(row.acceptance) : null; } catch {}
+    return { ...row, acceptance };
+  } finally {
+    db?.close();
+  }
+}
 
 const taskId = process.env.CODEX_SUPERVISOR_TASK_ID;
 if (!taskId) {
@@ -8,7 +29,13 @@ if (!taskId) {
   process.exit(2);
 }
 
-const task = await getTask(taskId);
+let task;
+try {
+  task = readTask(taskId);
+} catch (error) {
+  console.error(`cannot read supervisor task ${taskId}: ${error.message}`);
+  process.exit(2);
+}
 if (!task) {
   console.error(`unknown supervisor task: ${taskId}`);
   process.exit(2);
