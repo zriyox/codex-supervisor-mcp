@@ -20,6 +20,9 @@ async function readyWorker(home, call, repo, remote) {
   git(repo, ["push", "-q", remote, "main"]);
   const verified = await call("verify_delivery_push", { task_id: worker.id, remote });
   assert.ok(verified.push_verified_at, JSON.stringify(verified));
+  const settled = new DatabaseSync(join(home, "data", "supervisor.sqlite"));
+  settled.prepare("UPDATE tasks SET pid=NULL, run_host_pid=NULL, acceptance_results=json_remove(acceptance_results,'$.supervisor_pid') WHERE id=?").run(worker.id);
+  settled.close();
   return worker;
 }
 
@@ -43,6 +46,7 @@ test("cleanup MCP plans, revalidates fingerprints and retains ledger history", a
     assert.equal(expired.error, "cleanup_plan_expired");
     const fresh = await call("cleanup_plan", { task_ids: [worker.id] });
     const freshItem = fresh.items[0];
+    assert.equal(freshItem.verdict, "safe", JSON.stringify(fresh));
     await writeFile(join(worker.worktree_path, "drift.txt"), "changed after plan\n");
     const drifted = await call("apply_cleanup", { plan_id: fresh.plan_id, item_ids: [freshItem.id] });
     assert.equal(drifted.applied.length, 0);

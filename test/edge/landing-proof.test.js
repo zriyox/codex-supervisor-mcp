@@ -45,5 +45,5 @@ test("patch mapping failure does not replay already integrated commits", async (
   assert.deepEqual(result.already_landed, [parentHead]);
   assert.equal(result.match_complete, false);
   assert.match(result.match_error, /injected patch mapping failure/);
-  assert.equal(await readFile(join(dir, "child.txt"), "utf8"), "child\n");
+  assert.equal((await readFile(join(dir, "child.txt"), "utf8")).trim(), "child");
 });

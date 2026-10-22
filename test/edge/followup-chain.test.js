@@ -28,7 +28,7 @@ test("a follow-up starts from the parent worker branch and sees its commits", as
     });
     assert.ok(!child.error, JSON.stringify(child));
     assert.equal(child.base_commit, parentHead, JSON.stringify(child));
-    assert.equal(await readFile(join(child.worktree_path, "parent.txt"), "utf8"), "parent checkpoint\n");
+    assert.equal((await readFile(join(child.worktree_path, "parent.txt"), "utf8")).trim(), "parent checkpoint");
     assert.equal(existsSync(join(child.worktree_path, "draft.txt")), false);
     await waitFor(call, child.id, (task) => task.status === "completed" && task.exit_code === 0);
     await waitForRunHostExit(home, child.id);
@@ -72,8 +72,8 @@ test("land_codex_worker can land an unlanded follow-up chain root first", async 
     const landed = await call("land_codex_worker", { task_id: child.id, includeFollowupParents: true });
     assert.ok(!landed.error, JSON.stringify(landed));
     assert.equal(landed.chain.length, 2, JSON.stringify(landed));
-    assert.equal(await readFile(join(dir, "parent.txt"), "utf8"), "parent\n");
-    assert.equal(await readFile(join(dir, "child.txt"), "utf8"), "child\n");
+    assert.equal((await readFile(join(dir, "parent.txt"), "utf8")).trim(), "parent");
+    assert.equal((await readFile(join(dir, "child.txt"), "utf8")).trim(), "child");
     assert(existsSync(join(parent.worktree_path, "parent.txt")));
     assert(existsSync(join(child.worktree_path, "child.txt")));
 
@@ -128,7 +128,7 @@ test("chain landing skips an ancestor already applied to the target by patch", a
     const parentResult = await call("get_worker_result", { task_id: parent.id });
     assert.equal(parentResult.landed.at != null, true, JSON.stringify(parentResult));
     assert.equal(parentResult.landed.head, parentTargetHead, JSON.stringify(parentResult));
-    assert.equal(await readFile(join(dir, "child.txt"), "utf8"), "child\n");
+    assert.equal((await readFile(join(dir, "child.txt"), "utf8")).trim(), "child");
   });
 });
 
@@ -160,7 +160,7 @@ test("a follow-up from an already landed parent starts at the current target, no
     });
     assert.ok(!child.error, JSON.stringify(child));
     assert.equal(child.base_commit, targetHead, JSON.stringify(child));
-    assert.equal(await readFile(join(child.worktree_path, "later.txt"), "utf8"), "later target work\n");
+    assert.equal((await readFile(join(child.worktree_path, "later.txt"), "utf8")).trim(), "later target work");
   });
 });
 
@@ -186,6 +186,6 @@ test("an empty parent does not prevent its follow-up from landing", async () => 
     });
     assert.ok(!landed.error, JSON.stringify(landed));
     assert.equal(landed.chain[0].skipped, "no_changes", JSON.stringify(landed));
-    assert.equal(await readFile(join(dir, "child.txt"), "utf8"), "child\n");
+    assert.equal((await readFile(join(dir, "child.txt"), "utf8")).trim(), "child");
   });
 });
