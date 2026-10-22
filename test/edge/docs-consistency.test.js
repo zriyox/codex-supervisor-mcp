@@ -43,6 +43,8 @@ test("the core dispatch and recovery contract stays visible in the skill", async
     "commitMessage",
     "includeFollowupParents",
     "ActiveTurnOutputSchemaMismatch",
+    "allowLongWait",
+    "check_workers",
     "worker 不 push",
     "danger-full-access"
   ]) assert.match(skill, new RegExp(required.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")), required);
@@ -52,7 +54,7 @@ test("the core dispatch and recovery contract stays visible in the skill", async
 test("the READMEs keep the 0.13 contract and remove stale commit workflow", async () => {
   const [zh, en] = await Promise.all([read("README.md"), read("README.en.md")]);
   for (const text of [zh, en]) {
-    for (const required of ["workspaceSetup", "preflight_id", "invalid_report", "token_budget", "commitMessage", "includeFollowupParents", "commitMessages", "ActiveTurnOutputSchemaMismatch"]) {
+    for (const required of ["workspaceSetup", "preflight_id", "invalid_report", "token_budget", "commitMessage", "includeFollowupParents", "commitMessages", "ActiveTurnOutputSchemaMismatch", "allowLongWait", "timeout_capped"]) {
       assert.match(text, new RegExp(required), required);
     }
     assert.doesNotMatch(text, /one worker per step|一个 worker 只做一步|amend(?:ed)? (?:it )?into the same commit|改完 `--amend`/i);

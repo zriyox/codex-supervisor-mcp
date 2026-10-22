@@ -82,7 +82,10 @@ export function buildGuardPreamble({ sandbox, ownedPaths = [], allowedCommands =
   // shell as a heredoc; the guard accepts that shape too, so the worker is told
   // about it instead of stalling on a tool it does not have.
   const shellEdit = "If your toolset has no apply_patch tool, run it through the shell as apply_patch <<'EOF' ... EOF; the guard checks the file paths the same way. A declared command ending in * is a prefix, so go test ./internal/* covers go test ./internal/service -run TestX.";
-  return `Runtime supervisor guard: edits must use apply_patch within ${JSON.stringify(ownedPaths)}. ${shellEdit} Safe read-only inspection commands (rg, cat, sed without -i, git status/diff/log, jq without -i, find without -exec/-delete) are allowed and never reserve another worker's paths. Commands that validate, write, execute code or have side effects must exactly match declared commands ${JSON.stringify(allowedCommands)}. Forbidden: ${forbidden}. Undeclared shell programs are denied; report a needed validation command instead of bypassing the guard. ${stage}`;
+  const delivery = sandbox === "workspace-write" && (!workspaceKind || workspaceKind === "git_worktree")
+    ? "Do not run git add, git commit or git commit --amend: the dispatcher commits reviewed edits with land_codex_worker({commitMessage}). Leave your edits uncommitted; clean status and commit-count checks belong after landing. If the task or acceptance requires a self-commit or a clean edited worktree, report the contract conflict instead of bypassing the guard."
+    : "";
+  return `Runtime supervisor guard: edits must use apply_patch within ${JSON.stringify(ownedPaths)}. ${shellEdit} ${delivery} Safe read-only inspection commands (rg, cat, sed without -i, git status/diff/log, jq without -i, find without -exec/-delete) are allowed and never reserve another worker's paths. Commands that validate, write, execute code or have side effects must exactly match declared commands ${JSON.stringify(allowedCommands)}. Forbidden: ${forbidden}. Undeclared shell programs are denied; report a needed validation command instead of bypassing the guard. ${stage}`;
 }
 
 // The acceptance commands are shown to the worker. Hiding them would not

@@ -765,7 +765,7 @@ server.registerTool(
 );
 server.registerTool("check_workers", {
   title: "Check changed workers",
-  description: "Check newly settled runs and actionable failures; automatically resume a dead lost/no_work first run once, except approval, authentication, permission and quota waits. Returns recovery receipts; unchanged state is quiet. Call from a host-scheduled loop; it cannot wake a closed host. Set a distinct CODEX_SUPERVISOR_OBSERVER_ID per main thread to retain its cursor across restarts.",
+  description: "Check newly settled runs, actionable failures and active threads crossing the handoff threshold; automatically resume a dead lost/no_work first run once, except approval, authentication, permission and quota waits. Handoff reminders occur once per run and never cancel, replace or resume a live worker. Unchanged state is quiet. Call from a host-scheduled loop; it cannot wake a closed host. Set a distinct CODEX_SUPERVISOR_OBSERVER_ID per main thread to retain its cursor across restarts.",
   inputSchema: {}
 }, async () => {
   const read = observerRead.then(async () => {
@@ -1090,12 +1090,13 @@ server.registerTool(
   {
     title: "Wait for Codex workers",
     description:
-      "Block until selected Codex workers reach a terminal status, then return summaries. The wait budget bounds this call, not the workers: when it runs out you get a progress snapshot and the workers keep running, so call this again with the same task_ids to keep waiting. Keep the budget under your client's MCP tool timeout, or the client kills the call instead of the wait returning. compact: true returns one line per worker: status, phase, exit_code, changed_file_count, acceptance (passed / failed / null when none was configured or it did not run), plus idle_seconds since the last Codex event of this run, command_running and current_command. Codex emits nothing while a command runs or while the model thinks, so a long idle with command_running: true is a long command and a long idle without it is thinking (or a process that reconcile will report as lost).",
+      "Block until selected Codex workers reach a terminal status, then return summaries. Each call is capped at 60 seconds unless allowLongWait is explicitly true and the caller has verified its MCP timeout supports the requested budget. A spent wait budget returns a snapshot while workers continue; reuse the same task_ids or schedule check_workers for longer monitoring. compact: true returns one line per worker with status, phase, exit_code, changed_file_count, acceptance and liveness. command_running means a command may still be working despite a long idle interval.",
     inputSchema: {
       task_ids: z.array(z.string().min(1)).min(1),
       mode: z.enum(["any", "all"]).default("all"),
       timeoutMinutes: z.number().int().min(1).max(360).default(1),
       timeoutMs: z.number().int().min(1000).max(21600000).optional(),
+      allowLongWait: z.boolean().default(false),
       pollMs: z.number().int().min(250).max(10000).default(1000),
       emitProgress: z.boolean().default(false),
       // Off by default. A wait is the call clients background and then replay
@@ -1121,6 +1122,7 @@ server.registerTool(
     mode,
     timeoutMinutes,
     timeoutMs,
+    allowLongWait,
     pollMs,
     emitProgress,
     includeEvents,
@@ -1131,7 +1133,8 @@ server.registerTool(
   }, extra) => {
     const compact = requestedCompact ?? !includeEvents;
     const startedAt = Date.now();
-    const effectiveTimeoutMs = timeoutMs ?? timeoutMinutes * 60 * 1000;
+    const requestedTimeoutMs = timeoutMs ?? timeoutMinutes * 60 * 1000;
+    const effectiveTimeoutMs = allowLongWait ? requestedTimeoutMs : Math.min(requestedTimeoutMs, 60000);
     let tasks = [];
     const progressToken = extra?._meta?.progressToken;
     let lastProgressAt = -Infinity;
@@ -1152,7 +1155,7 @@ server.registerTool(
         } }).catch(() => {});
         lastProgressAt = elapsed;
       }
-      await sleep(pollMs);
+      await sleep(Math.min(pollMs, Math.max(0, effectiveTimeoutMs - (Date.now() - startedAt))));
     }
 
     await reconcileDetachedActiveTasks();
@@ -1184,10 +1187,12 @@ server.registerTool(
       still_running: timedOut,
       termination_reason: clientCancelled ? "client_cancelled" : timedOut ? "budget_exhausted" : "settled",
       next_step: timedOut
-        ? `Workers are still running; the ${budgetLabel} wait budget ran out, not the workers. Call wait_codex_workers again with the same task_ids, or use get_orchestration_overview for a cheap progress read. Raise timeoutMinutes only if your client's MCP tool timeout allows it.`
+        ? `Workers are still running; the ${budgetLabel} wait budget ran out. Reuse the same task_ids for a short wait, or schedule check_workers for long monitoring. Set allowLongWait only after verifying the client's MCP timeout supports the requested budget; do not start another long wait while a background wait is active.`
         : null,
       waited_ms: Date.now() - startedAt,
       timeout_ms: effectiveTimeoutMs,
+      requested_timeout_ms: requestedTimeoutMs,
+      timeout_capped: effectiveTimeoutMs !== requestedTimeoutMs,
       timeout_minutes: Math.round(effectiveTimeoutMs / 60000),
       missing_ids: missingIds,
       completed_count: tasks.filter((task) => task.status === "completed").length,

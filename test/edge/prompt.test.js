@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { buildAcceptanceBlock, buildGoalPreamble } from "../../src/prompt.js";
+import { buildAcceptanceBlock, buildGoalPreamble, buildGuardPreamble } from "../../src/prompt.js";
 
 test("a worker may not invent a goal token budget", () => {
   const withoutBudget = buildGoalPreamble({ objective: "finish the gate" });
@@ -20,4 +20,13 @@ test("the worker is told to use the supervisor acceptance CLI instead of its int
   assert.match(text, /CODEX_SUPERVISOR_ACCEPTANCE_CLI/);
   assert.match(text, /Do not retype the commands in zsh/);
   assert.match(text, /non-interactive Bash with errexit and pipefail/);
+});
+
+test("Git write workers leave commits and post-landing cleanliness to the dispatcher", () => {
+  const text = buildGuardPreamble({ sandbox: "workspace-write", workspaceKind: "git_worktree", ownedPaths: ["src"] });
+  assert.match(text, /Do not run git add, git commit or git commit --amend/);
+  assert.match(text, /land_codex_worker.*commitMessage/);
+  assert.match(text, /clean.*after landing/i);
+  assert.match(text, /report.*conflict/i);
+  assert.doesNotMatch(buildGuardPreamble({ sandbox: "read-only", ownedPaths: [] }), /land_codex_worker/);
 });

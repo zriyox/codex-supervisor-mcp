@@ -20,6 +20,7 @@ description: 用 Codex CLI 并行做可独立验收的功能包，每路一个 G
 5. 写 worker 先跑同 contract 的 `preflight_codex_worker`。`get_worker_preflight` 必须是 `passed`，再把 preflight task id 填进 `preflight_id`。`check_acceptance` 不能代替 worker 环境预检。
 6. 只要 worker 会 land，就必须有能证明结果的 acceptance。文件存在检查只能当附加条件，不能单独当完成证据。
 7. `workspace-write` worker 不执行 `git add`、`git commit` 或 `amend`。验收通过后由主线程 `land_codex_worker(commitMessage)` 代提交并落地。
+   worker acceptance 验功能与实际测试；Git 干净、提交数量和提交信息由主线程在 land 后检查，不能让未提交编辑的 worker 同时满足“必须无 diff”。契约冲突先报告规划/集成负责人修订，不手工 cherry-pick 或忽略门禁绕过。
 8. worker 不 push、不合并、不再派生 worker。临时 `codex/<id>` 分支不是交付物。
 
 `preflight_id` 是 AI 派单硬规则。MCP schema 为了兼容旧客户端仍允许省略，但不能把“没被 schema 拒绝”当成可以跳过预检。
@@ -75,8 +76,9 @@ description: 用 Codex CLI 并行做可独立验收的功能包，每路一个 G
 ## 等待与状态
 
 - 日常增量看 `overview_delta`，保存 `next_cursor`。需要全量状态时才用 `get_orchestration_overview`。
-- 短等用 `wait_codex_workers`，建议 `timeoutMs: 60000`、`compact: true`。`still_running: true` 只表示这次等待预算用完。
+- 短等用 `wait_codex_workers`，默认最多60秒、`compact: true`；`timeout_capped` 表示长请求被限为短等，`still_running` 只表示预算用完。仅确认宿主允许长调用时才传 `allowLongWait: true`；已有后台 wait 就接回，不重复创建。
 - 长任务用宿主 `/loop 5m check_workers`。不同主线程设置不同的 `CODEX_SUPERVISOR_OBSERVER_ID`。
+- `check_workers` 在活跃线程超过交接阈值时每个 run 提醒一次；先看状态与 stage，等当前步骤结算或明确取消后再整理 checkpoint 接续，不能因 token 多重复起同一任务。
 - `idle_seconds` 是距上一条 Codex 事件的时间。`command_running: true` 时长命令可能仍在跑；没有命令且长时间无事件，再查 `get_codex_worker_events`。
 - 不要用 shell 循环 grep `data/runs/*.jsonl` 判断状态。`failed`、`lost`、退出码和恢复状态以 supervisor 状态机为准。
 

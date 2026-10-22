@@ -161,7 +161,7 @@ land_codex_worker       核过了，带 commitMessage 代提交并落进集成�
 
 | 工具 | 入参 | 作用 |
 |---|---|---|
-| `check_workers` | 无参 | 交付新终态、验收失败和需处理goal；新格式第1轮 `lost` / `no_work` / `invalid_report` 自动恢复一次，未变返回quiet；用宿主定时唤醒调用，每个主线程设独立CODEX_SUPERVISOR_OBSERVER_ID可在重启后接回 |
+| `check_workers` | 无参 | 返回新终态、故障及长线程交接提醒；同一 run 的 handoff 只提醒一次，不中止或复制活跃 worker。已死的第1轮 `lost` / `no_work` / `invalid_report` 最多恢复一次；用宿主定时调用及独立 CODEX_SUPERVISOR_OBSERVER_ID 接回 |
 | `overview_delta` | `cursor` | 主线程默认轮询入口：只返回 active / needs_attention / ready_to_land / ready_to_clean、cursor 后变化、短版 attention_reason / next_action 和 next_cursor；不返回全量历史、prompt、diff、event 或 worker capsule |
 | `check_acceptance` | `cwd`, `acceptance`, `baseRef`, `timeoutMs` | 派单前实际运行给定验收命令，不建 worker，不证明 worker 完成；数量 grep 会提示不能证明失败名单和必跑执行 |
 | `preflight_codex_worker` | `cwd`, `workspaceKind`, `inPlaceAuthorization`, `workspaceSetup`, `ownedPaths`, `probeCommands`, `baseRef`, `sandbox`, `allowedCommands`, `context`, `contracts`, `networkAccess`, `writableRoots` | 用与目标 worker 相同的 workspace/base/sandbox/guard 起短 probe worker；它必须实际跑完每条 probe command。probe 自动获得本次 guard-only 允许，但不进入目标 worker contract；联网和凭据目录仍须显式授权 |
@@ -169,7 +169,7 @@ land_codex_worker       核过了，带 commitMessage 代提交并落进集成�
 | `create_codex_worker` | `task`, `cwd`, `workspaceKind`, `inPlaceAuthorization`, `workspaceSetup`, **`ownedPaths`**, **`goal`**, `preflight_id`, `forbid`, `allowedCommands`, `context`, `contracts`, `externalOutputs`, `networkAccess`, `writableRoots`, `maxRunMs`, `maxTotalMs`, `acceptance`, `session_id`, `session_title`, `session_note`, `dependsOn`, `baseRef`, `sandbox`, `model`, `reasoningEffort`, `title`, `skipGitRepoCheck` | Git 默认隔离 worktree；非 Git 写入必须选 `scratch` 或有授权、paths、acceptance 的 `in_place_write`。`workspaceSetup` 在起 worker 前链接依赖、初始化子模块、跑 prepare；`preflight_id` 给了就必须是通过的同环境 probe |
 | `create_codex_followup_worker` | `task_id`, `followup_prompt`, `session_id`, `session_title`, `title`, `cwd`, `sandbox`, `model`, `ownedPaths`, `forbid`, `allowedCommands`, `context`, `contracts`, `externalOutputs`, `networkAccess`, `writableRoots`, `workspaceKind`, `workspaceSetup`, `goal`, `baseRef`, `acceptance` | 新会话继承父任务上下文：未 land 用父分支当前提交，已 land 用当前集成 HEAD，显式 `baseRef` 优先。未提交父改动不复制；不支持 `preflight_id`、`dependsOn`、`skipGitRepoCheck` |
 | `resume_codex_worker` | `task_id`, `prompt`, `rebaseOnto`, `acceptance`, `context` | 接同一个 Codex 会话继续跑，`thread_id` 不变。原生 goal 仍 active 或 goal 状态库不可判定时，本轮自动省略 output schema，避免 `ActiveTurnOutputSchemaMismatch`。`rebaseOnto` 先把 worktree 挪到主线新头（stash、跳过已合入补丁、重放新增提交、放回），冲突原样退回不起 worker |
-| `wait_codex_workers` | `task_ids`, `mode`(any/all), `timeoutMinutes`, `timeoutMs`, `compact`, `emitProgress`, `includeEvents`, `eventLimit`, `eventMaxChars`, `eventKinds` | 等终态。默认 60 秒且不推周期 heartbeat；显式 `emitProgress: true` 才每 30 秒通知。`termination_reason` 区分 settled / budget_exhausted / client_cancelled；`compact` 每路一行 |
+| `wait_codex_workers` | `task_ids`, `mode`(any/all), `timeoutMinutes`, `timeoutMs`, `allowLongWait`, `compact`, `emitProgress`, `includeEvents`, `eventLimit`, `eventMaxChars`, `eventKinds` | 等终态，单次预算默认最多 60 秒，只有确认宿主超时允许后才传 `allowLongWait: true`。返回实际/请求预算与 `timeout_capped`，`termination_reason` 区分 settled / budget_exhausted / client_cancelled；`emitProgress` 可选，每路摘要用 `compact` |
 | `get_orchestration_overview` | `status`, `limit` | 全部 worker 的状态表，封顶 7000 字节。带 `version` 和 `update` |
 | `get_worker_result` | `task_id`, `limit`, `maxChars`, `includeFiles` | worker 自己的汇报，默认截 6000 字节、`truncated` 提示读全。`acceptance` 是 supervisor 替你跑的验收过没过，`verification` 是它自己跑过的命令和退出码，`base_behind` 是主线走了多远（`contains_base: false` 时 `behind` 为 `null`，那是换了线） |
 | `get_worker_diff` | `task_id`, `file`, `hunk`, `pageSize`, `cursor`, `maxChars`, `paths` | worker 实际改了什么。默认完整文件索引与 hunk 数；按 `file` + `hunk`/`cursor` 分页读 patch。显式 `maxChars` 且不传 `file` 保留旧整份限流模式 |
@@ -243,9 +243,11 @@ worker 进程和 supervisor 验收子进程都包含当前 `CODEX_SUPERVISOR_TAS
 
 落地前按真实 diff 核对 ownedPaths，越界拒绝且不提交草稿；只有用户明确授权时才用 allowOutsideOwned。
 
+worker 的 acceptance 在代提交之前执行，应检查功能和测试；`test -z "$(git status --porcelain)"`、提交数量和提交信息检查由主线程放到 land 后执行。验收失败先核对当前 run 的具体失败项，不能仅因报告更新、外部测试通过或主线程补过提交就视旧失败为已解决；契约冲突交规划/集成负责人修订并重新验收，不手工 cherry-pick 绕过。
+
 同 session 的 `default_acceptance` 自动加到每路本地检查前；resume 会取最新策略。`describe_session` 返回 policy_revision，改目标/门禁可传 expected_revision 防旧窗口覆盖；waiting_user 拒绝派单与恢复，approved 后再继续。回执host_goal_sync包含按当前策略生成的/goal命令；宿主已有原生goal时用/goal替换条件，支持ProposeGoal时可提议同一条件并走宿主批准。条件要求读取最新session revision及批准范围；MCP不会偷偷修改或禁用宿主Stop hook。
 
-wait 默认预算60秒、默认compact；includeEvents会选择详细结果（显式compact优先）。带progress token的客户端每30秒收到通知；已验证MCP SDK及真实Claude2.1.299：idle35秒、wait65秒，三次progress后正常返回；原生/loop定时调用也已实测。
+wait 默认预算60秒、默认compact，过长请求也限制为60秒，返回 `requested_timeout_ms` / `timeout_ms` / `timeout_capped`。确认客户端允许长调用后可显式 `allowLongWait: true`；`emitProgress` 只在请求且客户端传 progress token 时通知，不能延长宿主的硬超时。已有后台 wait 就接回它，不重复开长 wait；长期监控用宿主定时调用 `check_workers`。
 
 每路临时注入随包PreToolUse守卫：apply_patch核对全部目标路径（含rename和symlink），forbid拒绝红线；安全只读检查（rg/cat/sed无-i/git只读/jq无-i/find无-exec或-delete）默认允许且不占其他 worker 的写路径，写入/执行/有副作用的 Shell 命令必须显式声明。声明的验证脚本以派单者权限执行，可有副作用，不能当作任意程序的文件沙箱。guard策略随resume/followup继承，不写全局hooks。空跑write run按本轮输出前后内容和命令判断，no_work进入needs_attention；只读任务不因没改文件判空跑。
 
