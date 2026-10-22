@@ -1306,7 +1306,7 @@ export async function resumeCodexWorker({ taskId, prompt, rebaseOnto = null, acc
   // can safely resume with a structured output schema. Paused, blocked,
   // usage-limited and budget-limited goals are not complete; Codex can still
   // activate their goal turn and reject the incompatible schema.
-  const outputSchema = goalRead.state === "missing_goal"
+  const outputSchema = ["missing_goal", "missing_database"].includes(goalRead.state)
     || (goalRead.state === "available" && goalRead.goal?.storage_status === "complete");
 
   const started = await startTrackedRun({
