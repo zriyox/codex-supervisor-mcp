@@ -22,7 +22,7 @@ for (const goalStatus of ["active", "paused", "blocked", "usage_limited", "budge
 
   await withMcp({ SUPERVISOR_HOME: home, CODEX_HOME: codexHome, FAKE_CODEX_ARGS_LOG: argsLog }, async ({ call }) => {
     const worker = await call("create_codex_worker", dispatchArgs("schema resume", dir, {
-      sandbox: "read-only", ownedPaths: []
+      sandbox: "read-only", ownedPaths: [], acceptance: ['node -e "process.exit(0)"']
     }));
     const first = await waitFor(call, worker.id, (task) => task.status === "completed" && task.exit_code === 0);
     await waitForRunHostExit(home, worker.id);
@@ -36,6 +36,8 @@ for (const goalStatus of ["active", "paused", "blocked", "usage_limited", "budge
     assert.equal(second.attention_reason, null, JSON.stringify(second));
 
     const db = new DatabaseSync(join(home, "data", "supervisor.sqlite"));
+    const acceptedFacts = db.prepare("SELECT count(*) AS total FROM facts WHERE key='accepted_outcome' AND scope_id=?").get(`work-${worker.id}`).total;
+    assert.equal(acceptedFacts, goalStatus === "complete" ? 2 : 1, "schema-free prose must remain candidate-only even when acceptance passes");
     db.prepare("UPDATE tasks SET status='lost', exit_code=NULL, error=?, attention_reason=NULL, run_evidence=NULL WHERE id=?")
       .run("Worker ended but its supervisor did not record the process exit", worker.id);
     db.close();

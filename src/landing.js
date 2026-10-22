@@ -96,9 +96,10 @@ function matchAlreadyLanded(cwd, target, targetHead, base, originals, workerHead
   if (originals.length === 0) return { matches: [], complete: true, head: null };
   const targetOrder = lines(git(target, ["rev-list", `${base}..${targetHead}`]));
   const targetCommits = new Set(targetOrder);
-  const targetByPatch = new Map([...patchIdsInRange(target, `${base}..${targetHead}`)]
+  const needsPatchIds = originals.some((original) => !targetCommits.has(original));
+  const targetByPatch = new Map([...(needsPatchIds ? patchIdsInRange(target, `${base}..${targetHead}`) : [])]
     .map(([sha, id]) => [id, sha]));
-  const originalPatches = patchIdsInRange(cwd, `${base}..${workerHead}`);
+  const originalPatches = needsPatchIds ? patchIdsInRange(cwd, `${base}..${workerHead}`) : new Map();
   const matches = originals.flatMap((original) => {
     if (targetCommits.has(original)) return [{ original, target: original }];
     const id = originalPatches.get(original);
@@ -235,14 +236,17 @@ export function landWorker(task, { onto = null, commitMessage = null, ignoreAcce
       const workerHead = git(task.worktree_path, ["rev-parse", "HEAD"]).trim();
       const pending = new Set(lines(git(target, ["rev-list", "--cherry-pick", "--right-only", `${targetHead}...${workerHead}`])));
       alreadyLanded = commits.filter((sha) => !pending.has(sha));
-      ({ matches: alreadyLandedMatches, complete: alreadyLandedMatchComplete, head: matchedHead } = matchAlreadyLanded(
-        task.worktree_path, target, targetHead, base, alreadyLanded, workerHead
-      ));
       commits = commits.filter((sha) => pending.has(sha));
+      try {
+        ({ matches: alreadyLandedMatches, complete: alreadyLandedMatchComplete, head: matchedHead } = matchAlreadyLanded(
+          task.worktree_path, target, targetHead, base, alreadyLanded, workerHead
+        ));
+      } catch (error) {
+        alreadyLandedMatchComplete = false;
+        alreadyLandedMatchError = gitTail(error);
+      }
     } catch (error) {
-      alreadyLandedMatchComplete = false;
-      alreadyLandedMatchError = gitTail(error);
-      return { error: "landing_proof_failed", reason: "could not prove the target-side commit mapping", match_error: alreadyLandedMatchError };
+      return { error: "landing_proof_failed", reason: "could not prove which worker commits remain unlanded", match_error: gitTail(error) };
     }
   }
   if (commits.length === 0 && alreadyLanded.length > 0) {

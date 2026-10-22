@@ -217,6 +217,8 @@ Pass the same setup to `preflight_codex_worker` and the target `create_codex_wor
 
 When both the worker and run host have exited, the current run's durable `turn.completed` can recover completed status and exit settlement independently of the acceptance verdict. Missing acceptance is marked interrupted and must be rerun before landing; recovery neither removes worktrees nor reruns the worker automatically.
 
+Plain-text reports from schema-free resumes remain candidate facts even after acceptance passes; synthesized empty arrays are not promoted as verified claims.
+
 Chain landing skips commits proven present on the target and ancestors with no changes; `ignoreAcceptance` and `allowOutsideOwned` apply only to the named leaf, not to its ancestors.
 
 When dispatch omits `goal.tokenBudget`, the worker must omit `token_budget` entirely. The runtime guard rejects `0`, `1`, `null` and any invented value. If a budget is supplied explicitly, the worker must use that exact positive integer.

@@ -233,7 +233,7 @@ worker 和 run host 都已退出时，当前 run 的 durable `turn.completed` �
 
 `session_id` 只负责批次、默认门禁和审批，不再把同批 worker 的标题、汇报或 session objective 自动塞进新 worker。worker 只收到内部编译的 context capsule：L0 只标明 branch 与 acceptance 来源（不塞命令正文）、自身身份/任务、显式依赖的最小交付摘要和路径/SHA 命中的 verified facts；raw event、完整 diff、历史报告、candidate facts 都只可按需读取。repo fact 只有两个 checkout 的 canonical `origin`、repo-relative watched path 和 base SHA 同时匹配时才跨 checkout 可见；无可识别 origin 就保持 work-scoped。事实的 base SHA 不再覆盖、watched path 发生 Git diff、context 输入内容 hash 或非 Git in-place manifest 漂移时会自动追加 `expired` 版本并从 capsule 排除。主线程只看 `get_context_snapshot_meta`，需要证据时再显式 `get_fact` / `get_worker_result` / `get_worker_diff`。
 
-worker 的最终 JSON 报告会先记录为该 run 的 `candidate` fact，不能跨 work 自动注入；supervisor acceptance 通过后才生成当前 work 的 `verified` outcome，并带 report/acceptance event 来源、base SHA 与 watched paths。push proof 另存为 retained artifact，verified fact 可回指该 artifact。验收失败、未配置验收或 worker 自报完成都不会升级成共享真相。
+worker 的最终 JSON 报告会先记录为该 run 的 `candidate` fact，不能跨 work 自动注入；supervisor acceptance 通过后才生成当前 work 的 `verified` outcome，并带 report/acceptance event 来源、base SHA 与 watched paths。schema-free resume 的纯文本报告只保留为 candidate，不把合成的空数组当作已验证事实。push proof 另存为 retained artifact，verified fact 可回指该 artifact。验收失败、未配置验收或 worker 自报完成都不会升级成共享真相。
 
 交付状态分开：acceptance 通过只是 `verified`，`land_codex_worker` 只是 `landed`，仍不代表远端有这笔提交。需要显式 `verify_delivery_push` fetch 并校验 `landed_head` 已在目标 remote branch 上，才是 `push_verified`；它会自动生成 cleanup plan，SAFE 项进入 `cleanup_eligible`，但永远不会自己删除。该工具绝不代替用户执行 push 或部署。
 

@@ -101,6 +101,7 @@ description: 用 Codex CLI 并行做可独立验收的功能包，每路一个 G
 - `session_id` peers、完整事件、完整 diff、历史报告和 candidate facts 不会自动注入。
 - 主线程看事实摘要用 `search_worker_facts`；追溯来源用 `get_fact`；看证据索引用 `get_worker_evidence` / `get_artifact`。
 - worker 的报告先记为 candidate。只有 supervisor acceptance 通过后，才有资格成为当前 work 的 verified outcome。
+- schema-free resume 的纯文本报告只留 candidate；合成的 verification/not_done 空数组不是已验证结论。
 - base SHA、watched path、context hash 或 in-place manifest 变化后，旧 fact 会过期并从后续 capsule 排除。
 
 ## 中断与恢复

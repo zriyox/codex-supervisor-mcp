@@ -74,7 +74,7 @@ async function recordOutcomeFacts({ task, runId, report, reportEventId = null, a
     validForManifestHash,
     watchedPaths: task.owned_paths ?? []
   });
-  if (!acceptancePassed) return;
+  if (!acceptancePassed || report.format === "text") return;
   await recordFact({
     workItemId: workItem.id,
     scopeType: "work_item",
