@@ -86,8 +86,12 @@ description: 用 Codex CLI 并行做可独立验收的功能包，每路一个 G
 2. 读 `get_worker_result`。注意 `commands_run`、命令退出码和 `last_command_failed`，不要只听结论。
 3. 读 `get_worker_diff`。默认先看文件和 hunk 索引，再按 `file` + `hunk`/`cursor` 分页读 patch。
 4. 对不上就问 `ask_codex_worker`。旁路只读，不改 worker 线程。
-5. 要改就 `resume_codex_worker`。不要要求 worker commit 或 amend；主线前进时按需带 `rebaseOnto: "HEAD"`。
+5. 要改就 `resume_codex_worker`。不要要求 worker commit 或 amend；主线前进时按需带 `rebaseOnto: "HEAD"`。原生 goal 未明确 complete 或状态不可读时，supervisor 续跑省略 output schema，避免 `ActiveTurnOutputSchemaMismatch`。
 6. 验收和 diff 都过了，用 `land_codex_worker({commitMessage})` 把未提交改动提交到 worker 分支并 cherry-pick 到当前集成分支。
+
+`create_codex_followup_worker` 在父任务未 land 时从其 `codex/<parent>` 当前提交起新 worktree；父任务已 land 则用当前集成 HEAD，显式 `baseRef` 优先。父 worktree 未提交改动留在原任务，checkpoint 丢失时先恢复或明确选新 base。整条接续链先审各路 acceptance 和 diff，再用 `land_codex_worker({includeFollowupParents: true, commitMessages: { [task_id]: "..." }})` 按 root-first 落地；途中失败保留已落地部分，修复后重调，不手工压 WIP。
+
+零改动祖先可跳过；`ignoreAcceptance` / `allowOutsideOwned` 只对指定 leaf 生效，不豁免祖先的验收或写入范围。
 
 `invalid_report` 不是业务失败。常见情况是单个字符串字段、缺一个 `]`/`}`，或内容完整但 schema 不合规。先让 `check_workers` 做一次 report-only 修复；仍失败时，acceptance 通过且 diff 审过，可以显式 land。报告只是摘要，不是交付证据。
 
@@ -104,7 +108,7 @@ description: 用 Codex CLI 并行做可独立验收的功能包，每路一个 G
 | 情况 | 处理 |
 |---|---|
 | 主线程挂了 | worker 的独立 run host 会继续记录日志、状态和验收。新窗口用 `get_session_works` 接回 |
-| worker 变 `lost` | `resume_codex_worker`，worktree、改动和 thread id 都保留 |
+| worker 变 `lost` | 当前 run 有 durable `turn.completed` 且 worker/run host 均退出时，reconcile 恢复 completed；验收中断仍需重跑。确实中断才 resume，worktree、改动和 thread id 都保留 |
 | worktree 落后主线 | `resume_codex_worker` 带 `rebaseOnto: "HEAD"` |
 | worker 失败 | 先看 `failure.source` 和 `error`，区分 provider、supervisor、workspace setup、model output、acceptance、worker process |
 | 没有 thread id 的旧行 | 用 `create_codex_followup_worker`，通过文本重述上下文 |

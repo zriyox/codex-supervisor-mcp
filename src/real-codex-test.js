@@ -190,6 +190,33 @@ assert.equal(resumed.last_message && resumed.last_message.length > 0, true, "exp
 console.log(`  run_count=${resumed.run_count} thread_id unchanged`);
 console.log(`  last_message=${JSON.stringify(resumed.last_message.slice(0, 120))}`);
 
+console.log("resuming a real native goal that is still active ...");
+await withServer(async (client) => {
+  const waiting = await call(client, "create_codex_worker", {
+    title: "real active-goal resume",
+    task: "Create the required native goal, then return WAITING_FOR_DISPATCHER. Approval has not arrived yet. Leave the goal active for the dispatcher to resume; do not call update_goal in this first turn and do not touch files.",
+    cwd: repo, sandbox: "read-only", reasoningEffort: "low", ownedPaths: [],
+    goal: { objective: "Wait for a dispatcher follow-up explicitly approving release, then acknowledge RELEASE_APPROVED and complete this goal without editing files" }
+  });
+  assert.ok(waiting.id, JSON.stringify(waiting));
+  const firstTurn = await waitFor(client, waiting.id, (task) => TERMINAL.includes(task.status) && task.exit_code != null);
+  assert.equal(firstTurn.status, "completed", JSON.stringify(firstTurn));
+  const unfinished = await call(client, "get_worker_goal", { task_id: waiting.id });
+  assert.equal(unfinished.native_goal?.storage_status, "active", JSON.stringify(unfinished));
+  const resumedWaiting = await call(client, "resume_codex_worker", {
+    task_id: waiting.id,
+    prompt: "The dispatcher explicitly approves release now. Acknowledge RELEASE_APPROVED and mark the existing goal complete. Do not create a new goal or edit files."
+  });
+  assert.ok(!resumedWaiting.error, JSON.stringify(resumedWaiting));
+  const final = await waitFor(client, waiting.id, (task) => task.run_count === 2 && TERMINAL.includes(task.status) && task.exit_code != null);
+  assert.equal(final.status, "completed", JSON.stringify(final));
+  assert.equal(final.exit_code, 0, JSON.stringify(final));
+  assert.equal(final.attention_reason, null, JSON.stringify(final));
+  assert.equal(final.thread_id, firstTurn.thread_id);
+  assert.match(final.last_message, /RELEASE_APPROVED/);
+  console.log("  native active goal resumed on the same thread and completed without a schema mismatch");
+});
+
 // A real write run: the edit must land in the worker's own worktree and the
 // changed files must be reported, while the target repository stays untouched.
 console.log("running a real write worker ...");
@@ -259,5 +286,49 @@ assert.equal(repoTouched, true, "the reviewed output was landed by the superviso
 const gitStatus = execFileSync("git", ["status", "--porcelain"], { cwd: repo, encoding: "utf8" }).trim();
 assert.equal(gitStatus, "", `target repo is dirty: ${gitStatus}`);
 console.log("  worktree output landed, target repo is clean");
+
+console.log("running a real continuation chain before landing its parent ...");
+await withServer(async (client) => {
+  const parent = await call(client, "create_codex_worker", {
+    title: "real chain parent",
+    task: "Create chain-parent.cjs containing module.exports = (value) => value * 2; use apply_patch and touch no other file.",
+    cwd: repo,
+    sandbox: "workspace-write",
+    reasoningEffort: "low",
+    ownedPaths: ["chain-parent.cjs"],
+    acceptance: ['node -e "require(\'node:assert/strict\').equal(require(\'./chain-parent.cjs\')(7),14)"'],
+    goal: { objective: "Implement and verify the doubling function in chain-parent.cjs" }
+  });
+  assert.ok(parent.id, JSON.stringify(parent));
+  const parentFinal = await waitFor(client, parent.id, (task) => TERMINAL.includes(task.status) && task.exit_code != null && task.acceptance === "passed");
+  assert.equal(parentFinal.status, "completed");
+  execFileSync("git", ["add", "chain-parent.cjs"], { cwd: parent.worktree_path });
+  execFileSync("git", ["commit", "-q", "-m", "Checkpoint real continuation parent"], { cwd: parent.worktree_path });
+  const parentHead = execFileSync("git", ["rev-parse", "HEAD"], { cwd: parent.worktree_path, encoding: "utf8" }).trim();
+
+  const child = await call(client, "create_codex_followup_worker", {
+    task_id: parent.id,
+    followup_prompt: "Create chain-child.cjs containing module.exports = (value) => require('./chain-parent.cjs')(value) + 1; use apply_patch, touch only chain-child.cjs and verify the inherited parent function.",
+    ownedPaths: ["chain-child.cjs"],
+    acceptance: ['node -e "require(\'node:assert/strict\').equal(require(\'./chain-child.cjs\')(7),15)"'],
+    goal: { objective: "Implement and verify the child function using the unlanded parent checkpoint" }
+  });
+  assert.ok(child.id, JSON.stringify(child));
+  assert.equal(child.base_commit, parentHead);
+  assert.equal(await stat(join(repo, "chain-parent.cjs")).then(() => true, () => false), false);
+  const childFinal = await waitFor(client, child.id, (task) => TERMINAL.includes(task.status) && task.exit_code != null && task.acceptance === "passed");
+  assert.equal(childFinal.status, "completed");
+  assert.notEqual(childFinal.thread_id, parentFinal.thread_id);
+  const partial = await call(client, "land_codex_worker", { task_id: child.id, commitMessage: "Land child alone" });
+  assert.equal(partial.error, "followup_parents_not_landed");
+  const chain = await call(client, "land_codex_worker", {
+    task_id: child.id, includeFollowupParents: true, commitMessage: "Land real continuation child"
+  });
+  assert.ok(!chain.error, JSON.stringify(chain));
+  assert.equal(chain.chain.length, 2);
+  execFileSync(process.execPath, ["-e", "require('node:assert/strict').equal(require('./chain-child.cjs')(7),15)"], { cwd: repo });
+  assert.equal(execFileSync("git", ["status", "--porcelain"], { cwd: repo, encoding: "utf8" }).trim(), "");
+  console.log("  inherited current parent checkpoint, blocked partial land, landed root first, integrated function returned 15");
+});
 
 console.log(`\nreal codex end-to-end passed  (state dir: ${home})`);

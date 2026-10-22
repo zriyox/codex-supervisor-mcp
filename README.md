@@ -167,14 +167,14 @@ land_codex_worker       核过了，带 commitMessage 代提交并落进集成�
 | `preflight_codex_worker` | `cwd`, `workspaceKind`, `inPlaceAuthorization`, `workspaceSetup`, `ownedPaths`, `probeCommands`, `baseRef`, `sandbox`, `allowedCommands`, `context`, `contracts`, `networkAccess`, `writableRoots` | 用与目标 worker 相同的 workspace/base/sandbox/guard 起短 probe worker；它必须实际跑完每条 probe command。probe 自动获得本次 guard-only 允许，但不进入目标 worker contract；联网和凭据目录仍须显式授权 |
 | `get_worker_preflight` | `task_id` | 返回 probe 的实际 command evidence、运行环境 contract hash、worker outcome 和 `running/passed/failed`；probe 全部执行通过时，报告 JSON 错误或已 exit 0 的 close-handler 缺失只留诊断，不误判环境失败 |
 | `create_codex_worker` | `task`, `cwd`, `workspaceKind`, `inPlaceAuthorization`, `workspaceSetup`, **`ownedPaths`**, **`goal`**, `preflight_id`, `forbid`, `allowedCommands`, `context`, `contracts`, `externalOutputs`, `networkAccess`, `writableRoots`, `maxRunMs`, `maxTotalMs`, `acceptance`, `session_id`, `session_title`, `session_note`, `dependsOn`, `baseRef`, `sandbox`, `model`, `reasoningEffort`, `title`, `skipGitRepoCheck` | Git 默认隔离 worktree；非 Git 写入必须选 `scratch` 或有授权、paths、acceptance 的 `in_place_write`。`workspaceSetup` 在起 worker 前链接依赖、初始化子模块、跑 prepare；`preflight_id` 给了就必须是通过的同环境 probe |
-| `create_codex_followup_worker` | `task_id`, `followup_prompt`, `session_id`, `session_title`, `title`, `cwd`, `sandbox`, `model`, `ownedPaths`, `forbid`, `allowedCommands`, `context`, `contracts`, `externalOutputs`, `networkAccess`, `writableRoots`, `workspaceKind`, `workspaceSetup`, `goal`, `baseRef`, `acceptance` | 开一个新会话，把老 worker 的 prompt、状态、近期事件拼进去；不支持 `preflight_id`、`dependsOn`、`skipGitRepoCheck` |
-| `resume_codex_worker` | `task_id`, `prompt`, `rebaseOnto`, `acceptance`, `context` | 接同一个 Codex 会话继续跑，`thread_id` 不变。`rebaseOnto` 先把 worktree 挪到主线新头（stash、跳过已合入补丁、重放新增提交、放回），冲突原样退回不起 worker |
+| `create_codex_followup_worker` | `task_id`, `followup_prompt`, `session_id`, `session_title`, `title`, `cwd`, `sandbox`, `model`, `ownedPaths`, `forbid`, `allowedCommands`, `context`, `contracts`, `externalOutputs`, `networkAccess`, `writableRoots`, `workspaceKind`, `workspaceSetup`, `goal`, `baseRef`, `acceptance` | 新会话继承父任务上下文：未 land 用父分支当前提交，已 land 用当前集成 HEAD，显式 `baseRef` 优先。未提交父改动不复制；不支持 `preflight_id`、`dependsOn`、`skipGitRepoCheck` |
+| `resume_codex_worker` | `task_id`, `prompt`, `rebaseOnto`, `acceptance`, `context` | 接同一个 Codex 会话继续跑，`thread_id` 不变。原生 goal 仍 active 或 goal 状态库不可判定时，本轮自动省略 output schema，避免 `ActiveTurnOutputSchemaMismatch`。`rebaseOnto` 先把 worktree 挪到主线新头（stash、跳过已合入补丁、重放新增提交、放回），冲突原样退回不起 worker |
 | `wait_codex_workers` | `task_ids`, `mode`(any/all), `timeoutMinutes`, `timeoutMs`, `compact`, `emitProgress`, `includeEvents`, `eventLimit`, `eventMaxChars`, `eventKinds` | 等终态。默认 60 秒且不推周期 heartbeat；显式 `emitProgress: true` 才每 30 秒通知。`termination_reason` 区分 settled / budget_exhausted / client_cancelled；`compact` 每路一行 |
 | `get_orchestration_overview` | `status`, `limit` | 全部 worker 的状态表，封顶 7000 字节。带 `version` 和 `update` |
 | `get_worker_result` | `task_id`, `limit`, `maxChars`, `includeFiles` | worker 自己的汇报，默认截 6000 字节、`truncated` 提示读全。`acceptance` 是 supervisor 替你跑的验收过没过，`verification` 是它自己跑过的命令和退出码，`base_behind` 是主线走了多远（`contains_base: false` 时 `behind` 为 `null`，那是换了线） |
 | `get_worker_diff` | `task_id`, `file`, `hunk`, `pageSize`, `cursor`, `maxChars`, `paths` | worker 实际改了什么。默认完整文件索引与 hunk 数；按 `file` + `hunk`/`cursor` 分页读 patch。显式 `maxChars` 且不传 `file` 保留旧整份限流模式 |
 | `ask_codex_worker` | `task_id`, `question`, `timeoutMs`, `maxChars`, `fresh`, `end` | 旁路问 worker 一句。线程 fork 成只读侧会话，没网络、没 MCP 工具，worker 本身不动。worker 被 resume 过会自动换新 fork，`fresh` 强制换，`end` 删 |
-| `land_codex_worker` | `task_id`, `onto`, `commitMessage`, `ignoreAcceptance`, `allowOutsideOwned` | 把 worker 在 `codex/<id>` 上的提交 cherry-pick 到派单目录的当前分支。目标要干净，冲突回滚，验收 `failed` 拒绝；报告格式错不再单独阻止显式 land。`commitMessage` 先替它把未提交的改动提交成一笔，`ignoreAcceptance` 放行 |
+| `land_codex_worker` | `task_id`, `onto`, `commitMessage`, `includeFollowupParents`, `commitMessages`, `ignoreAcceptance`, `allowOutsideOwned` | 把 worker 在 `codex/<id>` 上的提交 cherry-pick 到派单目录的当前分支。目标要干净，冲突回滚，验收 `failed` 拒绝；报告格式错不再单独阻止显式 land。`commitMessage` 先替当前 worker 把未提交改动提交成一笔；`includeFollowupParents` 按 root-first 落地整条 followup 链，`commitMessages` 给链中各路提供各自的 checkpoint 提交说明 |
 | `verify_delivery_push` | `task_id`, `remote`, `branch` | fetch 指定 remote branch 并证明 `landed_head` 已可达；只读验证，不会 push 或部署。通过后记录 `push_verified` 并生成 cleanup plan |
 | `cleanup_plan` | `task_ids`, `project_root` | 生成 15 分钟有效的 SAFE / REVIEW / BLOCKED 计划，含原因、fingerprint 与回收空间估算；SAFE 必须 acceptance passed、push verified、干净且无活跃依赖/进程 |
 | `apply_cleanup` | `plan_id`, `item_ids` | 只在未过期计划上二次校验 SAFE item、重新 fetch remote 并确认 landed SHA 仍可达后执行 `git worktree remove/prune`；保留 branch、task、events、JSONL、artifacts |
@@ -223,6 +223,12 @@ MCP schema 必填两个：`ownedPaths` 和 `goal.objective`。写 worker 还必�
 
 `workspaceSetup.links.source` 按派单的 `cwd` 解析，也可以直接写绝对路径；`path` 始终是 worktree 内的相对目标。源目录必须先存在。
 
+`create_codex_followup_worker` 在父任务未 land 时继承其 `codex/<parent>` 分支的当前提交，父任务已 land 则从当前集成分支 HEAD 开始；显式 `baseRef` 优先。父 worktree 里没提交的改动仍只属于父任务，父 checkpoint 丢失时返回 `followup_checkpoint_missing`。需要整条接续链落地时调用 `land_codex_worker({includeFollowupParents: true})`，主线程先审各路 acceptance 和 diff，工具再按 root-first 落地；途中失败保留此前已落地的结果，修复后可重复调用。
+
+worker 和 run host 都已退出时，当前 run 的 durable `turn.completed` 可以恢复 `completed` 和退出结算，独立保留 acceptance 的通过、失败或中断状态。缺失验收结果标记为 interrupted，仍需重新验收后才能 land；恢复不会删除 worktree 或自动重跑 worker。
+
+链式 landing 会跳过已证明在目标分支上的提交和零改动祖先；`ignoreAcceptance` / `allowOutsideOwned` 只作用于指定的 leaf，不自动扩大到祖先。
+
 普通 worker 启动时会关闭它继承到的 `codex-supervisor` MCP，不能再派 worker、resume、cancel 或改编排状态；主线程是唯一编排者。其他业务 MCP 不受影响；旁问 fork 仍关闭全部 MCP，因为它只允许只读回答。
 
 `session_id` 只负责批次、默认门禁和审批，不再把同批 worker 的标题、汇报或 session objective 自动塞进新 worker。worker 只收到内部编译的 context capsule：L0 只标明 branch 与 acceptance 来源（不塞命令正文）、自身身份/任务、显式依赖的最小交付摘要和路径/SHA 命中的 verified facts；raw event、完整 diff、历史报告、candidate facts 都只可按需读取。repo fact 只有两个 checkout 的 canonical `origin`、repo-relative watched path 和 base SHA 同时匹配时才跨 checkout 可见；无可识别 origin 就保持 work-scoped。事实的 base SHA 不再覆盖、watched path 发生 Git diff、context 输入内容 hash 或非 Git in-place manifest 漂移时会自动追加 `expired` 版本并从 capsule 排除。主线程只看 `get_context_snapshot_meta`，需要证据时再显式 `get_fact` / `get_worker_result` / `get_worker_diff`。
@@ -251,7 +257,7 @@ wait 默认预算60秒、默认compact；includeEvents会选择详细结果（�
 
 守卫按 worker 形状放权：`git_worktree` 编辑 worker 只放声明过的命令和简单读取；`read_only_in_place` 无写入无网络；`scratch` 的联网草稿只能写在 `SUPERVISOR_HOME/scratch/<taskId>`；`in_place_write` 必须有显式授权、ownedPaths 与 acceptance，并保存前后 manifest。非 Git `workspace-write` 没写 `workspaceKind` 会拒绝，绝不默认写用户目录。
 
-check_workers在状态协调后，对已结束的第1轮lost/no_work/invalid_report原子resume一次（invalid_report只要求重发裸JSON，不重做活）。两轮同 fingerprint 的无输出/无命令会升级为 `two_stall` 和 `needs_attention`，不再自动重试；审批、认证、权限和quota等待也不重试，返回recoveries记录。worker最终输出要求JSON result/verification/not_done；解析只做安全修复：字符串字段归一成 string[]，以及唯一缺少的 `]`/`}`，伪造字段仍拒绝。报告只是摘要；invalid_report 保持 `completed` 生命周期和 attention，不否定同 run acceptance 和真实 diff，显式 land 仍可用；旧历史标legacy_text。
+check_workers在状态协调后，对已结束的第1轮lost/no_work/invalid_report原子resume一次（invalid_report只要求重发裸JSON，不重做活）。如果当前 run 已经持久化 `turn.completed`，只是 run host 没落 exit code，supervisor 会从 durable event 恢复为 completed 并保留 report/attention 证据，不再误标 lost。两轮同 fingerprint 的无输出/无命令会升级为 `two_stall` 和 `needs_attention`，不再自动重试；审批、认证、权限和quota等待也不重试，返回recoveries记录。worker最终输出要求JSON result/verification/not_done；解析只做安全修复：字符串字段归一成 string[]，以及唯一缺少的 `]`/`}`，伪造字段仍拒绝。报告只是摘要；invalid_report 保持 `completed` 生命周期和 attention，不否定同 run acceptance 和真实 diff，显式 land 仍可用；旧历史标legacy_text。
 
 context用绝对文件路径与可选sha256声明材料，最多20份、与contracts合计6000字；文件不超过5 MB。首次派单记录实际哈希，resume校验原材料未变，需要新材料时显式传context。handoff最多1800字/16行，截断明确标记；完整约束和引用单独保留，材料不授予写权限。
 

@@ -105,15 +105,15 @@ export function buildAcceptanceBlock(acceptance, { resume = false } = {}) {
   ].join("\n");
 }
 
-export function buildReportPreamble({ resume = false, acceptance = null } = {}) {
+export function buildReportPreamble({ resume = false, acceptance = null, outputSchema = true } = {}) {
   const acceptanceBlock = buildAcceptanceBlock(acceptance, { resume });
   const withAcceptance = (text) => (acceptanceBlock ? `${text}\n\n${acceptanceBlock}` : text);
   if (resume) {
-    return withAcceptance("Report as before using the required JSON schema: result string, verification string[] (every command you ran to check, with exit codes), not_done string[] (remaining work and risks). Under 2000 characters, no list of changed files, quote raw errors verbatim.");
+    return withAcceptance(`Report as before using JSON with result string, verification string[] (every command you ran to check, with exit codes), not_done string[] (remaining work and risks). ${outputSchema ? "The output schema enforces these fields. " : "No output schema is active on this resume, so follow the shape yourself. "}Under 2000 characters, no list of changed files, quote raw errors verbatim.`);
   }
   return withAcceptance([
     "Final report (your last message), under 2000 characters, in the language of the task. Quoted command output does not count toward the limit.",
-    "Return JSON with exactly result:string, verification:string[], not_done:string[]; --output-schema enforces these fields. Cover the following content in those fields.",
+    `Return JSON with exactly result:string, verification:string[], not_done:string[]; ${outputSchema ? "--output-schema enforces these fields" : "no output schema is active, so follow this shape exactly"}. Cover the following content in those fields.`,
     "Write that JSON value on its own: no markdown code fences and nothing before or after it.",
     "Keep each verification entry concise: command name, exit code and key evidence; avoid embedding long quoted shell source. Ensure arrays and the object are fully closed and all strings use valid JSON escaping.",
     "1. Result: what is done, in two or three sentences. Say plainly what is not done.",
@@ -131,8 +131,8 @@ export function withGoalPreamble(prompt, goalOptions) {
 }
 
 // The whole frame: goal in front, task text, report format at the end.
-export function frameWorkerPrompt(prompt, goalOptions, { acceptance = null } = {}) {
-  return `${withGoalPreamble(prompt, goalOptions)}\n\n${buildReportPreamble({ resume: Boolean(goalOptions?.resume), acceptance })}`;
+export function frameWorkerPrompt(prompt, goalOptions, { acceptance = null, outputSchema = true } = {}) {
+  return `${withGoalPreamble(prompt, goalOptions)}\n\n${buildReportPreamble({ resume: Boolean(goalOptions?.resume), acceptance, outputSchema })}`;
 }
 
 // Claude's native /goal owns its Stop condition. MCP cannot silently replace

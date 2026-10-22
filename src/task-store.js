@@ -11,6 +11,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { captureWorkspaceManifest } from "./workspace-kind.js";
 import { buildHandoff } from "./handoff.js";
 import { readPreflightResult } from "./worker-preflight.js";
+import { parseWorkerReportForRun } from "./worker-report.js";
 
 let db;
 
@@ -681,6 +682,80 @@ async function reconcileInterruptedAcceptance() {
 
 export async function reconcileDetachedActiveTasks() {
   await reconcileInterruptedAcceptance();
+  // A run host can disappear after Codex has finished its turn but before it
+  // writes the process exit. The terminal event is already durable, and the
+  // work did complete; the missing scalar is a supervisor bookkeeping fault,
+  // not evidence that the worker vanished. Acceptance keeps its own verdict;
+  // recovering the worker completion must never imply that checks passed.
+  const recoverTerminalTurn = async (task) => {
+    if (task.exit_code != null || task.signal || !task.started_at
+      || isPidAlive(task.pid) || isPidAlive(task.run_host_pid)) return false;
+    const runId = runIdFor(task.id, task.run_count);
+    const events = openDb().prepare(`
+      SELECT payload FROM task_events WHERE task_id = ? AND run_id = ? ORDER BY seq
+    `).all(task.id, runId).map((row) => decodeJson(row.payload, null)).filter(Boolean);
+    if (!events.some((event) => event.type === "turn.completed")) return false;
+    let reportText = null;
+    for (const event of events) {
+      if (event.type === "item.completed" && event.item?.type === "agent_message") reportText = event.item.text ?? null;
+    }
+    const structuredReport = parseWorkerReportForRun(reportText, { outputSchema: task.guard_policy?.output_schema !== false });
+    const recoveredEvidence = task.run_evidence
+      ? { ...task.run_evidence, structured_report: structuredReport }
+      : {
+          run: task.run_count,
+          commands_run: (task.commands ?? []).length,
+          structured_report: structuredReport,
+          recovered: "turn_completed_without_process_exit"
+        };
+    if (!recoveredEvidence.attempt_fingerprint) {
+      recoveredEvidence.attempt_fingerprint = createHash("sha256").update(JSON.stringify({
+        output_changed: recoveredEvidence.output_changed ?? null,
+        commands_run: recoveredEvidence.commands_run ?? (task.commands ?? []).length,
+        changed_files: task.changed_files ?? [],
+        acceptance_configured: Array.isArray(task.acceptance) && task.acceptance.length > 0,
+        workspace_manifest_changed: recoveredEvidence.workspace?.manifest_changed ?? null
+      })).digest("hex");
+    }
+    const reportInvalid = recoveredEvidence.structured_report?.valid === false && !task.guard_policy?.preflight;
+    const attentionReason = task.attention_reason ?? (reportInvalid ? "invalid_report" : null);
+    const staleExitError = /did not record the process exit|process disappeared/i.test(task.error ?? "");
+    const now = new Date().toISOString();
+    const acceptanceResults = task.acceptance_results ?? (task.acceptance?.length ? {
+      status: "interrupted", passed: null, run: task.run_count, finished_at: now,
+      error: "worker completed before its acceptance result was recorded; rerun acceptance"
+    } : null);
+    const recoveredTask = {
+      ...task,
+      status: "completed",
+      phase: null,
+      exit_code: 0,
+      attention_reason: attentionReason,
+      error: reportInvalid
+        ? (staleExitError ? null : task.error) ?? `Invalid final worker report: ${recoveredEvidence.structured_report.error}`
+        : staleExitError ? null : task.error ?? null,
+      current_action: attentionReason ? task.current_action : "Completed (exit recovered from the durable turn event)",
+      current_command: null,
+      acceptance_results: acceptanceResults,
+      run_evidence: recoveredEvidence,
+      completed_at: task.completed_at ?? now,
+      updated_at: now
+    };
+    await writeTask(recoveredTask);
+    await completeRunRecord(recoveredTask, task.run_count);
+    await appendTaskEvent(task.id, {
+      type: "supervisor.exit_recovered",
+      reason: "turn_completed_without_process_exit",
+      exit_code: 0,
+      recovered_at: now
+    }, { runId, actor: "supervisor" }).catch(() => null);
+    return true;
+  };
+  const terminalCandidates = openDb().prepare(`
+    SELECT * FROM tasks
+    WHERE status IN ('completed','lost') AND exit_code IS NULL AND started_at IS NOT NULL
+  `).all().map(rowToTask);
+  for (const task of terminalCandidates) await recoverTerminalTurn(task);
   const incomplete = (await readTasks()).filter((task) =>
     ["completed", "failed"].includes(task.status) && task.exit_code == null && task.started_at
     && !isPidAlive(task.pid) && !isPidAlive(task.run_host_pid)
@@ -700,6 +775,7 @@ export async function reconcileDetachedActiveTasks() {
   const staleTasks = tasks.filter((task) => !isPidAlive(task.run_host_pid)
     && ((task.pid && !isPidAlive(task.pid)) || neverStarted(task)));
   for (const task of staleTasks) {
+    if (await recoverTerminalTurn(task)) continue;
     const now = new Date().toISOString();
     const vanished = Boolean(task.pid);
     await writeTask({

@@ -135,6 +135,10 @@ try {
     if (task.current_stage) observedStages.add(`${projects[index].label}:${task.current_stage}`);
     return ["completed", "failed", "cancelled", "lost"].includes(task.status) && task.exit_code !== null;
   })));
+  const overlapMs = Math.min(...finals.map((task) => Date.parse(task.completed_at)))
+    - Math.max(...finals.map((task) => Date.parse(task.started_at)));
+  assert.ok(overlapMs > 0, `workers did not overlap: ${JSON.stringify(finals.map(({ started_at, completed_at }) => ({ started_at, completed_at })))}`);
+  console.log(`concurrent worker overlap: ${overlapMs}ms`);
 
   for (const [index, final] of finals.entries()) {
     const project = projects[index];

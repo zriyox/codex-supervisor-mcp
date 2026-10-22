@@ -1,4 +1,4 @@
-import { createWriteStream, existsSync } from "node:fs";
+import { closeSync, createWriteStream, existsSync, openSync } from "node:fs";
 import { lstat, mkdir, realpath, rm, stat, symlink } from "node:fs/promises";
 import { createHash, randomUUID } from "node:crypto";
 import { execFileSync, spawn } from "node:child_process";
@@ -19,6 +19,7 @@ import {
   completeRunRecord,
   getWorkItemForTask,
   recordFact,
+  runIdFor,
   updateWorkItemDelivery,
   claimTaskRun,
   releaseTaskRun,
@@ -34,8 +35,9 @@ import { rebaseWorktree } from "./landing.js";
 import { DEFAULT_ACCEPTANCE_TIMEOUT_MS, isArtifactOnlyAcceptance, normalizeAcceptance, runAcceptance } from "./acceptance.js";
 import { appendFile } from "node:fs/promises";
 import { findOutsideOwnedChanges } from "./owned-changes.js";
-import { parseWorkerReport, workerReportSchemaPath } from "./worker-report.js";
+import { parseWorkerReportForRun, workerReportSchemaPath } from "./worker-report.js";
 import { buildHandoff } from "./handoff.js";
+import { readNativeGoalState } from "./goal-store.js";
 import { compileWorkerContext } from "./context-compiler.js";
 import { captureExternalOutputs, compareExternalOutputs } from "./external-output.js";
 import { buildRuntimeContract, createPreflightMetadata, readPreflightResult, runtimeContractHash } from "./worker-preflight.js";
@@ -372,7 +374,7 @@ async function spawnAndAwaitStart(target, args, options) {
 // Attaches stream handlers and keeps `record` in the supervisor database.
 // Every write goes through one serialized chain so concurrent stdout/stderr
 // callbacks cannot interleave and persist out of order.
-async function trackRunInHost({ record, args, prompt, logPath, spawnOptions = {} }) {
+async function trackRunInHost({ record, args, prompt, logPath, spawnOptions = {}, outputSchema = true }) {
   const capability = codexRunner.capabilityPreflight();
   if (!capability.ok) return failedStart(record, capability.error);
   const target = capability.target;
@@ -381,6 +383,7 @@ async function trackRunInHost({ record, args, prompt, logPath, spawnOptions = {}
   const externalBefore = await captureExternalOutputs(record.guard_policy?.externalOutputs ?? [], { checkBaseline: (record.run_count ?? 0) === 0 });
   const owned = [...findOutsideOwnedChanges(record, []).mapping.map((entry) => entry.worker), ...externalBefore.map((entry) => entry.path)];
   const guardPolicy = { cwd: record.cwd, worktree: record.cwd, sandbox: record.sandbox, ownedPaths: owned, ...(record.guard_policy ?? {}),
+    output_schema: outputSchema,
     goalTokenBudget: record.goal_token_budget ?? null,
     allowedCommands: [
       ...(record.guard_policy?.allowedCommands ?? []),
@@ -396,7 +399,7 @@ async function trackRunInHost({ record, args, prompt, logPath, spawnOptions = {}
   const acceptanceCli = fileURLToPath(new URL("./acceptance-cli.js", import.meta.url));
   const quoteCommand = (path) => process.platform === "win32" ? `"${path.replace(/"/g, '""')}"` : `'${path.replace(/'/g, "'\\''")}'`;
   const hookCommand = `${quoteCommand(process.execPath)} ${quoteCommand(guard)}`;
-  const configArgs = ["--output-schema", workerReportSchemaPath, "--dangerously-bypass-hook-trust", "-c",
+  const configArgs = [...(outputSchema ? ["--output-schema", workerReportSchemaPath] : []), "--dangerously-bypass-hook-trust", "-c",
     `hooks.PreToolUse=[{matcher="Bash|apply_patch|create_goal",hooks=[{type="command",command=${JSON.stringify(hookCommand)}}]}]`];
   // A worker may use its explicitly configured business MCP servers, but it
   // must not inherit this supervisor and create a second orchestration tree.
@@ -451,6 +454,7 @@ async function trackRunInHost({ record, args, prompt, logPath, spawnOptions = {}
     acceptance_results: null,
     attention_reason: null,
     run_evidence: null,
+    guard_policy: { ...record.guard_policy, output_schema: outputSchema },
     commands: [],
     last_message: null,
     current_action: null,
@@ -474,15 +478,22 @@ async function trackRunInHost({ record, args, prompt, logPath, spawnOptions = {}
   }, 250) : null;
 
   let writeChain = Promise.resolve();
-  const persist = (next) => {
+  const writeSnapshot = (next) => {
     live = next;
     const snapshot = live;
-    writeChain = writeChain
-      .then(() => upsertTask(snapshot))
-      .catch((error) => {
-        process.stderr.write(`[codex-supervisor] persist failed for ${snapshot.id}: ${error.message}\n`);
-      });
-    return writeChain;
+    const pending = writeChain.then(() => upsertTask(snapshot));
+    // Keep later writes usable after one failed snapshot. Callers that need
+    // failure visibility use the returned promise explicitly.
+    writeChain = pending.catch(() => {});
+    return pending;
+  };
+  const persist = async (next, label = "persist") => {
+    try { await writeSnapshot(next); }
+    catch (error) {
+      await appendTaskEvent(next.id, { type: "supervisor.persist_failed", label, error: error.message, run: next.run_count },
+        { runId: runIdFor(next.id, next.run_count), actor: "supervisor" }).catch(() => null);
+      process.stderr.write(`[codex-supervisor] ${label} failed for ${next.id}: ${error.message}\n`);
+    }
   };
   await persist(live);
   const runId = await ensureRunRecord(live, live.run_count);
@@ -504,6 +515,22 @@ async function trackRunInHost({ record, args, prompt, logPath, spawnOptions = {}
   let terminalEvent = false;
   let rawReport = null;
   let rawReportEventId = null;
+  const projectOutcomeFacts = async (finalRecord, { acceptanceEventId = null, acceptancePassed = false } = {}) => {
+    try {
+      await recordOutcomeFacts({
+        task: finalRecord,
+        runId,
+        report: finalRecord.run_evidence?.structured_report,
+        reportEventId: rawReportEventId,
+        acceptanceEventId,
+        acceptancePassed
+      });
+    } catch (error) {
+      await appendTaskEvent(finalRecord.id, { type: "supervisor.fact_record_failed", error: error.message, run: live.run_count },
+        { runId, actor: "supervisor" }).catch(() => null);
+      process.stderr.write(`[codex-supervisor] fact projection failed for ${finalRecord.id}: ${error.message}\n`);
+    }
+  };
   const handleLines = async (lines) => {
     const events = [];
     for (const line of lines) {
@@ -633,9 +660,10 @@ async function trackRunInHost({ record, args, prompt, logPath, spawnOptions = {}
         next.error = error.message;
       }
     }
+    const structuredReport = parseWorkerReportForRun(rawReport, { outputSchema });
     next.run_evidence = {
       run: live.run_count, commands_run: live.commands.length,
-      structured_report: parseWorkerReport(rawReport),
+      structured_report: structuredReport,
       output_before: outputBefore, output_after: outputAfter,
       output_changed: outputBefore && outputAfter ? outputBefore !== outputAfter : null,
       workspace: workspaceBefore ? {
@@ -721,27 +749,21 @@ async function trackRunInHost({ record, args, prompt, logPath, spawnOptions = {}
             : next.current_action,
         updated_at: new Date().toISOString()
       };
-      await recordOutcomeFacts({
-        task: finalRecord,
-        runId,
-        report: finalRecord.run_evidence?.structured_report,
-        reportEventId: rawReportEventId,
+      // The terminal lifecycle and exit code are primary evidence. Persist
+      // them before fact projection, which is secondary and may fail on a
+      // stale control record without turning completed work into lost work.
+      await persist(finalRecord, "final persist");
+      await projectOutcomeFacts(finalRecord, {
         acceptanceEventId: acceptanceEvent?.id ?? null,
         acceptancePassed: results.passed === true
       });
       if (finalRecord.attention_reason === "two_stall") await updateWorkItemDelivery(finalRecord.id, "needs_attention");
-      await persist(finalRecord);
       await completeRunRecord(finalRecord, live.run_count);
     } else {
       const finalRecord = acceptance ? { ...next, acceptance_results: null } : next;
-      await recordOutcomeFacts({
-        task: finalRecord,
-        runId,
-        report: finalRecord.run_evidence?.structured_report,
-        reportEventId: rawReportEventId
-      });
+      await persist(finalRecord, "final persist");
+      await projectOutcomeFacts(finalRecord);
       if (finalRecord.attention_reason === "two_stall") await updateWorkItemDelivery(finalRecord.id, "needs_attention");
-      await persist(finalRecord);
       await completeRunRecord(finalRecord, live.run_count);
     }
     cancelledTasks.delete(record.id);
@@ -787,10 +809,26 @@ async function startTrackedRun(job) {
     }
   };
   job.prompt = `${compiled.text}\n\n${job.prompt}\n\nRequired input refs (read-only): ${JSON.stringify(compiled.sourceRefs)}\nRequired contracts: ${JSON.stringify(job.record.input_context.contracts ?? [])}`;
-  const host = spawn(process.execPath, [fileURLToPath(import.meta.url), "--run-host"], {
-    detached: true, stdio: ["ignore", "ignore", "ignore", "ipc"],
-    env: process.env, windowsHide: true
-  });
+  const hostLogPath = job.logPath.endsWith(".jsonl")
+    ? job.logPath.replace(/\.jsonl$/, ".host.log")
+    : `${job.logPath}.host.log`;
+  let hostLogFd;
+  try {
+    hostLogFd = openSync(hostLogPath, "a");
+  } catch (error) {
+    const result = failedStart(job.record, `cannot open run host log ${hostLogPath}: ${error.message}`);
+    await upsertTask(result.record);
+    return result;
+  }
+  let host;
+  try {
+    host = spawn(process.execPath, [fileURLToPath(import.meta.url), "--run-host"], {
+      detached: true, stdio: ["ignore", hostLogFd, hostLogFd, "ipc"],
+      env: process.env, windowsHide: true
+    });
+  } finally {
+    closeSync(hostLogFd);
+  }
   const started = await new Promise((resolveStart) => {
     let settled = false;
     const finish = (result) => {
@@ -1163,8 +1201,9 @@ export async function createCodexWorker({
     prompt: frameWorkerPrompt(task, {
       objective: validatedGoal.objective,
       tokenBudget: validatedGoal.tokenBudget
-    }, { acceptance: combinedAcceptance }),
+    }, { acceptance: combinedAcceptance, outputSchema: true }),
     logPath: record.run_log,
+    outputSchema: true,
     // --cd tells Codex where the agent works. The shell/tool process must also
     // inherit the worktree as its OS cwd: otherwise a login shell may restore
     // the project directory and relative probes read the wrong checkout.
@@ -1262,6 +1301,13 @@ export async function resumeCodexWorker({ taskId, prompt, rebaseOnto = null, acc
 
   const cwd = (await exists(task.cwd)) ? task.cwd : task.project_root;
   const args = codexRunner.resumeArgs(task);
+  const goalRead = readNativeGoalState(task.thread_id);
+  // Only a thread with no native goal, or one explicitly stored as complete,
+  // can safely resume with a structured output schema. Paused, blocked,
+  // usage-limited and budget-limited goals are not complete; Codex can still
+  // activate their goal turn and reject the incompatible schema.
+  const outputSchema = goalRead.state === "missing_goal"
+    || (goalRead.state === "available" && goalRead.goal?.storage_status === "complete");
 
   const started = await startTrackedRun({
     record: { ...task, resumed_from: task.resumed_from ?? task.id },
@@ -1269,8 +1315,9 @@ export async function resumeCodexWorker({ taskId, prompt, rebaseOnto = null, acc
     prompt: frameWorkerPrompt(prompt, {
       objective: task.goal_objective ?? task.title ?? task.id,
       resume: true
-    }, { acceptance: task.acceptance }),
+    }, { acceptance: task.acceptance, outputSchema }),
     logPath: task.run_log,
+    outputSchema,
     spawnOptions: { cwd }
   });
   return rebase ? { ...started.record, rebase } : started.record;
@@ -1463,6 +1510,17 @@ export async function createFollowupWorker({
 }) {
   const parent = await getTask(taskId);
   if (!parent) throw new Error(`task not found: ${taskId}`);
+  let inheritedBaseRef = baseRef ?? null;
+  if (!baseRef && !parent.landed_at && parent.project_root && parent.worktree_path) {
+    try {
+      resolveCommit(parent.project_root, `codex/${parent.id}`);
+      inheritedBaseRef = `codex/${parent.id}`;
+    } catch {
+      const error = new Error(`parent checkpoint codex/${parent.id} is unavailable; restore it or choose an explicit baseRef`);
+      error.code = "followup_checkpoint_missing";
+      throw error;
+    }
+  }
   const recentEvents = await readTaskEvents(taskId, 20);
   const prompt = [
     "You are continuing a previous Codex worker run.",
@@ -1514,10 +1572,14 @@ export async function createFollowupWorker({
     workspaceKind: workspaceKind ?? (parent.workspace_kind === "legacy" ? null : parent.workspace_kind),
     inPlaceAuthorization: inPlaceAuthorization ?? parent.workspace_metadata?.in_place_authorization ?? null,
     workspaceSetup: workspaceSetup ?? parent.workspace_metadata?.setup ?? null,
-    baseRef: baseRef ?? null,
+    // A follow-up continues the same logical line of work. Start from the
+    // parent branch so commits already made there are present; uncommitted
+    // parent edits remain in the parent worktree and are deliberately not
+    // smuggled across task boundaries.
+    baseRef: inheritedBaseRef,
     // Inherited unless given; the follow-up runs in a fresh worktree cut
-    // from the project HEAD, so the parent's checks only pass there once
-    // the parent's work has landed.
+    // from the parent's codex/<parent> branch, so checks that depend on the
+    // parent checkpoint are valid before the parent has landed on the target.
     acceptance: acceptance === undefined ? (parent.session_policy_revision == null ? parent.acceptance : parent.acceptance_local) : acceptance,
     acceptanceTimeoutMs: acceptanceTimeoutMs ?? parent.acceptance_timeout_ms ?? null
   });

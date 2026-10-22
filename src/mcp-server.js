@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -220,6 +220,116 @@ function isSettled(task) {
   // draining the stream and writing the exit status. Leave the half-written
   // row for reconciliation after a short grace period, never return it.
   return false;
+}
+
+async function recordWorkerLanded(task, { head, branch, target, source = "git_land", alreadyLanded = [] }) {
+  const now = new Date().toISOString();
+  const landed = { ...task, landed_at: now, landed_head: head ?? null, landed_branch: branch ?? null, updated_at: now };
+  await upsertTask(landed);
+  await updateWorkItemDelivery(task.id, "landed");
+  const event = await appendTaskEvent(task.id, {
+    type: "supervisor.landed",
+    head: head ?? null,
+    branch: branch ?? null,
+    target: target ?? null,
+    source,
+    already_landed: alreadyLanded,
+    landed_at: now
+  }, { runId: runIdFor(task.id, task.run_count ?? 1), actor: "supervisor" });
+  const workItem = await getWorkItemForTask(task.id);
+  if (workItem && head) {
+    await recordFact({
+      workItemId: workItem.id,
+      scopeType: "work_item",
+      scopeId: workItem.id,
+      key: "landed",
+      value: { head, branch: branch ?? null, source },
+      state: "verified",
+      sourceEventId: event.id,
+      validForSha: head,
+      watchedPaths: task.owned_paths ?? [],
+      verifiedBy: `supervisor.${source}`
+    });
+    await recordFact({
+      workItemId: workItem.id,
+      scopeType: "dependency",
+      scopeId: workItem.id,
+      key: "landed_delivery_summary",
+      value: { task_id: task.id, landed_head: head, branch: branch ?? null, acceptance: task.acceptance_results?.passed === true ? "passed" : "not_configured_or_not_passed", source },
+      state: "verified",
+      sourceEventId: event.id,
+      validForSha: head,
+      watchedPaths: task.owned_paths ?? [],
+      verifiedBy: `supervisor.${source}`
+    });
+  }
+  return { landed, event };
+}
+
+async function landOneWorkerTask(taskId, { onto = null, commitMessage = null, ignoreAcceptance = false, allowOutsideOwned = false, skipAlreadyLanded = false } = {}) {
+  const task = await getTask(taskId);
+  if (!task) return { error: "task_not_found", task_id: taskId };
+  if (task.workspace_kind && task.workspace_kind !== "legacy" && task.workspace_kind !== "git_worktree") {
+    return { error: "workspace_kind_not_landable", task_id: taskId, workspace_kind: task.workspace_kind, reason: `${task.workspace_kind} does not create a Git worktree and cannot be landed` };
+  }
+  const session = task.session_id ? await getSession(task.session_id) : null;
+  if (!isSettled(task)) return { error: "worker_active", task_id: taskId, reason: "wait for this run and acceptance to settle before landing" };
+  if (session?.approval_state === "waiting_user") return { error: "session_waiting_user", task_id: taskId, reason: "session requires user approval before landing" };
+  if (session && task.session_policy_revision !== session.policy_revision) return { error: "session_policy_stale", task_id: taskId, current_revision: session.policy_revision, checked_revision: task.session_policy_revision, reason: "requirements changed; resume with the current objective and rerun acceptance before landing" };
+  if (skipAlreadyLanded && task.landed_at && (!task.worktree_path || !existsSync(task.worktree_path))) {
+    try {
+      const targetBranch = git(task.project_root, ["symbolic-ref", "--short", "HEAD"]);
+      if (onto && onto !== targetBranch) return { error: "wrong_branch", task_id: taskId, current_branch: targetBranch };
+      if (!ignoreAcceptance && task.acceptance?.length && task.acceptance_results?.passed !== true) {
+        return { error: "acceptance_not_run", task_id: taskId };
+      }
+      git(task.project_root, ["merge-base", "--is-ancestor", task.landed_head, "HEAD"]);
+      return { task_id: taskId, title: task.title, status: task.status, branch: `codex/${task.id}`, skipped: "already_landed", landed_at: task.landed_at, landed_head: task.landed_head };
+    } catch {
+      return { error: "landed_commit_unreachable", task_id: taskId, reason: "the removed ancestor worktree cannot be skipped without proving its landed commit is on the current target" };
+    }
+  }
+  const outcome = landWorker(task, { onto, commitMessage, ignoreAcceptance, allowOutsideOwned });
+  if (outcome.error === "nothing_to_land" && outcome.already_landed?.length > 0
+    && (outcome.uncommitted ?? []).length === 0) {
+    const alreadyRecorded = task.landed_at && task.landed_head === outcome.matched_head;
+    if (!alreadyRecorded && outcome.matched_head) {
+      await recordWorkerLanded(task, {
+        head: outcome.matched_head,
+        branch: outcome.onto,
+        target: outcome.target,
+        source: "patch_equivalent",
+        alreadyLanded: outcome.already_landed
+      });
+    }
+    return {
+      task_id: taskId,
+      title: task.title,
+      status: task.status,
+      branch: `codex/${task.id}`,
+      ...outcome,
+      skipped: "already_in_target",
+      lifecycle_recorded: !alreadyRecorded && Boolean(outcome.matched_head)
+    };
+  }
+  if (outcome.error) return { task_id: taskId, title: task.title, status: task.status, branch: `codex/${task.id}`, ...outcome };
+  await recordWorkerLanded(task, { head: outcome.head, branch: outcome.onto, target: outcome.target, alreadyLanded: outcome.already_landed ?? [] });
+  return { task_id: taskId, title: task.title, status: task.status, branch: `codex/${task.id}`, ...outcome };
+}
+
+async function followupChainIds(taskId) {
+  const ids = [];
+  const seen = new Set();
+  let current = taskId;
+  for (;;) {
+    if (seen.has(current)) throw new Error(`followup cycle detected at ${current}`);
+    seen.add(current);
+    const task = await getTask(current);
+    if (!task) throw new Error(`task not found: ${current}`);
+    ids.unshift(current);
+    if (!task.followup_of) return ids;
+    current = task.followup_of;
+  }
 }
 
 // Codex emits nothing while a command runs and nothing while the model
@@ -845,7 +955,7 @@ server.registerTool(
   {
     title: "Create Codex follow-up worker",
     description:
-      "Start a NEW Codex session seeded with the previous worker's prompt, status, and recent events. To continue the same session instead, use resume_codex_worker.",
+      "Start a NEW Codex session seeded with the previous worker's prompt, status, and recent events. Unlanded parents contribute their current codex/<parent> checkpoint; landed parents use the current target HEAD. Explicit baseRef overrides either; uncommitted parent edits are not copied. To continue the same session instead, use resume_codex_worker.",
     inputSchema: {
       task_id: z.string().min(1),
       followup_prompt: z.string().min(1),
@@ -1842,69 +1952,75 @@ server.registerTool(
   {
     title: "Land a worker's commits",
     description:
-      "Cherry-pick the commits a worker made on its codex/<taskId> branch onto the current branch of the directory it was dispatched from. The target must be clean and is never switched to another branch; `onto` is a guard that names the branch you expect to be on. A conflict aborts the cherry-pick, lists the files, and leaves the target as it was. A worker in the workspace-write sandbox cannot commit (Codex keeps .git read-only there): pass commitMessage and its uncommitted edits are committed as one commit on its branch first, then landed. Without commitMessage uncommitted edits are reported, not landed. Check the work first with get_worker_result and get_worker_diff; land once it passes. A malformed report summary is attention, not a separate landing veto when the same run's acceptance passed and the reviewed diff is sound. Refuses with acceptance_failed while the worker's last acceptance run failed (and acceptance_not_run while one is running or was interrupted): resume it with the failing output, land once it passes. ignoreAcceptance: true lands anyway; use it only when the user said to land regardless.",
+      "Cherry-pick the commits a worker made on its codex/<taskId> branch onto the current branch of the directory it was dispatched from. The target must be clean and is never switched to another branch; `onto` is a guard that names the branch you expect to be on. A conflict aborts the cherry-pick, lists the files, and leaves the target as it was. A worker in the workspace-write sandbox cannot commit (Codex keeps .git read-only there): pass commitMessage and its uncommitted edits are committed as one commit on its branch first, then landed. Without commitMessage uncommitted edits are reported, not landed. includeFollowupParents lands an unlanded followup chain root-first; commitMessages supplies a per-task checkpoint message when an ancestor has uncommitted edits. Check the work first with get_worker_result and get_worker_diff; land once it passes. A malformed report summary is attention, not a separate landing veto when the same run's acceptance passed and the reviewed diff is sound. Refuses with acceptance_failed while the worker's last acceptance run failed (and acceptance_not_run while one is running or was interrupted): resume it with the failing output, land once it passes. ignoreAcceptance: true lands anyway; use it only when the user said to land regardless.",
     inputSchema: {
       task_id: z.string().min(1),
       onto: z.string().min(1).optional(),
       commitMessage: z.string().min(1).optional(),
+      includeFollowupParents: z.boolean().default(false),
+      commitMessages: z.record(z.string(), z.string().min(1)).optional(),
       ignoreAcceptance: z.boolean().default(false),
       allowOutsideOwned: z.boolean().default(false)
     }
   },
-  async ({ task_id, onto, commitMessage, ignoreAcceptance, allowOutsideOwned }) => {
-    const task = await getTask(task_id);
-    if (!task) return textResult({ error: "task_not_found", task_id });
-    if (task.workspace_kind && task.workspace_kind !== "legacy" && task.workspace_kind !== "git_worktree") {
-      return textResult({ error: "workspace_kind_not_landable", task_id, workspace_kind: task.workspace_kind, reason: `${task.workspace_kind} does not create a Git worktree and cannot be landed` });
+  async ({ task_id, onto, commitMessage, includeFollowupParents, commitMessages, ignoreAcceptance, allowOutsideOwned }) => {
+    if (!includeFollowupParents) {
+      const task = await getTask(task_id);
+      if (task?.followup_of) {
+        let ids;
+        try { ids = await followupChainIds(task_id); }
+        catch (error) { return textResult({ error: "invalid_followup_chain", task_id, reason: error.message }); }
+        const unlanded = [];
+        for (const id of ids.slice(0, -1)) {
+          const ancestor = await getTask(id);
+          if (ancestor) {
+            try {
+              if (!ancestor.landed_at || !ancestor.landed_head) throw new Error("parent not landed");
+              git(task.project_root, ["merge-base", "--is-ancestor", ancestor.landed_head, "HEAD"]);
+            } catch { unlanded.push(id); }
+          }
+        }
+        if (unlanded.length) {
+          return textResult({
+            error: "followup_parents_not_landed",
+            task_id,
+            unlanded,
+            reason: "this follow-up starts from its parent branch; landing only the leaf would integrate a partial chain. Use includeFollowupParents: true after reviewing every task's acceptance and diff."
+          });
+        }
+      }
+      return textResult(await landOneWorkerTask(task_id, { onto, commitMessage, ignoreAcceptance, allowOutsideOwned }));
     }
-    const session = task.session_id ? await getSession(task.session_id) : null;
-    if (!isSettled(task)) return textResult({ error: "worker_active", task_id, reason: "wait for this run and acceptance to settle before landing" });
-    if (session?.approval_state === "waiting_user") return textResult({ error: "session_waiting_user", task_id, reason: "session requires user approval before landing" });
-    if (session && task.session_policy_revision !== session.policy_revision) return textResult({ error: "session_policy_stale", task_id, current_revision: session.policy_revision, checked_revision: task.session_policy_revision, reason: "requirements changed; resume with the current objective and rerun acceptance before landing" });
-    const outcome = landWorker(task, { onto, commitMessage: commitMessage ?? null, ignoreAcceptance, allowOutsideOwned });
-    if (!outcome.error) {
-      // Recorded so a later read knows the work is on the branch: the
-      // board shows it, and base_behind after this is not drift.
-      const now = new Date().toISOString();
-      const landed = { ...task, landed_at: now, landed_head: outcome.head ?? null, landed_branch: outcome.onto ?? null, updated_at: now };
-      await upsertTask(landed);
-      await updateWorkItemDelivery(task_id, "landed");
-      const event = await appendTaskEvent(task_id, {
-        type: "supervisor.landed",
-        head: outcome.head ?? null,
-        branch: outcome.onto ?? null,
-        target: outcome.target ?? null,
-        landed_at: now
-      }, { runId: runIdFor(task_id, task.run_count ?? 1), actor: "supervisor" });
-      const workItem = await getWorkItemForTask(task_id);
-      if (workItem && outcome.head) {
-        await recordFact({
-          workItemId: workItem.id,
-          scopeType: "work_item",
-          scopeId: workItem.id,
-          key: "landed",
-          value: { head: outcome.head, branch: outcome.onto ?? null },
-          state: "verified",
-          sourceEventId: event.id,
-          validForSha: outcome.head,
-          watchedPaths: task.owned_paths ?? [],
-          verifiedBy: "supervisor.git_land"
-        });
-        await recordFact({
-          workItemId: workItem.id,
-          scopeType: "dependency",
-          scopeId: workItem.id,
-          key: "landed_delivery_summary",
-          value: { task_id, landed_head: outcome.head, branch: outcome.onto ?? null, acceptance: task.acceptance_results?.passed === true ? "passed" : "not_configured_or_not_passed" },
-          state: "verified",
-          sourceEventId: event.id,
-          validForSha: outcome.head,
-          watchedPaths: task.owned_paths ?? [],
-          verifiedBy: "supervisor.git_land"
-        });
+    let ids;
+    try { ids = await followupChainIds(task_id); }
+    catch (error) { return textResult({ error: "invalid_followup_chain", task_id, reason: error.message }); }
+    const chain = [];
+    for (const id of ids) {
+      let result;
+      try { result = await landOneWorkerTask(id, {
+        onto,
+        commitMessage: commitMessages?.[id] ?? (id === task_id ? commitMessage : null),
+        ignoreAcceptance: id === task_id && ignoreAcceptance,
+        allowOutsideOwned: id === task_id && allowOutsideOwned,
+        skipAlreadyLanded: true
+      }); } catch (error) {
+        result = { task_id: id, error: "landing_failed", reason: error.message };
+      }
+      if (id !== task_id && result.error === "nothing_to_land"
+        && (result.uncommitted ?? []).length === 0 && !(result.already_landed?.length)) {
+        chain.push({ ...result, error: null, skipped: "no_changes" });
+        continue;
+      }
+      if (result.skipped === "already_in_target" && (result.uncommitted ?? []).length === 0) {
+        chain.push({ ...result, error: null, skipped: "already_in_target" });
+        continue;
+      }
+      chain.push(result);
+      if (result.error) {
+        return textResult({ error: "followup_chain_land_failed", task_id, failed_task_id: id, chain });
       }
     }
-    return textResult({ task_id, title: task.title, status: task.status, branch: `codex/${task.id}`, ...outcome });
+    return textResult({ task_id, chain });
   }
 );
 

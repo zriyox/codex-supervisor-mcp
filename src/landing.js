@@ -13,6 +13,7 @@ import { filterWorkspaceSetupChanges, parsePorcelainLine, resolveWorktreeBase, w
 import { findOutsideOwnedChanges } from "./owned-changes.js";
 
 const defaultGitBin = process.env.GIT_BIN?.trim() || "git";
+const PATCH_ID_MAX_BUFFER = 256 * 1024 * 1024;
 
 // A commit needs a committer. On a machine where git has no user.name or
 // user.email (CI runners, a fresh box, a GUI-launched MCP with no HOME
@@ -46,11 +47,13 @@ export function identityEnv(cwd) {
   return env;
 }
 
-function git(cwd, args, { timeout = 60000 } = {}) {
+function git(cwd, args, { timeout = 60000, input = null, maxBuffer = 1024 * 1024, encoding = "utf8" } = {}) {
   return execFileSync(defaultGitBin, ["-C", cwd, "-c", "core.quotePath=false", ...args], {
-    encoding: "utf8",
+    encoding,
+    input,
     timeout,
-    stdio: ["ignore", "pipe", "pipe"],
+    maxBuffer,
+    stdio: [input == null ? "ignore" : "pipe", "pipe", "pipe"],
     env: { ...process.env, GIT_TERMINAL_PROMPT: "0", GIT_EDITOR: "true", ...identityEnv(cwd) }
   });
 }
@@ -63,6 +66,53 @@ function lines(output) {
 // not be trimmed before parsing.
 function porcelainPaths(output) {
   return output.split("\n").filter((line) => line.length > 3).map(parsePorcelainLine).filter(Boolean);
+}
+
+function patchIdsInRange(cwd, range) {
+  const patches = git(cwd, ["log", "--no-merges", "--format=commit %H", "--patch", "--binary", range], {
+    timeout: 2 * 60 * 1000,
+    encoding: "buffer",
+    maxBuffer: PATCH_ID_MAX_BUFFER
+  });
+  const output = git(cwd, ["patch-id", "--stable"], {
+    input: patches,
+    timeout: 2 * 60 * 1000,
+    maxBuffer: PATCH_ID_MAX_BUFFER
+  });
+  const ids = new Map();
+  for (const line of lines(output)) {
+    const [id, sha] = line.split(/\s+/);
+    if (id && sha && !/^0+$/.test(id)) ids.set(sha, id);
+  }
+  return ids;
+}
+
+// `git rev-list --cherry-pick` proves an original worker commit is not
+// pending, but it does not name the target-side commit that carried the same
+// patch. Lifecycle fields need that target-side SHA: using the target's
+// current HEAD would point at unrelated later work and make cleanup/push
+// verification lie.
+function matchAlreadyLanded(cwd, target, targetHead, base, originals, workerHead) {
+  if (originals.length === 0) return { matches: [], complete: true, head: null };
+  const targetOrder = lines(git(target, ["rev-list", `${base}..${targetHead}`]));
+  const targetCommits = new Set(targetOrder);
+  const targetByPatch = new Map([...patchIdsInRange(target, `${base}..${targetHead}`)]
+    .map(([sha, id]) => [id, sha]));
+  const originalPatches = patchIdsInRange(cwd, `${base}..${workerHead}`);
+  const matches = originals.flatMap((original) => {
+    if (targetCommits.has(original)) return [{ original, target: original }];
+    const id = originalPatches.get(original);
+    const matched = id ? targetByPatch.get(id) : null;
+    return matched ? [{ original, target: matched }] : [];
+  });
+  const matchedTargets = new Set(matches.map((match) => match.target));
+  const head = targetOrder.find((sha) => matchedTargets.has(sha)) ?? null;
+  const complete = matches.length === originals.length && matches.every((match) => {
+    if (match.target === head) return true;
+    try { git(target, ["merge-base", "--is-ancestor", match.target, head]); return true; }
+    catch { return false; }
+  });
+  return { matches, complete, head: complete ? head : null };
 }
 
 function currentBranch(cwd) {
@@ -176,14 +226,23 @@ export function landWorker(task, { onto = null, commitMessage = null, ignoreAcce
   // them again produces an empty commit and git stops with an error.
   const targetHead = git(target, ["rev-parse", "HEAD"]).trim();
   let alreadyLanded = [];
+  let alreadyLandedMatches = [];
+  let matchedHead = null;
+  let alreadyLandedMatchComplete = true;
+  let alreadyLandedMatchError = null;
   if (commits.length > 0) {
     try {
       const workerHead = git(task.worktree_path, ["rev-parse", "HEAD"]).trim();
       const pending = new Set(lines(git(target, ["rev-list", "--cherry-pick", "--right-only", `${targetHead}...${workerHead}`])));
       alreadyLanded = commits.filter((sha) => !pending.has(sha));
+      ({ matches: alreadyLandedMatches, complete: alreadyLandedMatchComplete, head: matchedHead } = matchAlreadyLanded(
+        task.worktree_path, target, targetHead, base, alreadyLanded, workerHead
+      ));
       commits = commits.filter((sha) => pending.has(sha));
-    } catch {
-      // comparison failed; try to land everything and let the pick decide
+    } catch (error) {
+      alreadyLandedMatchComplete = false;
+      alreadyLandedMatchError = gitTail(error);
+      return { error: "landing_proof_failed", reason: "could not prove the target-side commit mapping", match_error: alreadyLandedMatchError };
     }
   }
   if (commits.length === 0 && alreadyLanded.length > 0) {
@@ -191,6 +250,12 @@ export function landWorker(task, { onto = null, commitMessage = null, ignoreAcce
       error: "nothing_to_land",
       reason: `every commit on this worker's branch is already on ${branch} (landed before, by patch); nothing new to land`,
       already_landed: alreadyLanded,
+      already_landed_matches: alreadyLandedMatches,
+      matched_head: matchedHead,
+      match_error: alreadyLandedMatchError,
+      match_complete: alreadyLandedMatchComplete,
+      onto: branch,
+      target,
       uncommitted,
       base_commit: base
     };
@@ -242,6 +307,9 @@ export function landWorker(task, { onto = null, commitMessage = null, ignoreAcce
     head: landed.at(-1) ?? before,
     landed: landed.map((sha, index) => ({ sha, original: commits[index] ?? null, subject: subjectOf.get(sha) ?? null })),
     already_landed: alreadyLanded,
+    already_landed_matches: alreadyLandedMatches,
+    match_error: alreadyLandedMatchError,
+    match_complete: alreadyLandedMatchComplete,
     committed_for_worker: committedForWorker,
     uncommitted
   };

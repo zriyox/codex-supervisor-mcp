@@ -70,3 +70,16 @@ export function parseWorkerReport(text) {
   }
   return { format: "json_schema", valid: false, error: parseError?.message ?? "report is not JSON" };
 }
+
+export function parseWorkerReportForRun(text, { outputSchema = true } = {}) {
+  const parsed = parseWorkerReport(text);
+  if (!outputSchema && !parsed.valid && typeof text === "string" && text.trim()) {
+    return {
+      format: "text",
+      valid: true,
+      repaired: "output_schema_disabled_text_fallback",
+      report: { result: text, verification: [], not_done: [] }
+    };
+  }
+  return parsed;
+}
