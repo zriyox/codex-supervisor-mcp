@@ -5,8 +5,8 @@
 import { branchOf } from "../domain/worker-branch.js";
 import "./compose.js";
 import { cleanupVerdict, holdMsFrom } from "../domain/cleanup-policy.js";
-import { gitSucceeds, runGit } from "../infra/git.js";
-import { runSync } from "../infra/process.js";
+import { gitSucceedsAsync, runGitAsync } from "../infra/git.js";
+import { runFile } from "../infra/process.js";
 import { runIdFor } from "../infra/store/db.js";
 import { appendTaskEvent } from "../infra/store/events.js";
 import { markCleanupPlanItemApplied, updateWorkItemDelivery } from "../infra/store/records.js";
@@ -22,17 +22,18 @@ export const CLEANUP_PLAN_TTL_MS = 15 * 60 * 1000;
 export const CLEANUP_POLICY = "keep_branch_and_evidence_checkpoint_before_removal";
 const RETAINED = ["branch", "task", "events", "jsonl", "artifacts"];
 
-const git = (cwd, args, options = {}) => runGit(cwd, args, { timeout: 15000, noOptionalLocks: true, ...options });
+const git = (cwd, args, options = {}) => runGitAsync(cwd, args, { timeout: 15000, noOptionalLocks: true, ...options });
 const holdMs = () => holdMsFrom(process.env.AGENT_SUPERVISOR_CLEANUP_HOLD_DAYS);
 
+// The size is a hint for the reader of a plan. Where du is missing or slow
+// the answer is 0, never a failed plan.
 function directoryBytes(path) {
-  try {
-    const output = runSync("du", ["-sk", path], { encoding: "utf8", timeout: 30000, stdio: ["ignore", "pipe", "ignore"] }).trim();
-    const kib = Number(output.split(/\s+/)[0]);
-    return Number.isFinite(kib) ? kib * 1024 : 0;
-  } catch {
-    return 0;
-  }
+  return new Promise((resolveSize) => {
+    runFile("du", ["-sk", path], { encoding: "utf8", timeout: 30000 }, (error, stdout) => {
+      const kib = error ? NaN : Number(stdout.trim().split(/\s+/)[0]);
+      resolveSize(Number.isFinite(kib) ? kib * 1024 : 0);
+    });
+  });
 }
 
 // A plan item is only applied to the worktree it was made for: same commit,
@@ -60,7 +61,7 @@ export async function createCleanupPlan({ taskIds = null, projectRoot = null, no
       reasons: result.reasons,
       checkpoint: result.checkpoint,
       fingerprint: result.fingerprint,
-      reclaimable_bytes: result.verdict === "safe" ? directoryBytes(task.worktree_path) : 0,
+      reclaimable_bytes: result.verdict === "safe" ? await directoryBytes(task.worktree_path) : 0,
       eligible_after: result.eligible_after ?? (result.verdict === "safe" ? new Date(now).toISOString() : null)
     });
   }
@@ -78,13 +79,13 @@ export async function createCleanupPlan({ taskIds = null, projectRoot = null, no
 
 // Saves the worker's uncommitted edits as one commit on its branch. Setup
 // links are left out; hooks are skipped because nobody is there to answer them.
-function checkpointUncommitted(task) {
+async function checkpointUncommitted(task) {
   const path = resolve(task.worktree_path);
   const env = { ...process.env, GIT_TERMINAL_PROMPT: "0", GIT_EDITOR: "true", ...identityEnv(path) };
   const exclude = workspaceSetupIgnorePaths(task).map((entry) => `:(exclude)${entry}`);
-  git(path, ["add", "-A", "--", ".", ...exclude], { env });
-  if (gitSucceeds(path, ["diff", "--cached", "--quiet"])) return null;
-  git(path, ["commit", "-q", "--no-verify", "-m", `Checkpoint before worktree cleanup (${task.id})`], { env });
+  await git(path, ["add", "-A", "--", ".", ...exclude], { env });
+  if (await gitSucceedsAsync(path, ["diff", "--cached", "--quiet"])) return null;
+  await git(path, ["commit", "-q", "--no-verify", "-m", `Checkpoint before worktree cleanup (${task.id})`], { env });
   return git(path, ["rev-parse", "HEAD"]);
 }
 
@@ -101,12 +102,12 @@ export async function removeSafeWorktree(task, fingerprint) {
     if (result.fingerprint !== fingerprint) throw new Error("worktree changed since cleanup plan; create a new plan");
     // The same lock that creating and restoring a worktree takes.
     return await withWorktreeCreationLock(task.project_root, async () => {
-      const checkpoint = result.checkpoint ? checkpointUncommitted(task) : null;
+      const checkpoint = result.checkpoint ? await checkpointUncommitted(task) : null;
       // What is left now is setup links and ignored build output, neither of
       // which is the worker's work; a plain remove would refuse them.
-      git(task.project_root, ["worktree", "remove", "--force", task.worktree_path]);
+      await git(task.project_root, ["worktree", "remove", "--force", task.worktree_path]);
       try {
-        git(task.project_root, ["worktree", "prune"]);
+        await git(task.project_root, ["worktree", "prune"]);
       } catch {
         // pruning is housekeeping; the worktree is already gone
       }

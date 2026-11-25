@@ -2,7 +2,7 @@
 import { branchOf } from "../domain/worker-branch.js";
 import "./compose.js";
 import { ACTIVE_STATUSES, TERMINAL_STATUSES } from "../domain/status.js";
-import { gitSucceeds, runGit } from "../infra/git.js";
+import { gitSucceedsAsync, runGitAsync } from "../infra/git.js";
 import { worktreesDir } from "../infra/paths.js";
 import { isPidAlive } from "../infra/store/tasks.js";
 import { parsePorcelainLine, resolveWorktreeBase, workspaceSetupIgnorePaths, worktreeRef } from "../infra/worktree.js";
@@ -11,7 +11,7 @@ import { resolve } from "node:path";
 
 // Raw output: porcelain status lines start with a significant space, and a
 // quoted path would never match a setup path. Callers trim single values.
-const git = (cwd, args) => runGit(cwd, args, { timeout: 15000, noOptionalLocks: true, rawPaths: true, trim: false });
+const git = (cwd, args) => runGitAsync(cwd, args, { timeout: 15000, noOptionalLocks: true, rawPaths: true, trim: false });
 const lines = (text) => text.split("\n").filter(Boolean);
 
 function activeReason(task) {
@@ -32,9 +32,9 @@ async function identityProblem(task) {
     const info = await lstat(path);
     if (info.isSymbolicLink()) return "worktree is a symlink";
     if (await realpath(path) !== await realpath(managed)) return "worktree realpath is unexpected";
-    const branch = git(path, ["symbolic-ref", "--short", "HEAD"]).trim();
+    const branch = (await git(path, ["symbolic-ref", "--short", "HEAD"])).trim();
     if (branch !== branchOf(task)) return "worktree branch ownership is unexpected";
-    const registered = git(task.project_root, ["worktree", "list", "--porcelain", "-z"]).split("\0").filter((line) => line.startsWith("worktree "));
+    const registered = (await git(task.project_root, ["worktree", "list", "--porcelain", "-z"])).split("\0").filter((line) => line.startsWith("worktree "));
     const own = await realpath(path);
     for (const line of registered) {
       // A registration whose directory someone deleted has no realpath; it is not ours either way.
@@ -56,20 +56,20 @@ function setupFilter(task) {
 function isLanded(task) {
   if (!task.landed_at || !task.landed_head) return false;
   const target = task.landed_branch ? `refs/heads/${task.landed_branch}` : "HEAD";
-  return gitSucceeds(task.project_root, ["merge-base", "--is-ancestor", task.landed_head, target]);
+  return gitSucceedsAsync(task.project_root, ["merge-base", "--is-ancestor", task.landed_head, target]);
 }
 
-function worktreeState(task) {
+async function worktreeState(task) {
   const path = resolve(task.worktree_path);
   const keep = setupFilter(task);
-  const status = lines(git(path, ["status", "--porcelain", "--untracked-files=all"]));
+  const status = lines(await git(path, ["status", "--porcelain", "--untracked-files=all"]));
   const uncommittedPaths = status.map(parsePorcelainLine).filter((entry) => entry && keep(entry));
   // Without the base the worker's own commits cannot be counted, and "nothing
   // to keep" could not be told from "cannot tell".
   const base = resolveWorktreeBase(path, worktreeRef(task));
   if (!base) throw new Error("the commit this worker started from is unknown");
-  const unlandedCommits = lines(git(path, ["rev-list", `${base}..HEAD`])).length;
-  return { uncommittedPaths, unlandedCommits, head: git(path, ["rev-parse", "HEAD"]).trim() };
+  const unlandedCommits = lines(await git(path, ["rev-list", `${base}..HEAD`])).length;
+  return { uncommittedPaths, unlandedCommits, head: (await git(path, ["rev-parse", "HEAD"])).trim() };
 }
 
 export async function cleanupFacts(task, tasks) {
@@ -84,8 +84,8 @@ export async function cleanupFacts(task, tasks) {
   facts.identity = await identityProblem(task);
   if (facts.identity) return facts;
   try {
-    const state = worktreeState(task);
-    facts.landed = isLanded(task);
+    const state = await worktreeState(task);
+    facts.landed = await isLanded(task);
     facts.uncommittedPaths = state.uncommittedPaths;
     facts.uncommitted = state.uncommittedPaths.length;
     facts.unlandedCommits = state.unlandedCommits;
