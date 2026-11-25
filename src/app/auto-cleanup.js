@@ -58,7 +58,14 @@ export async function sweepCleanup({ now = Date.now(), force = false } = {}) {
   if (process.env.CODEX_SUPERVISOR_NO_AUTO_CLEANUP === "1") return [];
   if (!force && now - lastSweepAt < intervalMs()) return [];
   lastSweepAt = now;
-  const tasks = await readTasks();
+  let tasks;
+  try {
+    tasks = await readTasks();
+  } catch (error) {
+    // Cleanup is housekeeping; a store hiccup must not fail the poll it rides on.
+    process.stderr.write(`[codex-supervisor] auto cleanup skipped: ${error.message.split("\n")[0]}\n`);
+    return [];
+  }
   const finished = tasks.filter((task) => TERMINAL_STATUSES.has(task.status)).sort((a, b) => finishedAt(a) - finishedAt(b));
   const removed = [];
   let examined = 0;

@@ -34,7 +34,15 @@ export async function ensureTaskWorktree(task) {
   });
   if (!restored) return false;
   const setup = task.workspace_metadata?.setup ?? null;
-  if (setup) await prepareWorktreeWorkspace(setup, task.project_root, task.worktree_path, task.id);
+  if (setup) {
+    try {
+      await prepareWorktreeWorkspace(setup, task.project_root, task.worktree_path, task.id);
+    } catch (error) {
+      // A worktree without its setup would look restored and fail at the first command.
+      await runToExit(gitBin(), ["-C", task.project_root, "worktree", "remove", "--force", task.worktree_path]).catch(() => {});
+      throw error;
+    }
+  }
   await updateWorkItemDelivery(task.id, deliveryStepOf(task)).catch(() => null);
   await appendTaskEvent(task.id, { type: "supervisor.worktree_restored", branch, restored_at: new Date().toISOString() },
     { runId: runIdFor(task.id, task.run_count ?? 1), actor: "supervisor" }).catch(() => null);

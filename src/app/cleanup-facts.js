@@ -34,7 +34,11 @@ async function identityProblem(task) {
     const branch = git(path, ["symbolic-ref", "--short", "HEAD"]).trim();
     if (branch !== `codex/${task.id}`) return "worktree branch ownership is unexpected";
     const registered = git(task.project_root, ["worktree", "list", "--porcelain", "-z"]).split("\0").filter((line) => line.startsWith("worktree "));
-    for (const line of registered) if (await realpath(line.slice(9)) === await realpath(path)) return null;
+    const own = await realpath(path);
+    for (const line of registered) {
+      // A registration whose directory someone deleted has no realpath; it is not ours either way.
+      if (await realpath(line.slice(9)).catch(() => null) === own) return null;
+    }
     return "git worktree registration is missing";
   } catch (error) {
     return `cleanup proof failed: ${error.message.split("\n")[0]}`;

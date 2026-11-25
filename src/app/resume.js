@@ -1,3 +1,4 @@
+import { mkdir } from "node:fs/promises";
 import { ensureTaskWorktree } from "./restore-worktree.js";
 import "./compose.js";
 import { frameWorkerPrompt } from "../domain/prompt.js";
@@ -83,6 +84,20 @@ function resumeAllowsOutputSchema(threadId) {
     || (goalRead.state === "available" && goalRead.goal?.storage_status === "complete");
 }
 
+// Where a resumed worker runs. It is the directory it ran in before, and never
+// a stand-in: falling back to the project root would let a worker that was
+// confined to a scratch directory or a worktree write into the source tree.
+async function resumeCwd(task) {
+  if (await exists(task.cwd)) return task.cwd;
+  if (task.workspace_kind === "scratch") {
+    // Cleanup removes an idle scratch directory. Its drafts are gone, its
+    // report is in the store; the worker continues in an empty one.
+    await mkdir(task.cwd, { recursive: true });
+    return task.cwd;
+  }
+  throw coded("workspace_missing", `the directory task ${task.id} ran in (${task.cwd}) no longer exists; dispatch a new worker instead of resuming`);
+}
+
 async function resumeClaimed(claimed, { prompt, rebaseOnto, acceptance }) {
   const session = claimed.session_id ? await getSession(claimed.session_id) : null;
   if (session?.approval_state === "waiting_user") throw coded("session_waiting_user", "session is waiting for user approval; do not resume");
@@ -96,7 +111,7 @@ async function resumeClaimed(claimed, { prompt, rebaseOnto, acceptance }) {
   let rebase = null;
   if (rebaseOnto) ({ task, rebase } = await rebaseBeforeResume(task, rebaseOnto));
 
-  const cwd = (await exists(task.cwd)) ? task.cwd : task.project_root;
+  const cwd = await resumeCwd(task);
   const args = codexRunner.resumeArgs(task);
   const outputSchema = resumeAllowsOutputSchema(task.thread_id);
   const started = await startTrackedRun({
