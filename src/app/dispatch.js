@@ -85,39 +85,31 @@ async function validateDependencies(dependsOn, projectRoot, baseCommit) {
   }
 }
 
-export async function createCodexWorker({
-  title,
-  task,
-  sessionId = null,
-  sessionTitle = null,
-  sessionNote = null,
-  cwd,
-  sandbox = "workspace-write",
-  model = null,
-  reasoningEffort = "high",
-  skipGitRepoCheck = true,
-  ownedPaths,
-  goal,
-  dependsOn = [],
-  followupOf = null,
-  workspaceKind = null,
-  inPlaceAuthorization = null,
-  workspaceSetup = null,
-  baseRef = null,
-  preflightId = null,
-  preflight = null,
-  acceptance = null,
-  acceptanceTimeoutMs = null,
-  forbid = [],
-  allowedCommands = [],
-  context = [],
-  contracts = [],
-  externalOutputs = [],
-  networkAccess = false,
-  writableRoots = [],
-  maxRunMs = null,
-  maxTotalMs = null
-}) {
+function coded(code, message, details = undefined) {
+  const error = new Error(message);
+  error.code = code;
+  if (details !== undefined) error.details = details;
+  return error;
+}
+
+const DISPATCH_DEFAULTS = {
+  sessionId: null, sessionTitle: null, sessionNote: null, sandbox: "workspace-write", model: null, reasoningEffort: "high",
+  skipGitRepoCheck: true, dependsOn: [], followupOf: null, workspaceKind: null, inPlaceAuthorization: null, workspaceSetup: null,
+  baseRef: null, preflightId: null, preflight: null, acceptance: null, acceptanceTimeoutMs: null, forbid: [], allowedCommands: [],
+  context: [], contracts: [], externalOutputs: [], networkAccess: false, writableRoots: [], maxRunMs: null, maxTotalMs: null
+};
+
+// An explicit undefined means "not given", the same as leaving the key out.
+function withDispatchDefaults(input) {
+  const given = Object.fromEntries(Object.entries(input).filter(([, value]) => value !== undefined));
+  return { ...DISPATCH_DEFAULTS, ...given };
+}
+
+// Everything that can be refused before anything is created on disk. The
+// order of the checks is the order callers see the errors in.
+async function validateDispatch(input) {
+  const { task, acceptance, cwd, reasoningEffort, ownedPaths, goal, context, contracts, externalOutputs, sandbox } = input;
+  const { networkAccess, writableRoots, maxRunMs, maxTotalMs, forbid, allowedCommands, baseRef } = input;
   if (!task || typeof task !== "string") throw new Error("task is required");
   const acceptanceCommands = normalizeAcceptance(acceptance);
   if (!cwd || typeof cwd !== "string") throw new Error("cwd is required");
@@ -155,8 +147,11 @@ export async function createCodexWorker({
     if (!Array.isArray(values) || values.length > 100 || values.some((value) => typeof value !== "string" || !value.trim())) throw new Error(`${name} must be a list of at most 100 nonempty strings`);
   }
   if (baseRef && !isGitCheckout(cwd)) throw invalidBaseRefError(cwd, baseRef);
+  return { acceptanceCommands, validatedGoal, resolvedWritableRoots };
+}
 
-  const id = `codex-${Date.now()}-${randomUUID().slice(0, 8)}`;
+async function claimWorkspace(input, id, acceptanceCommands) {
+  const { cwd, workspaceKind, sandbox, ownedPaths, networkAccess, externalOutputs, inPlaceAuthorization, preflight, workspaceSetup } = input;
   const workspace = await prepareWorkspace({
     cwd,
     workspaceKind,
@@ -175,40 +170,47 @@ export async function createCodexWorker({
   if (normalizedWorkspaceSetup && workspace.kind !== "git_worktree") throw new Error("workspaceSetup is only supported for git_worktree workers");
   const conflicts = await findOwnershipConflicts(normalizedOwnedPaths);
   if (conflicts.length > 0) throw ownershipConflictError(conflicts);
+  return { workspace, projectRoot, normalizedOwnedPaths, normalizedWorkspaceSetup };
+}
 
+async function sessionPolicy({ sessionId, sessionTitle, sessionNote }, acceptanceCommands) {
   if (sessionId && (sessionTitle || sessionNote)) {
     await upsertSession({ id: sessionId, title: sessionTitle, note: sessionNote });
   }
-
   const session = sessionId ? await getSession(sessionId) : null;
-  if (session?.approval_state === "waiting_user") {
-    const error = new Error("session is waiting for user approval; do not dispatch or auto-resume");
-    error.code = "session_waiting_user";
-    throw error;
-  }
+  if (session?.approval_state === "waiting_user") throw coded("session_waiting_user", "session is waiting for user approval; do not dispatch or auto-resume");
   const combinedAcceptance = normalizeAcceptance([...(session?.default_acceptance ?? []), ...(acceptanceCommands ?? [])]);
-  requireDependencySetup({ kind: workspace.kind, projectRoot, setup: normalizedWorkspaceSetup,
-    commands: [...(combinedAcceptance ?? []), ...(preflight?.probeCommands ?? [])] });
+  return { session, combinedAcceptance };
+}
 
+// This checkout belongs to a dispatch that never started and contains no
+// model edits. Remove it normally; never force-remove user work.
+async function discardWorktree(projectRoot, worktreePath, id) {
+  await runToExit(gitBin(), ["-C", projectRoot, "worktree", "remove", worktreePath]).catch(() => {});
+  await runToExit(gitBin(), ["-C", projectRoot, "branch", "-D", `codex/${id}`]).catch(() => {});
+}
+
+async function createWorkerWorktree({ workspace, projectRoot, normalizedWorkspaceSetup }, id, baseRef) {
   const worktree = workspace.kind === "git_worktree"
     ? await withWorktreeCreationLock(projectRoot, () => ensureWorktree(projectRoot, id, baseRef))
     : { path: null, baseCommit: null };
-  const worktreePath = worktree.path;
-  if (workspace.kind === "git_worktree" && !worktreePath) {
-    const error = new Error("workspaceKind git_worktree could not create an isolated worktree; use read_only_in_place for a non-writing inspection or initialize and commit the repository first");
-    error.code = "git_worktree_unavailable";
-    throw error;
+  if (workspace.kind === "git_worktree" && !worktree.path) {
+    throw coded("git_worktree_unavailable", "workspaceKind git_worktree could not create an isolated worktree; use read_only_in_place for a non-writing inspection or initialize and commit the repository first");
   }
   if (normalizedWorkspaceSetup) {
     try {
-      await prepareWorktreeWorkspace(normalizedWorkspaceSetup, projectRoot, worktreePath, id);
+      await prepareWorktreeWorkspace(normalizedWorkspaceSetup, projectRoot, worktree.path, id);
     } catch (error) {
-      await runToExit(gitBin(), ["-C", projectRoot, "worktree", "remove", worktreePath]).catch(() => {});
-      await runToExit(gitBin(), ["-C", projectRoot, "branch", "-D", `codex/${id}`]).catch(() => {});
+      await discardWorktree(projectRoot, worktree.path, id);
       throw error;
     }
   }
-  const effectiveCwd = worktreePath ?? workspace.executionCwd;
+  return worktree;
+}
+
+function buildGuard(input, place, worktree, resolvedWritableRoots) {
+  const { forbid, allowedCommands, preflight, externalOutputs, networkAccess, maxRunMs, maxTotalMs, sandbox, context, contracts } = input;
+  const { workspace, projectRoot, normalizedOwnedPaths, normalizedWorkspaceSetup } = place;
   if (preflight && (!Array.isArray(preflight.probeCommands) || preflight.probeCommands.length === 0
     || preflight.probeCommands.some((command) => typeof command !== "string" || !command.trim()))) {
     throw new Error("preflight.probeCommands must be a nonempty list of shell commands");
@@ -247,7 +249,15 @@ export async function createCodexWorker({
   const preflightMetadata = preflight
     ? createPreflightMetadata(runtimeContract, preflight.probeCommands)
     : null;
+  return { guardPolicy, runtimeContract, preflightMetadata };
+}
 
+function buildRecord(input, parts) {
+  const { title, task, inPlaceAuthorization, sandbox, model, reasoningEffort, skipGitRepoCheck, followupOf, sessionId } = input;
+  const { context, contracts, dependsOn, preflightId, acceptanceTimeoutMs } = input;
+  const { id, workspace, projectRoot, normalizedOwnedPaths, normalizedWorkspaceSetup, worktree, effectiveCwd } = parts;
+  const { guardPolicy, preflightMetadata, validatedGoal, combinedAcceptance, acceptanceCommands, session } = parts;
+  const worktreePath = worktree.path;
   const record = {
     id,
     title: title || task.split("\n").find(Boolean)?.slice(0, 80) || "Codex worker",
@@ -311,45 +321,55 @@ export async function createCodexWorker({
     updated_at: new Date().toISOString(),
     run_log: taskRunPath(id)
   };
+  return record;
+}
+
+async function assertPreflightMatches(preflightId, runtimeContract) {
+  const preflightTask = await getTask(preflightId);
+  const preflightResult = readPreflightResult(preflightTask);
+  if (preflightResult.status !== "passed") {
+    throw coded("preflight_not_passed", `preflight ${preflightId} is ${preflightResult.status}; wait for its probes to pass before dispatching this worker`, preflightResult);
+  }
+  const contractHash = runtimeContractHash(runtimeContract);
+  if (preflightResult.contract_hash === contractHash) return;
+  throw coded("preflight_mismatch", `preflight ${preflightId} does not match this worker's runtime contract; create a new preflight after changing baseRef, sandbox, ownedPaths, commands, context, contracts, network or writable roots`, {
+    preflight_id: preflightId,
+    expected_contract_hash: contractHash,
+    actual_contract_hash: preflightResult.contract_hash,
+    preflight: { expected_contract: runtimeContract, actual_contract: preflightResult.contract }
+  });
+}
+
+// Dependencies, the preflight contract and the path reservation. A refusal
+// here removes the worktree and scratch directory made for this dispatch.
+async function admitWorker(record, { dependsOn, preflightId }, { workspace, projectRoot, worktree, runtimeContract }) {
   try {
     await validateDependencies(dependsOn, projectRoot, worktree.baseCommit);
-    if (preflightId) {
-      const preflightTask = await getTask(preflightId);
-      const preflightResult = readPreflightResult(preflightTask);
-      if (preflightResult.status !== "passed") {
-        const error = new Error(`preflight ${preflightId} is ${preflightResult.status}; wait for its probes to pass before dispatching this worker`);
-        error.code = "preflight_not_passed";
-        error.details = preflightResult;
-        throw error;
-      }
-      const contractHash = runtimeContractHash(runtimeContract);
-      if (preflightResult.contract_hash !== contractHash) {
-        const error = new Error(`preflight ${preflightId} does not match this worker's runtime contract; create a new preflight after changing baseRef, sandbox, ownedPaths, commands, context, contracts, network or writable roots`);
-        error.code = "preflight_mismatch";
-        error.details = {
-          preflight_id: preflightId,
-          expected_contract_hash: contractHash,
-          actual_contract_hash: preflightResult.contract_hash,
-          preflight: { expected_contract: runtimeContract, actual_contract: preflightResult.contract }
-        };
-        throw error;
-      }
-    }
+    if (preflightId) await assertPreflightMatches(preflightId, runtimeContract);
     await reserveTaskOwnership(record);
-  }
-  catch (error) {
-    if (worktreePath) {
-      // This checkout belongs to this not-yet-started dispatch and contains
-      // no model edits. Remove it normally; never force-remove user work.
-      await runToExit(gitBin(),["-C",projectRoot,"worktree","remove",worktreePath]).catch(()=>{});
-      await runToExit(gitBin(),["-C",projectRoot,"branch","-D",`codex/${id}`]).catch(()=>{});
-    }
+  } catch (error) {
+    if (worktree.path) await discardWorktree(projectRoot, worktree.path, record.id);
     if (workspace.scratchPath) await rm(workspace.scratchPath, { recursive: true, force: true }).catch(() => {});
     throw error;
   }
+}
 
+export async function createCodexWorker(rawInput) {
+  const input = withDispatchDefaults(rawInput);
+  const { acceptanceCommands, validatedGoal, resolvedWritableRoots } = await validateDispatch(input);
+  const id = `codex-${Date.now()}-${randomUUID().slice(0, 8)}`;
+  const place = await claimWorkspace(input, id, acceptanceCommands);
+  const { session, combinedAcceptance } = await sessionPolicy(input, acceptanceCommands);
+  requireDependencySetup({ kind: place.workspace.kind, projectRoot: place.projectRoot, setup: place.normalizedWorkspaceSetup,
+    commands: [...(combinedAcceptance ?? []), ...(input.preflight?.probeCommands ?? [])] });
+  const worktree = await createWorkerWorktree(place, id, input.baseRef);
+  const effectiveCwd = worktree.path ?? place.workspace.executionCwd;
+  const guard = buildGuard(input, place, worktree, resolvedWritableRoots);
+  const record = buildRecord(input, { id, ...place, worktree, effectiveCwd, ...guard, validatedGoal, combinedAcceptance, acceptanceCommands, session });
+  await admitWorker(record, input, { ...place, worktree, runtimeContract: guard.runtimeContract });
+
+  const { sandbox, model, reasoningEffort, skipGitRepoCheck, task } = input;
   const args = codexRunner.startArgs({ cwd: effectiveCwd, sandbox, model, reasoningEffort, skipGitRepoCheck });
-
   const started = await startTrackedRun({
     record,
     args,
