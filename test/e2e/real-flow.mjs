@@ -170,7 +170,9 @@ try {
 
   const polled = await call(TOOL.poll, {});
   const cleaned = polled.cleaned ?? [];
-  assert.deepEqual(cleaned.map((entry) => entry.task_id).sort(), [...ids, draft.id].sort(), `sweep result: ${JSON.stringify(polled).slice(0, 800)}`);
+  // The preflight probes' worktrees go in the same sweep, so this is a subset check.
+  const cleanedIds = new Set(cleaned.map((entry) => entry.task_id));
+  for (const id of [...ids, draft.id]) assert.ok(cleanedIds.has(id), `${id} was not cleaned: ${JSON.stringify(cleaned).slice(0, 800)}`);
   const draftRemoval = cleaned.find((entry) => entry.task_id === draft.id);
   assert.ok(draftRemoval.checkpoint_commit, "the uncommitted draft must be committed to the branch before removal");
   for (const id of [...ids, draft.id]) {
