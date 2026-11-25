@@ -1,10 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { DatabaseSync } from "node:sqlite";
-import { dispatchArgs, tempHome, waitFor, withMcp } from "./helpers.js";
+import { dispatchArgs, tempHome, waitFor, waitForRunHostExit, withMcp, openStore } from "./helpers.js";
 
 async function makeDirectory(home, name) {
   const dir = join(home, name);
@@ -58,6 +57,28 @@ test("scratch runs in supervisor storage and never writes the non-Git source dir
     assert.equal(settled.cwd, join(home, "scratch", worker.id));
     assert(existsSync(join(settled.cwd, "committed.txt")), "the worker wrote inside supervisor scratch");
     assert.equal(existsSync(join(source, "committed.txt")), false, "the source directory remains untouched");
+  });
+});
+
+test("resuming a scratch worker whose directory was removed stays in scratch and never moves to the source directory", async () => {
+  const home = await tempHome("supervisor-workspace-scratch-resume-");
+  const source = await makeDirectory(home, "source");
+  await withMcp({ SUPERVISOR_HOME: home, FAKE_CODEX_SCENARIO: "commit-in-worktree" }, async ({ call }) => {
+    const worker = await call("create_codex_worker", dispatchArgs("scratch", source, {
+      sandbox: "workspace-write",
+      ownedPaths: [],
+      networkAccess: true,
+      workspaceKind: "scratch"
+    }));
+    const settled = await waitFor(call, worker.id, (task) => task.status === "completed" && task.exit_code === 0);
+    await waitForRunHostExit(home, worker.id);
+    await rm(settled.cwd, { recursive: true, force: true });
+    const resumed = await call("resume_codex_worker", { task_id: worker.id, prompt: "continue" });
+    assert.ok(!resumed.error, JSON.stringify(resumed).slice(0, 400));
+    const again = await waitFor(call, worker.id, (task) => task.run_count === 2 && task.exit_code !== null);
+    assert.equal(again.cwd, join(home, "scratch", worker.id));
+    assert(existsSync(again.cwd), "the scratch directory was made again for the resumed run");
+    assert.deepEqual(await readdir(source), ["source.txt"], "the source directory remains untouched");
   });
 });
 
@@ -115,7 +136,7 @@ test("an in_place_write fact expires after its source manifest drifts before res
     await call("resume_codex_worker", { task_id: worker.id, prompt: "recheck changed source" });
     await waitFor(call, worker.id, (task) => task.run_count === 2 && task.exit_code === 0);
   });
-  const db = new DatabaseSync(join(home, "data", "supervisor.sqlite"));
+  const db = openStore(home);
   const facts = db.prepare("SELECT id, state, supersedes_id, valid_for_manifest_hash FROM facts WHERE work_item_id = (SELECT id FROM work_items WHERE task_id = ?) AND key = 'accepted_outcome' ORDER BY rowid").all(worker.id);
   assert.equal(facts.length, 3, JSON.stringify(facts));
   assert.equal(facts[0].state, "verified");
@@ -142,7 +163,7 @@ test("a content-pinned in-place fact expires when its declared input file change
       acceptance: ["node -e \"process.exit(0)\""]
     }));
     await waitFor(call, worker.id, (task) => task.exit_code === 0 && task.acceptance?.status !== "running");
-    const db = new DatabaseSync(join(home, "data", "supervisor.sqlite"));
+    const db = openStore(home);
     const statement = db.prepare("SELECT id, valid_for_content_hash FROM facts WHERE work_item_id = (SELECT id FROM work_items WHERE task_id = ?) AND key = 'accepted_outcome' AND state = 'verified'");
     let fact = statement.get(worker.id);
     const deadline = Date.now() + 2000;
@@ -159,7 +180,7 @@ test("a content-pinned in-place fact expires when its declared input file change
     const found = await call("search_worker_facts", { task_id: worker.id });
     assert.equal(found.facts.some((fact) => fact.key === "accepted_outcome"), false);
   });
-  const db = new DatabaseSync(join(home, "data", "supervisor.sqlite"));
+  const db = openStore(home);
   const original = db.prepare("SELECT id FROM facts WHERE work_item_id = (SELECT id FROM work_items WHERE task_id = ?) AND key = 'accepted_outcome' AND state = 'verified'").get(worker.id);
   assert.equal(db.prepare("SELECT COUNT(*) AS count FROM facts WHERE supersedes_id = ? AND state = 'expired'").get(original.id).count, 1);
   db.close();

@@ -22,9 +22,9 @@
 | `get_worker_diff` | `task_id`, `file`, `hunk`, `pageSize`, `cursor`, `maxChars`, `paths` | worker 实际改了什么。默认完整文件索引与 hunk 数；按 `file` + `hunk`/`cursor` 分页读 patch。显式 `maxChars` 且不传 `file` 保留旧整份限流模式 |
 | `ask_codex_worker` | `task_id`, `question`, `timeoutMs`, `maxChars`, `fresh`, `end` | 旁路问 worker 一句。线程 fork 成只读侧会话，没网络、没 MCP 工具，worker 本身不动。worker 被 resume 过会自动换新 fork，`fresh` 强制换，`end` 删 |
 | `land_codex_worker` | `task_id`, `onto`, `commitMessage`, `includeFollowupParents`, `commitMessages`, `ignoreAcceptance`, `allowOutsideOwned` | 把 worker 在 `codex/<id>` 上的提交 cherry-pick 到派单目录的当前分支。目标要干净，冲突回滚，验收 `failed` 拒绝；报告格式错不再单独阻止显式 land。`commitMessage` 先替当前 worker 把未提交改动提交成一笔；`includeFollowupParents` 按 root-first 落地整条 followup 链，`commitMessages` 给链中各路提供各自的 checkpoint 提交说明 |
-| `verify_delivery_push` | `task_id`, `remote`, `branch` | fetch 指定 remote branch 并证明 `landed_head` 已可达；只读验证，不会 push 或部署。通过后记录 `push_verified` 并生成 cleanup plan |
-| `cleanup_plan` | `task_ids`, `project_root` | 生成 15 分钟有效的 SAFE / REVIEW / BLOCKED 计划，含原因、fingerprint 与回收空间估算；SAFE 必须 acceptance passed、push verified、干净且无活跃依赖/进程 |
-| `apply_cleanup` | `plan_id`, `item_ids` | 只在未过期计划上二次校验 SAFE item、重新 fetch remote 并确认 landed SHA 仍可达后执行 `git worktree remove/prune`；保留 branch、task、events、JSONL、artifacts |
+| `verify_delivery_push` | `task_id`, `remote`, `branch` | fetch 指定 remote branch 并证明 `landed_head` 已可达；只读验证，不会 push 或部署。通过后记录 `push_verified` |
+| `cleanup_plan` | `task_ids`, `project_root` | 生成 15 分钟有效的 SAFE / REVIEW / BLOCKED 计划，含原因、fingerprint 和回收空间估算。已合入、或没有任何改动的是 SAFE；有未合入改动的在保留期内是 REVIEW，并给出到期时间 |
+| `apply_cleanup` | `plan_id`, `item_ids` | 立刻清掉计划里选中的 SAFE 项。删除前重新判定并核对 fingerprint，有未提交改动就先提交到 `codex/<id>` 分支；保留 branch、task、events、JSONL、artifacts |
 | `cleanup_history` | `task_id`, `limit` | 查询 cleanup 的计划、理由、fingerprint 和实际回收记录 |
 | `get_worker_summary` | `task_id` | 一段话：goal、状态、改动、最后一条命令和消息 |
 | `get_codex_worker_status` | `task_id`, `includePrompt`, `promptMaxChars` | 单个 worker 的状态细节 |
@@ -82,7 +82,7 @@ worker 和 run host 都已退出时，当前 run 的 durable `turn.completed` �
 
 worker 的最终 JSON 报告会先记录为该 run 的 `candidate` fact，不能跨 work 自动注入；supervisor acceptance 通过后才生成当前 work 的 `verified` outcome，并带 report/acceptance event 来源、base SHA 与 watched paths。schema-free resume 的纯文本报告只保留为 candidate，不把合成的空数组当作已验证事实。push proof 另存为 retained artifact，verified fact 可回指该 artifact。验收失败、未配置验收或 worker 自报完成都不会升级成共享真相。
 
-交付状态分开：acceptance 通过只是 `verified`，`land_codex_worker` 只是 `landed`，仍不代表远端有这笔提交。需要显式 `verify_delivery_push` fetch 并校验 `landed_head` 已在目标 remote branch 上，才是 `push_verified`；它会自动生成 cleanup plan，SAFE 项进入 `cleanup_eligible`，但永远不会自己删除。该工具绝不代替用户执行 push 或部署。
+交付状态分开：acceptance 通过只是 `verified`，`land_codex_worker` 只是 `landed`，仍不代表远端有这笔提交。需要显式 `verify_delivery_push` fetch 并校验 `landed_head` 已在目标 remote branch 上，才是 `push_verified`；该工具绝不代替用户执行 push 或部署。清理不依赖它：合入就够了。
 
 worker 进程和 supervisor 验收子进程都包含当前 `CODEX_SUPERVISOR_TASK_ID`、`CODEX_SUPERVISOR_BASE_COMMIT` 和 `CODEX_SUPERVISOR_RUN`；分别是当前任务、运行基线和次数，rebase/resume 后两边一起更新。
 
@@ -116,11 +116,25 @@ workspace-write默认networkAccess:false；需要ssh/联网验证显式true，�
 
 沙箱除工作区和临时目录外，自动放开 OS cache 目录（macOS `~/Library/Caches`、Linux `~/.cache`、Windows `%LOCALAPPDATA%`）、home 下已存在的工具链缓存目录（`.cargo`/`.npm`/`.yarn`/`.pnpm-store`/`.bun`/`.m2`/`.gradle`/`.nuget`/`.ivy2`/`.bundle`/`.composer`/`.pub-cache`/`.mix`/`.hex`/`.stack`/`.cpanm`/`.deno`/`.conda`、`go/pkg`）。Go build cache（平台默认 `go-build` 或显式 `GOCACHE`）单独 realpath 并放行真实目录，因此 symlink 指向外置盘时也可在 worker sandbox 使用；**凭据目录一律不自动放开**（`.ssh`/`.gnupg`/`.config`/`.aws`/`.docker`/`.kube`/`.netrc`/`.git-credentials`/`~/Library/Keychains`）：ssh 连服务器要写 known_hosts、kubectl、推私有镜像、签名提交这类需求，派单时显式传 `writableRoots`，只在这一路生效。`SUPERVISOR_NO_AUTO_CACHE_ROOTS=1` 关掉全部自动缓存根，显式声明的照常生效。Codex 拒绝带软链的可写根，所以自动 cache 和 `writableRoots` 都先按 realpath 解析；解析不出无软链路径的根直接不传。其他 cache 放在别处（`~/.m2`、`~/.gradle`、vendor 镜像）就传 `writableRoots:[绝对路径]`，要求是已存在目录、最多 20 个、只对 workspace-write 生效、随 resume/followup 继承；只读复用就不用传。
 
-运行前核验Codex CLI是否具备hooks/output-schema（要求0.162+）；能力不足返回start_failed，wait可正常结算。get_worker_goal.native_goal_read区分missing_goal、missing_database、locked和read_error，不能把读取失败当没建goal。原生budget/usage限制也进入needs_attention。cleanup保留ignored artifacts、共享证据和未解决attention。
+运行前核验Codex CLI是否具备hooks/output-schema（要求0.162+）；能力不足返回start_failed，wait可正常结算。get_worker_goal.native_goal_read区分missing_goal、missing_database、locked和read_error，不能把读取失败当没建goal。原生budget/usage限制也进入needs_attention。
 
 ownedPaths预留和任务入库在同一事务内，跨MCP并发派单/恢复不能抢同一输出；验收或退出尚未结算时仍保留归属。Git工作区隔离创建失败明确报错，不退回主目录执行；非 Git `scratch` 也不落回原目录。
 
-清理先 `cleanup_plan`（CLI 对应 `npm run cleanup -- --dry-run`）分类 SAFE / REVIEW / BLOCKED；SAFE 要求 acceptance 明确 passed、`push_verified`、干净、无活跃进程/依赖、Git 注册和路径归属可证明。`apply_cleanup` 会在删除前重验 fingerprint 并 fetch remote 再验 landed SHA；CLI 只能 `npm run cleanup -- --apply --plan <plan_id> --item <item_id>` 显式选项执行。branch、task row、event、JSONL、artifact 永远保留；脏、未验收、未合、未 push、force-push 回退、lost/failed 和证明不足的一律不删。
+清理默认自动进行：`check_workers` 和 `overview_delta` 每 10 分钟最多顺带扫一次，把 SAFE 的 worktree 删掉，并在返回里用 `cleaned` 列出。判定规则：
+
+| 情况 | 判定 |
+|---|---|
+| worker 或验收还在跑，或有活跃 worker 依赖它 | BLOCKED |
+| 已合入且提交仍在目标分支上，工作区干净 | SAFE |
+| 结束了但没有任何改动（失败、取消、超时、空跑） | SAFE |
+| 有未合入的提交或未提交的改动 | 保留期内 REVIEW，到期后 SAFE |
+| 路径、分支或 Git 注册对不上 | REVIEW，不自动处理 |
+
+保留期默认 7 天，从 worker 结束算起，用 `CODEX_SUPERVISOR_CLEANUP_HOLD_DAYS` 改。到期删除前，未提交的改动会先存成一笔提交放到 `codex/<id>` 分支上，`workspaceSetup` 链进来的路径和被 gitignore 的构建产物不算改动、不保存。分支、task、事件、JSONL、artifact 永远保留。
+
+worktree 被清掉后，`resume_codex_worker`、`land_codex_worker`、`ask_codex_worker`、`get_worker_diff` 会从分支把它重新切出来，`workspaceSetup` 也会重做，所以清理不会让没做完的活接不回来。
+
+手动入口：`cleanup_plan` 看判定和原因，`apply_cleanup` 立刻清 SAFE 项；命令行是 `codex-supervisor-cleanup --dry-run` 和 `codex-supervisor-cleanup --apply --plan <plan_id> --item <item_id>`。`CODEX_SUPERVISOR_NO_AUTO_CLEANUP=1` 关掉自动清理，只留手动。研究型 worker 的 scratch 目录按同一个保留期清。
 
 ## 看板里有什么
 
@@ -182,6 +196,8 @@ node "$CODEX_SUPERVISOR_STAGE_CLI" "gate:s3" --detail "integration queue"
 | `CODEX_SUPERVISOR_REGISTRY` | `https://registry.npmjs.org` | 更新检查和自动更新用的 registry |
 | `CODEX_SUPERVISOR_UPDATE_TIMEOUT_MS` | `4000` | 等 registry 的上限 |
 | `CODEX_SUPERVISOR_NO_AUTO_UPDATE` | 未设 | `1` 关闭后台自动更新（只提醒） |
+| `CODEX_SUPERVISOR_NO_AUTO_CLEANUP` | 未设 | `1` 关闭 worktree 自动清理，只能手动 `apply_cleanup` |
+| `CODEX_SUPERVISOR_CLEANUP_HOLD_DAYS` | `7` | 未合入的活结束后保留几天再清；`0` 表示不保留 |
 | `CODEX_SUPERVISOR_SKIP_SKILL_SYNC` | 未设 | `1` 关闭 server 启动时的 skill 同步 |
 | `CODEX_SUPERVISOR_SKIP_SETUP` | 未设 | `1` 跳过 `postinstall` 的自动安装 |
 | `CODEX_SUPERVISOR_NPM` | 未设 | 自动更新用的 npm，默认用当前 node 自带的 |

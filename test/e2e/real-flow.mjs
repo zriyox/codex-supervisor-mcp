@@ -35,7 +35,8 @@ const TOOL = {
   result: "get_worker_result",
   diff: "get_worker_diff",
   land: "land_codex_worker",
-  cleanupPlan: "cleanup_plan"
+  cleanupPlan: "cleanup_plan",
+  poll: "check_workers"
 };
 
 const home = await mkdtemp(join(tmpdir(), "supervisor-e2e-"));
@@ -62,7 +63,11 @@ const transport = new StdioClientTransport({
   command: process.execPath,
   args: [join(packageRoot, installed.bin[PACKAGE] ?? "src/mcp-server.js")],
   cwd: home,
-  env: { ...process.env, SUPERVISOR_HOME: home, CODEX_SUPERVISOR_NO_UPDATE_CHECK: "1", CODEX_SUPERVISOR_NO_AUTO_UPDATE: "1", CODEX_SUPERVISOR_SKIP_SKILL_SYNC: "1" },
+  env: {
+    ...process.env, SUPERVISOR_HOME: home, CODEX_SUPERVISOR_NO_UPDATE_CHECK: "1", CODEX_SUPERVISOR_NO_AUTO_UPDATE: "1", CODEX_SUPERVISOR_SKIP_SKILL_SYNC: "1",
+    // Sweep on every poll and treat unlanded work as past its hold period, so cleanup can be observed in one run.
+    CODEX_SUPERVISOR_CLEANUP_INTERVAL_MS: "0", CODEX_SUPERVISOR_CLEANUP_HOLD_DAYS: "0"
+  },
   stderr: "inherit"
 });
 const client = new Client({ name: "supervisor-e2e", version: "1.0.0" });
@@ -146,8 +151,42 @@ try {
   step("land", { commits: Number(git(["rev-list", "--count", "HEAD"])) });
 
   const plan = await call(TOOL.cleanupPlan, { task_ids: ids });
-  step("cleanup_plan", { summary: plan.summary ?? null, verdicts: (plan.items ?? []).map((item) => ({ verdict: item.verdict, reasons: item.reasons })) });
-  step("worktrees", { present: ids.map((id) => existsSync(join(home, "worktrees", id))), branches: git(["branch", "--list", "codex/*", "worker/*"]).split("\n").filter(Boolean).length });
+  assert.deepEqual((plan.items ?? []).map((item) => item.verdict), ["safe", "safe"], `landed work must be safe: ${JSON.stringify(plan.items).slice(0, 600)}`);
+  step("cleanup_plan", { summary: plan.summary });
+
+  // A third worker leaves an uncommitted draft and is never landed.
+  const draft = await call(TOOL.create, {
+    cwd: repo, sandbox: "workspace-write", ownedPaths: ["notes.txt"],
+    title: "leave a draft",
+    task: "Create a file notes.txt containing exactly one line: draft-kept. Do not run git add or git commit. Then run: grep -q draft-kept notes.txt",
+    goal: { objective: "notes.txt exists with the line draft-kept" },
+    acceptance: ["grep -q draft-kept notes.txt"],
+    session_id: session
+  });
+  assert.ok(draft.id, `create failed: ${JSON.stringify(draft).slice(0, 600)}`);
+  const draftSettled = await settle(draft.id);
+  assert.equal(draftSettled.status, "completed", JSON.stringify(draftSettled).slice(0, 600));
+  step("draft worker", { id: draft.id, worktree: existsSync(draftSettled.worktree_path) });
+
+  const polled = await call(TOOL.poll, {});
+  const cleaned = polled.cleaned ?? [];
+  // The preflight probes' worktrees go in the same sweep, so this is a subset check.
+  const cleanedIds = new Set(cleaned.map((entry) => entry.task_id));
+  for (const id of [...ids, draft.id]) assert.ok(cleanedIds.has(id), `${id} was not cleaned: ${JSON.stringify(cleaned).slice(0, 800)}`);
+  const draftRemoval = cleaned.find((entry) => entry.task_id === draft.id);
+  assert.ok(draftRemoval.checkpoint_commit, "the uncommitted draft must be committed to the branch before removal");
+  for (const id of [...ids, draft.id]) {
+    assert.equal(existsSync(join(home, "worktrees", id)), false, `worktree of ${id} is still there`);
+    assert.notEqual(git(["branch", "--list", `codex/${id}`]), "", `branch of ${id} was removed`);
+  }
+  assert.equal(git(["show", `codex/${draft.id}:notes.txt`]).trim(), "draft-kept");
+  step("auto cleanup", { removed: cleaned.length, checkpoint: draftRemoval.checkpoint_commit.slice(0, 12), branches_kept: true });
+
+  // The cleaned-up draft can still be landed: its worktree comes back from the branch.
+  const landedDraft = await call(TOOL.land, { task_id: draft.id });
+  assert.ok(landedDraft.landed_head || landedDraft.landed || landedDraft.head, `land after cleanup: ${JSON.stringify(landedDraft).slice(0, 600)}`);
+  assert.equal((await readFile(join(repo, "notes.txt"), "utf8")).trim(), "draft-kept");
+  step("land after cleanup", { commits: Number(git(["rev-list", "--count", "HEAD"])) });
 } catch (error) {
   failure = error;
 } finally {

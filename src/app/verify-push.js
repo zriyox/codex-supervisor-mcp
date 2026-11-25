@@ -4,13 +4,11 @@ import "./compose.js";
 import { runGit } from "../infra/git.js";
 import { appendTaskEvent } from "../infra/store/events.js";
 import { getWorkItemForTask, recordFact } from "../infra/store/facts.js";
-import { recordJsonArtifact, saveCleanupPlan, updateWorkItemDelivery } from "../infra/store/records.js";
+import { recordJsonArtifact, updateWorkItemDelivery } from "../infra/store/records.js";
 import { getTask, upsertTask } from "../infra/store/tasks.js";
 import { runIdFor } from "../infra/store/db.js";
-import { createCleanupPlan } from "./cleanup-plan.js";
 
 const git = (cwd, args) => runGit(cwd, args, { timeout: 60000 });
-const CLEANUP_NEXT_STEP = "Review SAFE items, then call apply_cleanup with their item IDs; cleanup is never automatic.";
 
 async function recordPushFacts(task, proof, { eventId, artifactId }) {
   const workItem = await getWorkItemForTask(task.id);
@@ -101,8 +99,6 @@ export async function verifyDeliveryPush({ taskId, remote, branch }) {
       };
     }
     const { now, artifact } = await recordPushVerified(task, { remote, branch: targetBranch, remoteHead });
-    const cleanupPlan = await createCleanupPlan({ taskIds: [taskId] });
-    await saveCleanupPlan(cleanupPlan);
     return {
       task_id: taskId,
       remote,
@@ -110,8 +106,7 @@ export async function verifyDeliveryPush({ taskId, remote, branch }) {
       landed_head: task.landed_head,
       remote_head: remoteHead,
       artifact_id: artifact.id,
-      push_verified_at: now,
-      cleanup_plan: { id: cleanupPlan.id, summary: cleanupPlan.summary, expires_at: cleanupPlan.expires_at, next_step: CLEANUP_NEXT_STEP }
+      push_verified_at: now
     };
   } catch (error) {
     return { error: "push_verification_failed", task_id: taskId, remote, branch: targetBranch, reason: error.message.split("\n")[0] };

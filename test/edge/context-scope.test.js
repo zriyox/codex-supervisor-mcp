@@ -4,8 +4,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
-import { DatabaseSync } from "node:sqlite";
-import { dispatchArgs, git, makeRepo, tempHome, waitFor, withMcp } from "./helpers.js";
+import { dispatchArgs, git, makeRepo, tempHome, waitFor, withMcp, openStore } from "./helpers.js";
 
 test("worker context excludes session peers and includes only scoped verified facts", async () => {
   const home = await tempHome("supervisor-context-scope-");
@@ -71,7 +70,7 @@ test("searching another repository does not expire the original work's verified 
       acceptance: "node -e \"process.exit(0)\"", ownedPaths: ["first.txt"]
     }));
     await waitFor(call, first.id, (row) => row.exit_code === 0);
-    const db = new DatabaseSync(join(home, "data", "supervisor.sqlite"));
+    const db = openStore(home);
     const fact = db.prepare("SELECT id FROM facts WHERE work_item_id = (SELECT id FROM work_items WHERE task_id = ?) AND state = 'verified'").get(first.id);
     assert.ok(fact);
     const second = await call("create_codex_worker", dispatchArgs("second repo", secondRepo, { ownedPaths: ["second.txt"] }));
@@ -92,7 +91,7 @@ test("concurrent searches append at most one expiry version for the same fact", 
     }));
     await waitFor(call, worker.id, (row) => row.exit_code === 0);
   });
-  const db = new DatabaseSync(join(home, "data", "supervisor.sqlite"));
+  const db = openStore(home);
   const original = db.prepare("SELECT id FROM facts WHERE work_item_id = (SELECT id FROM work_items WHERE task_id = ?) AND key = 'accepted_outcome' AND state = 'verified'").get(worker.id);
   db.prepare("UPDATE facts SET expires_at = ? WHERE id = ?").run("2000-01-01T00:00:00.000Z", original.id);
   await withMcp({ SUPERVISOR_HOME: home }, async ({ call: first }) => withMcp({ SUPERVISOR_HOME: home }, async ({ call: second }) => {
@@ -130,7 +129,7 @@ test("a canonical remote shares path-matched repo facts across isolated checkout
     await waitFor(call, second.id, (row) => row.exit_code === 0);
   });
 
-  const db = new DatabaseSync(join(home, "data", "supervisor.sqlite"));
+  const db = openStore(home);
   const firstWork = db.prepare("SELECT id, repo_id FROM work_items WHERE task_id = ?").get(first.id);
   assert.ok(firstWork, "the first checkout has a work item");
   const firstRepoRecord = db.prepare("SELECT canonical_remote FROM repos WHERE id = ?").get(firstWork.repo_id);
@@ -163,7 +162,7 @@ test("a verified watched-path fact expires when a resumed worker rebases across 
       acceptance: "node -e \"process.exit(0)\""
     }));
     await waitFor(call, worker.id, (row) => row.exit_code === 0);
-    const db = new DatabaseSync(join(home, "data", "supervisor.sqlite"));
+    const db = openStore(home);
     originalFactId = db.prepare("SELECT id FROM facts WHERE work_item_id = (SELECT id FROM work_items WHERE task_id = ?) AND key = 'accepted_outcome' AND state = 'verified'").get(worker.id).id;
     db.close();
   });

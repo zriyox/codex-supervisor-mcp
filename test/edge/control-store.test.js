@@ -1,9 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { DatabaseSync } from "node:sqlite";
 import { join } from "node:path";
-import { makeRepo, tempHome, waitFor, withMcp, dispatchArgs } from "./helpers.js";
+import { makeRepo, tempHome, waitFor, withMcp, dispatchArgs, openStore } from "./helpers.js";
 
 test("a tracked worker has durable repo, work-item, run and event provenance", async () => {
   const home = await tempHome("supervisor-control-store-");
@@ -15,7 +14,7 @@ test("a tracked worker has durable repo, work-item, run and event provenance", a
     await waitFor(call, worker.id, (task) => task.status === "completed" && task.exit_code !== null);
   });
 
-  const db = new DatabaseSync(join(home, "data", "supervisor.sqlite"));
+  const db = openStore(home);
   const workItem = db.prepare("SELECT * FROM work_items WHERE task_id = ?").get(worker.id);
   assert.ok(workItem);
   assert.equal(workItem.delivery_state, "draft");

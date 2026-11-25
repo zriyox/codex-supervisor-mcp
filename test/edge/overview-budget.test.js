@@ -1,14 +1,12 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { join } from "node:path";
-import { DatabaseSync } from "node:sqlite";
-import { tempHome, withMcp } from "./helpers.js";
+import { tempHome, withMcp, openStore } from "./helpers.js";
 
 test("twenty active workers with Windows paths and Chinese descriptions fit 7000 bytes", async () => {
   const home = await tempHome("supervisor-overview-budget-");
   await withMcp({ SUPERVISOR_HOME: home }, async ({ call }) => {
     await call("list_codex_workers", {});
-    const db = new DatabaseSync(join(home, "data", "supervisor.sqlite"));
+    const db = openStore(home);
     const statement = db.prepare(`INSERT INTO tasks
       (id,title,worker,status,phase,cwd,project_root,sandbox,prompt,created_at,updated_at,run_log,pid,goal_objective,current_action,owned_paths)
       VALUES (?,?,'codex','running','starting',?,?,'read-only','test',?,?,'unused',?,?,?,?)`);

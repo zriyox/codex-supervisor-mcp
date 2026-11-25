@@ -3,8 +3,7 @@
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { basename, join } from "node:path";
-import { DatabaseSync } from "node:sqlite";
-import { dispatchArgs, makeRepo, startWebServer, tempHome, waitFor, withMcp } from "./helpers.js";
+import { dispatchArgs, makeRepo, startWebServer, tempHome, waitFor, withMcp, openStore } from "./helpers.js";
 
 const home = await tempHome("supervisor-web-");
 const { dir: repo } = await makeRepo(join(home, "repo"));
@@ -22,7 +21,9 @@ before(async () => {
     ids = { a: a.id, b: b.id, c: c.id, d: d.id };
   });
   // A ghost row written by a dispatch that died: no pid, blank created_at.
-  const db = new DatabaseSync(join(home, "data", "supervisor.sqlite"));
+  const db = openStore(home);
+  // The run hosts of the workers above may still be writing their last rows.
+  db.exec("PRAGMA busy_timeout=15000");
   db.prepare(`INSERT INTO tasks (id, title, worker, status, cwd, project_root, sandbox, prompt, created_at, updated_at, run_log, pid, session_id)
               VALUES ('ghost-1', 'ghost', 'codex', 'running', ?, ?, 'workspace-write', 'x', '', '', '/tmp/none', 0, 'no-title')`).run(home, home);
   db.close();

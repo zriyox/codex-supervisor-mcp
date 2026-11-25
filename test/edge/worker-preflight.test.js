@@ -2,8 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
-import { DatabaseSync } from "node:sqlite";
-import { dispatchArgs, makeRepo, tempHome, waitFor, withMcp } from "./helpers.js";
+import { dispatchArgs, makeRepo, tempHome, waitFor, withMcp, openStore } from "./helpers.js";
 import { commandsEquivalent, normalizeObservedCommand } from "../../src/domain/worker-preflight.js";
 
 test("preflight matches the shell wrapper Codex emits around a command", () => {
@@ -110,7 +109,7 @@ test("a valid probe survives a missing process exit and is not auto-resumed", as
     const verdict = await call("get_worker_preflight", { task_id: preflight.id });
     assert.equal(verdict.status, "passed", JSON.stringify(verdict));
     assert.equal(verdict.worker_outcome.missing_exit_tolerated, true);
-    const db = new DatabaseSync(join(home, "data", "supervisor.sqlite"));
+    const db = openStore(home);
     db.prepare("UPDATE tasks SET status = 'completed', exit_code = NULL WHERE id = ?").run(preflight.id);
     let recovered = await call("get_worker_preflight", { task_id: preflight.id });
     assert.equal(recovered.status, "passed", JSON.stringify(recovered));
@@ -160,7 +159,7 @@ test("probe commands are allowed for the probe run without entering the worker c
       allowedCommands: ["npm test"],
       probeCommands: ["ssh test-host true", "head -5 /Volumes/盘/千谲/提示词.json"]
     });
-    const db = new DatabaseSync(join(home, "data", "supervisor.sqlite"));
+    const db = openStore(home);
     const row = db.prepare("SELECT guard_policy FROM tasks WHERE id = ?").get(preflight.id);
     db.close();
     const policy = JSON.parse(row.guard_policy);

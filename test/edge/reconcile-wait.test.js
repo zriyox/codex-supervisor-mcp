@@ -3,11 +3,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { join } from "node:path";
-import { DatabaseSync } from "node:sqlite";
-import { dispatchArgs, tempHome, withMcp } from "./helpers.js";
+import { dispatchArgs, tempHome, withMcp, openStore } from "./helpers.js";
 
 function insertRow(home, { id, status = "running", pid = null, created, started = null }) {
-  const db = new DatabaseSync(join(home, "data", "supervisor.sqlite"));
+  const db = openStore(home);
   db.prepare(`INSERT INTO tasks (id, title, worker, status, cwd, project_root, sandbox, prompt, created_at, updated_at, started_at, run_log, pid)
               VALUES (?, ?, 'codex', ?, ?, ?, 'workspace-write', 'x', ?, ?, ?, '/tmp/none', ?)`).run(id, id, status, home, home, created, created, started, pid);
   if (status === "completed") db.prepare("UPDATE tasks SET exit_code=0 WHERE id=?").run(id);
@@ -76,7 +75,7 @@ test("a dead worker with a live supervisor does not return a half-written termin
   const home = await tempHome("supervisor-settle-race-");
   await withMcp({ SUPERVISOR_HOME: home }, async ({ call }) => {
     await call("list_codex_workers", {});
-    const db = new DatabaseSync(join(home, "data", "supervisor.sqlite"));
+    const db = openStore(home);
     const now = new Date().toISOString();
     db.prepare(`INSERT INTO tasks (id,title,worker,status,cwd,project_root,sandbox,prompt,created_at,updated_at,run_log,pid,notices)
       VALUES ('draining','draining','codex','completed',?,?,'read-only','test',?,?,'unused',?,'supervisor-alive')`).run(home, home, now, now, 2 ** 22 - 1);
@@ -237,7 +236,7 @@ test("a durable passed acceptance survives the supervisor process death", async 
   const home = await tempHome("supervisor-acceptance-durable-");
   await withMcp({ SUPERVISOR_HOME: home }, async ({ call }) => {
     await call("list_codex_workers", {});
-    const db = new DatabaseSync(join(home, "data", "supervisor.sqlite"));
+    const db = openStore(home);
     const now = new Date().toISOString();
     const acceptance = { status: "running", passed: null, run: 1, supervisor_pid: 2 ** 22 - 1, started_at: now };
     db.prepare(`INSERT INTO tasks

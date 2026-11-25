@@ -1,8 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { join } from "node:path";
-import { dispatchArgs, tempHome, withMcp, waitFor, makeRepo } from "./helpers.js";
-import { DatabaseSync } from "node:sqlite";
+import { dispatchArgs, tempHome, withMcp, waitFor, makeRepo, openStore } from "./helpers.js";
 
 test("check_workers recovers an empty write run once and two observers cannot start duplicate retries", async () => {
   const home = await tempHome("supervisor-auto-recovery-");
@@ -16,7 +15,7 @@ test("check_workers recovers an empty write run once and two observers cannot st
   const env = { SUPERVISOR_HOME: home, FAKE_CODEX_SCENARIO: "echo-prompt" };
   // The result precedes independent owner teardown; Windows can keep that
   // process alive longer. Recovery correctly refuses to overlap a live owner.
-  const db = new DatabaseSync(join(home, "data", "supervisor.sqlite"));
+  const db = openStore(home);
   const deadline = Date.now() + 20000;
   try {
     for (;;) {
@@ -36,7 +35,7 @@ test("check_workers recovers an empty write run once and two observers cannot st
     const after = await first("check_workers", {});
     assert.equal(after.recoveries.length, 0);
     assert.ok(after.attention.some((entry) => entry.reason === "two_stall"));
-    const db = new DatabaseSync(join(home, "data", "supervisor.sqlite"));
+    const db = openStore(home);
     assert.equal(db.prepare("SELECT delivery_state FROM work_items WHERE task_id = ?").get(id).delivery_state, "needs_attention");
     db.close();
     const events = await first("get_codex_worker_events", { task_id: id, limit: 50 });
@@ -63,7 +62,7 @@ test("new observers never silently replay historical lost tasks without current-
   const home = await tempHome("supervisor-legacy-recovery-");
   await withMcp({ SUPERVISOR_HOME: home }, async ({ call }) => {
     await call("list_codex_workers", {});
-    const db = new DatabaseSync(join(home, "data", "supervisor.sqlite"));
+    const db = openStore(home);
     const now = new Date().toISOString();
     db.prepare("INSERT INTO tasks(id,worker,status,cwd,project_root,sandbox,prompt,created_at,updated_at,run_log,run_count,thread_id) VALUES('historical','codex','lost',?,?,'read-only','old task',?,?,'unused',1,'old-thread')").run(home, home, now, now);
     db.close();

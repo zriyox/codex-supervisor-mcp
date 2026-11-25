@@ -1,6 +1,6 @@
 {
   "name": "codex-supervisor-mcp",
-  "version": "0.13.6",
+  "version": "0.14.0",
   "mcpName": "io.github.zriyox/codex-supervisor-mcp",
   "type": "module",
   "description": "MCP server that dispatches and supervises parallel Codex CLI workers, one isolated Git worktree each, with a persisted work state machine.",
@@ -28,7 +28,8 @@
     "codex-supervisor-accept": "src/interface/bin/acceptance-cli.js",
     "codex-supervisor-setup": "src/interface/bin/setup.js",
     "codex-supervisor-web": "src/interface/bin/web-server.js",
-    "codex-supervisor-stage": "src/interface/bin/stage.js"
+    "codex-supervisor-stage": "src/interface/bin/stage.js",
+    "codex-supervisor-cleanup": "src/interface/bin/cleanup.js"
   },
   "files": [
     "src",

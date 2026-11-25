@@ -1,14 +1,13 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { join } from "node:path";
-import { DatabaseSync } from "node:sqlite";
-import { tempHome, withMcp } from "./helpers.js";
+import { tempHome, withMcp, openStore } from "./helpers.js";
 
 test("an interrupted acceptance with no recorded process exit becomes resumable lost work", async () => {
   const home = await tempHome("supervisor-exit-reconcile-");
   await withMcp({ SUPERVISOR_HOME: home }, async ({ call }) => {
     await call("list_codex_workers", { includeHistory: true });
-    const db = new DatabaseSync(join(home, "data", "supervisor.sqlite"));
+    const db = openStore(home);
     const old = new Date(Date.now() - 60000).toISOString();
     db.prepare(`
       INSERT INTO tasks
@@ -34,7 +33,7 @@ for (const acceptanceState of ["none", "interrupted", "passed", "failed"]) test(
   const home = await tempHome("supervisor-exit-recovered-");
   await withMcp({ SUPERVISOR_HOME: home }, async ({ call }) => {
     await call("list_codex_workers", { includeHistory: true });
-    const db = new DatabaseSync(join(home, "data", "supervisor.sqlite"));
+    const db = openStore(home);
     const old = new Date(Date.now() - 60000).toISOString();
     const taskId = "codex-exit-recovered";
     const runId = `run-${taskId}-1`;
@@ -90,7 +89,7 @@ for (const acceptanceState of ["none", "interrupted", "passed", "failed"]) test(
       if (acceptanceState !== "passed") assert.equal(land.error, acceptanceState === "failed" ? "acceptance_failed" : "acceptance_not_run");
     }
 
-    const verify = new DatabaseSync(join(home, "data", "supervisor.sqlite"));
+    const verify = openStore(home);
     assert.equal(verify.prepare("SELECT count(*) AS n FROM task_events WHERE task_id=? AND event_type='supervisor.exit_recovered'").get(taskId).n, 1);
     const evidence = JSON.parse(verify.prepare("SELECT run_evidence FROM tasks WHERE id=?").get(taskId).run_evidence);
     assert.equal(evidence.structured_report.valid, true);
@@ -106,7 +105,7 @@ test("a running row with a durable completed turn is recovered before the lost/r
   const home = await tempHome("supervisor-exit-running-");
   await withMcp({ SUPERVISOR_HOME: home }, async ({ call }) => {
     await call("list_codex_workers", { includeHistory: true });
-    const db = new DatabaseSync(join(home, "data", "supervisor.sqlite"));
+    const db = openStore(home);
     const old = new Date(Date.now() - 60000).toISOString();
     const taskId = "codex-exit-running";
     db.prepare(`
@@ -138,7 +137,7 @@ test("exit recovery preserves an existing attention reason and error", async () 
   const home = await tempHome("supervisor-exit-attention-");
   await withMcp({ SUPERVISOR_HOME: home }, async ({ call }) => {
     await call("list_codex_workers", { includeHistory: true });
-    const db = new DatabaseSync(join(home, "data", "supervisor.sqlite"));
+    const db = openStore(home);
     const old = new Date(Date.now() - 60000).toISOString();
     const taskId = "codex-exit-attention";
     db.prepare(`
@@ -171,7 +170,7 @@ test("exit recovery marks an unparsable durable report as invalid_report", async
   const home = await tempHome("supervisor-exit-invalid-report-");
   await withMcp({ SUPERVISOR_HOME: home }, async ({ call }) => {
     await call("list_codex_workers", { includeHistory: true });
-    const db = new DatabaseSync(join(home, "data", "supervisor.sqlite"));
+    const db = openStore(home);
     const old = new Date(Date.now() - 60000).toISOString();
     const taskId = "codex-exit-invalid-report";
     const runId = `run-${taskId}-1`;

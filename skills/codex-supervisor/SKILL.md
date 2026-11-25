@@ -124,10 +124,11 @@ description: 用 Codex CLI 并行做可独立验收的功能包，每路一个 G
 
 1. 主线程自己的改动要 commit 并 push。用户批准的集成分支也要在 push 后核对远端 SHA。
 2. worker 分支通常不 push。只有用户明确要求保留远端 worker 分支时再推。
-3. push 后用 `verify_delivery_push` 证明 landed head 已到远端，并生成 cleanup plan。
-4. `check_workers` 只提示清理，不执行删除。
-5. 只有 `acceptance passed`、`push_verified`、worktree 干净、没有活跃进程/依赖、fingerprint 未变化的 SAFE item，才可用 `apply_cleanup(plan_id, item_ids)` 删除。
-6. cleanup 只执行 `git worktree remove/prune`。task、run event、JSONL、artifact 和 branch 都保留。
+3. push 后用 `verify_delivery_push` 证明 landed head 已到远端。
+4. 清理是自动的：`check_workers` / `overview_delta` 会顺带删掉已合入或没有改动的 worktree，返回里的 `cleaned` 就是删了哪些。不用为清理调任何工具。
+5. 没合入的活保留 7 天；到期先把未提交改动存进 `codex/<id>` 分支再删。还想要的活在这之前 land 或 resume。
+6. worktree 被清掉后照常 `resume_codex_worker` / `land_codex_worker` / `get_worker_diff`，会自动从分支切回来。
+7. 想立刻清：`cleanup_plan` 看判定，`apply_cleanup(plan_id, item_ids)` 清 SAFE 项。branch、task、event、JSONL、artifact 永远保留。
 
 ## 常见坑
 

@@ -4,8 +4,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { DatabaseSync } from "node:sqlite";
-import { dispatchArgs, git, makeRepo, tempHome, waitFor, withMcp } from "./helpers.js";
+import { dispatchArgs, git, makeRepo, tempHome, waitFor, withMcp, openStore } from "./helpers.js";
 import { runAcceptance } from "../../src/app/acceptance.js";
 
 // Bash shell lines also accepted by the original sh/cmd runner, so RED does
@@ -365,7 +364,7 @@ test("a cancelled worker runs no checks; an interrupted run is reconciled and re
     assert.equal(done.acceptance, null);
   });
   // A row left mid-acceptance by a supervisor that died.
-  const db = new DatabaseSync(join(home, "data", "supervisor.sqlite"));
+  const db = openStore(home);
   db.exec("PRAGMA busy_timeout=15000");
   // The cancel receipt precedes the owner's final exit write. Do not replace
   // the row with the interrupted fixture until that owner actually exits.

@@ -2,8 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { collectWorkerChanges } from "../../src/domain/worker-changes.js";
 import { join } from "node:path";
-import { DatabaseSync } from "node:sqlite";
-import { dispatchArgs, tempHome, withMcp } from "./helpers.js";
+import { dispatchArgs, tempHome, withMcp, openStore } from "./helpers.js";
 
 const task = (extra = {}) => ({ id: "worker", status: "completed", exit_code: 0, run_count: 1, ...extra });
 
@@ -87,7 +86,7 @@ test("check_workers returns a threshold reminder through MCP without resuming th
       sandbox: "read-only", ownedPaths: []
     }));
     try {
-      const db = new DatabaseSync(join(home, "data", "supervisor.sqlite"));
+      const db = openStore(home);
       db.prepare("UPDATE tasks SET goal_tokens_used=? WHERE id=?").run(378000, worker.id);
       db.close();
       const notice = await call("check_workers");

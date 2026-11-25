@@ -28,7 +28,7 @@ codex-supervisor-mcp 是一个 MCP server。主线程（Claude Code、Codex 或�
 | 分不清跑失败还是进程没了 | 状态机把 `failed` 和 `lost` 分开，失败带来源和错误码 |
 | worker 说做完了其实没有 | 派单带 `acceptance` 验收命令，supervisor 在 worker 退出后自己跑，不过就拒绝合入 |
 | 改动留在本地没上线 | `land_codex_worker` 合回主分支，`verify_delivery_push` 核对远端真有这笔提交 |
-| worktree 越堆越多 | 验收过、已推送、干净的才判 SAFE，你点头才删；分支和证据不删 |
+| worktree 越堆越多 | 已合入或没有改动的在轮询时自动清；没合入的留 7 天，删之前先把未提交的改动存进它的分支。分支和证据不删 |
 
 worker 跑的是 `codex exec`，`model` 透传。主线程留在 Claude，worker 挂 DeepSeek 或别的 provider，账单分开算。
 
@@ -122,7 +122,7 @@ codex-supervisor-web     # 或 npx -p codex-supervisor-mcp codex-supervisor-web
 | | `ask_codex_worker` | 旁路问它一句，只读，不动它的线程 |
 | | `land_codex_worker` | 代提交并 cherry-pick 到集成分支，验收没过就拒 |
 | 交付 | `verify_delivery_push` | 证明合入的提交已经在远端。只验证，不替你 push |
-| | `cleanup_plan` / `apply_cleanup` / `cleanup_history` | 给 worktree 分 SAFE / REVIEW / BLOCKED，只删你选中的 SAFE 项 |
+| | `cleanup_plan` / `apply_cleanup` / `cleanup_history` | 看每个 worktree 是 SAFE、REVIEW 还是 BLOCKED 以及原因；SAFE 项平时自动清，也可以手动立刻清 |
 | session | `get_session_works` / `search_works` | 找回一批活，或按关键字搜历史 |
 | | `describe_session` | 给一批活记标题、目标、默认验收和审批状态 |
 | 事实 | `search_worker_facts` / `get_fact` | 查已验证的事实和它的版本 |

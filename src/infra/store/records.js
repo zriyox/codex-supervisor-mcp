@@ -101,6 +101,23 @@ export async function updateWorkItemDelivery(taskId, deliveryState) {
   return result.changes > 0;
 }
 
+// A safe item marks its work item cleanup_eligible. An item that is no longer
+// safe goes back to the furthest delivery step its task row proves.
+function markCleanupEligibility(dbInstance, item) {
+  const now = new Date().toISOString();
+  if (item.verdict === "safe") {
+    dbInstance.prepare("UPDATE work_items SET delivery_state = 'cleanup_eligible', updated_at = ? WHERE task_id = ? AND delivery_state NOT IN ('cleanup_eligible', 'cleanup_removed')")
+      .run(now, item.task_id);
+    return;
+  }
+  dbInstance.prepare(`
+    UPDATE work_items SET updated_at = ?, delivery_state = (
+      SELECT CASE WHEN push_verified_at IS NOT NULL THEN 'push_verified' WHEN landed_at IS NOT NULL THEN 'landed' ELSE 'draft' END
+      FROM tasks WHERE tasks.id = work_items.task_id
+    ) WHERE task_id = ? AND delivery_state = 'cleanup_eligible'
+  `).run(now, item.task_id);
+}
+
 export async function saveCleanupPlan(plan) {
   await ensureFilesystem();
   const dbInstance = openDb();
@@ -117,13 +134,7 @@ export async function saveCleanupPlan(plan) {
     for (const item of plan.items) {
       item.id = item.id ?? randomUUID();
       insert.run(item.id, plan.id, item.task_id, item.verdict, JSON.stringify(item.reasons), item.fingerprint, item.reclaimable_bytes, item.eligible_after);
-      if (item.verdict === "safe") {
-        dbInstance.prepare("UPDATE work_items SET delivery_state = 'cleanup_eligible', updated_at = ? WHERE task_id = ? AND delivery_state = 'push_verified'")
-          .run(new Date().toISOString(), item.task_id);
-      } else {
-        dbInstance.prepare("UPDATE work_items SET delivery_state = 'push_verified', updated_at = ? WHERE task_id = ? AND delivery_state = 'cleanup_eligible'")
-          .run(new Date().toISOString(), item.task_id);
-      }
+      markCleanupEligibility(dbInstance, item);
     }
     dbInstance.exec("COMMIT");
   } catch (error) {

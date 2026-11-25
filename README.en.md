@@ -28,7 +28,7 @@ codex-supervisor-mcp is an MCP server. A main thread (Claude Code, Codex, or any
 | A failed run looks the same as a dead process | The state machine keeps `failed` and `lost` apart, and a failure carries its source and code |
 | A worker says it is done and is not | Dispatch with `acceptance` commands; the supervisor runs them itself after the worker exits and refuses to land on failure |
 | Changes sit on a local branch | `land_codex_worker` merges into the integration branch; `verify_delivery_push` proves the commit is on the remote |
-| Worktrees pile up | Only verified, pushed and clean ones are marked SAFE, and nothing is removed until you say so. Branches and evidence stay |
+| Worktrees pile up | Landed or unchanged ones are removed during polling. Unlanded work is kept for 7 days, and its uncommitted edits are committed to its branch before the worktree goes. Branches and evidence stay |
 
 A worker is a `codex exec` process and `model` is passed straight through. Keep the main thread on Claude, put the workers on DeepSeek or another provider, and the bills stay separate.
 
@@ -123,7 +123,7 @@ One block of text passes between the two sessions, pasted into the main-brain se
 | | `ask_codex_worker` | Asks the worker a side question. Read-only; its thread is untouched |
 | | `land_codex_worker` | Commits on the worker's behalf and cherry-picks onto the integration branch; refuses if acceptance failed |
 | Delivery | `verify_delivery_push` | Proves the landed commit is on the remote. It verifies; it never pushes for you |
-| | `cleanup_plan` / `apply_cleanup` / `cleanup_history` | Sorts worktrees into SAFE / REVIEW / BLOCKED and removes only the SAFE items you pick |
+| | `cleanup_plan` / `apply_cleanup` / `cleanup_history` | Shows each worktree as SAFE, REVIEW or BLOCKED with the reason. SAFE ones are removed automatically; you can also remove one right away |
 | Sessions | `get_session_works` / `search_works` | Finds a batch again, or searches history by substring |
 | | `describe_session` | Records a batch's title, objective, default acceptance and approval state |
 | Facts | `search_worker_facts` / `get_fact` | Looks up verified facts and their versions |

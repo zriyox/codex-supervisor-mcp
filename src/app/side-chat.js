@@ -22,6 +22,7 @@
 //   turn failed / timed out / stopped  error on the turn, session still usable
 //   board restarted mid-turn ........ turn marked interrupted
 //   session ended ................... fork deleted, history cleared
+import { ensureTaskWorktree } from "./restore-worktree.js";
 import "./compose.js";
 import { answerOf, partsFromChunks, turnView } from "../domain/side-turn-view.js";
 import { closeSideSession, getSideSession, insertSideTurn, interruptRunningSideTurns, openSideSession, readSideTurns, setSideSessionFork, updateSideTurn } from "../infra/store/sessions.js";
@@ -243,6 +244,8 @@ export async function runSideTurn({ task, text, res = null, fresh = false }) {
   if (target.error) throw Object.assign(new Error(target.error), { code: "codex_missing" });
 
   const { session, refreshed } = await prepareSideSession(task, { fresh });
+  // The fork reads the worker's files; a cleaned-up worktree comes back from its branch.
+  await ensureTaskWorktree(task);
   const child = startSideChild(target, task, session);
   const live = await openLiveTurn(task, text, child);
   if (res) {

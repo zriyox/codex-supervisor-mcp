@@ -6,8 +6,7 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
-import { DatabaseSync } from "node:sqlite";
-import { dispatchArgs, git, makeRepo, tempHome, waitFor, withMcp } from "./helpers.js";
+import { dispatchArgs, git, makeRepo, tempHome, waitFor, withMcp, openStore } from "./helpers.js";
 
 async function advanceMain(dir, name = "later.txt", content = "later\n") {
   await writeFile(join(dir, name), content);
@@ -32,7 +31,7 @@ function settled(t) {
 }
 
 function baseCommitInDb(home, id) {
-  const db = new DatabaseSync(join(home, "data", "supervisor.sqlite"));
+  const db = openStore(home);
   const row = db.prepare("SELECT base_commit FROM tasks WHERE id = ?").get(id);
   db.close();
   return row.base_commit;
