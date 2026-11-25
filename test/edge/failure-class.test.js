@@ -20,3 +20,18 @@ test("a healthy or merely blocked goal is not mislabeled as an execution failure
     source: "goal", code: "goal_blocked", retryable: false
   });
 });
+
+// The exit code alone tells a caller nothing; what the process last wrote does.
+test("a non-zero exit is attributed from what the worker wrote to stderr", () => {
+  const exit = (stderr_tail) => classifyFailure({ status: "failed", error: "codex exited with code 1", stderr_tail });
+  assert.deepEqual(exit("warming up\nError: 401 Unauthorized: invalid api key\n"), {
+    source: "auth", code: "auth_failed", retryable: false, detail: "Error: 401 Unauthorized: invalid api key"
+  });
+  assert.equal(exit("stream disconnected before completion: error sending request").code, "provider_unreachable");
+  assert.equal(exit("unexpected status 429 Too Many Requests").code, "provider_rate_limited");
+  assert.equal(exit("error loading config.toml: unknown field").source, "runner_config");
+  assert.deepEqual(exit("thread panicked at main.rs"), {
+    source: "worker_process", code: "process_exit_nonzero", retryable: true, detail: "thread panicked at main.rs"
+  });
+  assert.deepEqual(exit(""), { source: "worker_process", code: "process_exit_nonzero", retryable: true });
+});

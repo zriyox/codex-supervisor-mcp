@@ -5,6 +5,8 @@ import { appendTaskEvents } from "../infra/store/events.js";
 import { codexRunner } from "../runners/codex/adapter.js";
 import { persist } from "./live-run.js";
 
+const STDERR_KEEP = 64 * 1024;
+
 async function handleLines(run, lines) {
   const events = [];
   for (const line of lines) {
@@ -59,9 +61,11 @@ export function attachStreams(run, earlyOutput) {
   child.stdout.on("data", handleStdoutChunk);
   child.stdout.on("error", () => {});
 
-  run.stderr = earlyOutput.stderr.map((chunk) => chunk.toString("utf8")).join("");
+  run.stderr = earlyOutput.stderr.map((chunk) => chunk.toString("utf8")).join("").slice(-STDERR_KEEP);
   child.stderr.on("data", (chunk) => {
-    run.stderr += chunk.toString("utf8");
+    // Only the tail is ever used, so only the tail is kept: a worker that
+    // logs for hours must not grow this process without bound.
+    run.stderr = (run.stderr + chunk.toString("utf8")).slice(-STDERR_KEEP);
     persist(run, { ...run.live, stderr_tail: run.stderr.slice(-4000), updated_at: new Date().toISOString() });
   });
   child.stderr.on("error", () => {});

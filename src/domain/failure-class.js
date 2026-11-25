@@ -7,6 +7,30 @@ function providerFailure(text) {
   return { source: "provider", code: status ? `provider_http_${status}` : "provider_error", retryable };
 }
 
+// "codex exited with code 1" says only that the process ended badly. The
+// reason is whatever it last wrote to stderr, so that is read for the causes a
+// caller acts on differently: fix the login, wait for the provider, fix the
+// configuration. The last line is passed on either way.
+const lastLine = (text) => text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).at(-1)?.slice(0, 300) ?? null;
+
+function processExitFailure(stderr) {
+  const detail = lastLine(stderr);
+  const withDetail = (failure) => (detail ? { ...failure, detail } : failure);
+  if (/\b401\b|unauthori[sz]ed|not logged in|login required|invalid api key|missing api key|\b403\b|forbidden/i.test(stderr)) {
+    return withDetail({ source: "auth", code: "auth_failed", retryable: false });
+  }
+  const provider = providerFailure(stderr);
+  if (provider) return withDetail(provider);
+  if (/\b429\b|rate.?limit|too many requests/i.test(stderr)) return withDetail({ source: "provider", code: "provider_rate_limited", retryable: true });
+  if (/ECONNREFUSED|ECONNRESET|ENOTFOUND|ETIMEDOUT|error sending request|connection (refused|reset|closed)|stream disconnected|dns error/i.test(stderr)) {
+    return withDetail({ source: "provider", code: "provider_unreachable", retryable: true });
+  }
+  if (/config\.toml|unknown model|model .{0,80}(not found|does not exist|not supported)|unexpected argument|invalid value/i.test(stderr)) {
+    return withDetail({ source: "runner_config", code: "config_invalid", retryable: false });
+  }
+  return withDetail({ source: "worker_process", code: "process_exit_nonzero", retryable: true });
+}
+
 export function classifyFailure(task) {
   if (!task) return null;
   const error = String(task.error ?? "");
@@ -26,7 +50,7 @@ export function classifyFailure(task) {
   }
   if (task.status === "lost") return { source: "supervisor_process", code: "worker_lost", retryable: true };
   if (task.status === "cancelled") return { source: "caller", code: "cancelled", retryable: true };
-  if (/codex exited with code/i.test(error)) return { source: "worker_process", code: "process_exit_nonzero", retryable: true };
+  if (/codex exited with code/i.test(error)) return processExitFailure(String(task.stderr_tail ?? ""));
   if (isGoalNeedingAttention(task.goal_status)) return { source: "goal", code: `goal_${task.goal_status}`, retryable: false };
   if (task.status === "failed") return { source: "unknown", code: "failed", retryable: null };
   return null;

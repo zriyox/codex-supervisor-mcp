@@ -141,7 +141,7 @@ Light and dark follow the system. No external resources.
 | `queued` | Dispatched, not started |
 | `running` | Running. `phase`: `starting → thinking → command → editing → reporting` |
 | `completed` | Done |
-| `failed` | Non-zero exit, `turn.failed`, spawn failure |
+| `failed` | Non-zero exit, `turn.failed`, spawn failure. `failure.source` / `failure.code` / `failure.retryable` give the cause; a non-zero exit is attributed from stderr to `auth`, `provider`, `runner_config` or `worker_process`, and `failure.detail` is its last stderr line |
 | `cancelled` | Stopped by `cancel_worker` |
 | `lost` | Worker killed by an outside signal, run process disappeared, or a row whose process never started. `resume_worker` picks it up |
 | `timed_out` | `limits.max_run_ms` or `limits.max_total_ms` ran out and the supervisor stopped the worker. Never retried automatically. After a per-run limit, `resume_worker` starts a fresh run clock; after the total limit, continue with `create_worker` and `followup_of`, giving new `limits` |

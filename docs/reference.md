@@ -153,7 +153,7 @@ node "$AGENT_SUPERVISOR_STAGE_CLI" "gate:s3" --detail "integration queue"
 | `queued` | 已派单，未启动 |
 | `running` | 运行中。`phase`：`starting → thinking → command → editing → reporting` |
 | `completed` | 成功 |
-| `failed` | 非零退出码、`turn.failed`、spawn 失败 |
+| `failed` | 非零退出码、`turn.failed`、spawn 失败。`failure.source` / `failure.code` / `failure.retryable` 给出原因；进程非零退出时按 stderr 归到 `auth`、`provider`、`runner_config` 或 `worker_process`，`failure.detail` 是 stderr 最后一行 |
 | `cancelled` | 被 `cancel_worker` 中断 |
 | `lost` | worker 被外部信号杀掉、运行进程失踪、或者行写了但进程从没起来。`resume_worker` 接回 |
 | `timed_out` | `limits.max_run_ms` 或 `limits.max_total_ms` 用完，supervisor 主动停掉。不会自动重试。单轮超时可以 `resume_worker`（每轮重新计时）；总预算用完只能用 `create_worker` 的 `followup_of` 带新 `limits` 接续 |
