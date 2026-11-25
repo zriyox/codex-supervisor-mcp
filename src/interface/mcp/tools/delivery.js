@@ -1,12 +1,10 @@
+import { verifyDeliveryPush } from "../../../app/verify-push.js";
 import { applyCleanupPlan, createCleanupPlan } from "../../../app/cleanup-plan.js";
 import { followupChainIds, git, landOneWorkerTask } from "../../../app/land-chain.js";
 import { cancelCodexWorker } from "../../../app/cancel.js";
 import { ACTIVE_STATUSES } from "../../../domain/status.js";
-import { appendTaskEvent } from "../../../infra/store/events.js";
-import { getCleanupPlan, readCleanupHistory, recordJsonArtifact, saveCleanupPlan, updateWorkItemDelivery } from "../../../infra/store/records.js";
+import { getCleanupPlan, readCleanupHistory, saveCleanupPlan } from "../../../infra/store/records.js";
 import { getTask, upsertTask } from "../../../infra/store/tasks.js";
-import { getWorkItemForTask, recordFact } from "../../../infra/store/facts.js";
-import { runIdFor } from "../../../infra/store/db.js";
 import { errorResult, textResult } from "../result.js";
 import { z } from "zod";
 
@@ -98,93 +96,7 @@ export const verifyDeliveryPushTool = [
       branch: z.string().min(1).optional()
     }
   },
-  async ({ task_id, remote, branch }) => {
-    const task = await getTask(task_id);
-    if (!task) return textResult({ error: "task_not_found", task_id });
-    const targetBranch = branch ?? task.landed_branch;
-    if (!task.landed_at || !task.landed_head || !targetBranch) {
-      return textResult({ error: "not_landed", task_id, reason: "land the worker first; this task has no landed head and branch to verify" });
-    }
-    try {
-      git(task.project_root, ["remote", "get-url", remote]);
-      git(task.project_root, ["fetch", "--no-tags", remote, `refs/heads/${targetBranch}`]);
-      const remoteHead = git(task.project_root, ["rev-parse", "FETCH_HEAD"]);
-      try {
-        git(task.project_root, ["merge-base", "--is-ancestor", task.landed_head, remoteHead]);
-      } catch {
-        return textResult({
-          error: "not_pushed",
-          task_id,
-          remote,
-          branch: targetBranch,
-          landed_head: task.landed_head,
-          remote_head: remoteHead,
-          reason: "landed_head is not reachable from the fetched remote branch"
-        });
-      }
-      const now = new Date().toISOString();
-      const verified = { ...task, push_verified_at: now, push_remote: remote, push_branch: targetBranch, push_remote_head: remoteHead, updated_at: now };
-      await upsertTask(verified);
-      await updateWorkItemDelivery(task_id, "push_verified");
-      const event = await appendTaskEvent(task_id, {
-        type: "supervisor.push_verified",
-        remote,
-        branch: targetBranch,
-        landed_head: task.landed_head,
-        remote_head: remoteHead,
-        verified_at: now
-      }, { runId: runIdFor(task_id, task.run_count ?? 1), actor: "supervisor" });
-      const artifact = await recordJsonArtifact({
-        runId: runIdFor(task_id, task.run_count ?? 1),
-        type: "push_proof",
-        value: { remote, branch: targetBranch, landed_head: task.landed_head, remote_head: remoteHead, verified_at: now, event_id: event.id },
-        securityClass: "internal"
-      });
-      const workItem = await getWorkItemForTask(task_id);
-      if (workItem) {
-        await recordFact({
-          workItemId: workItem.id,
-          scopeType: "work_item",
-          scopeId: workItem.id,
-          key: "push_verified",
-          value: { remote, branch: targetBranch, landed_head: task.landed_head, remote_head: remoteHead },
-          state: "verified",
-          sourceEventId: event.id,
-          sourceArtifactId: artifact.id,
-          validForSha: task.landed_head,
-          watchedPaths: task.owned_paths ?? [],
-          verifiedBy: "supervisor.remote_readback"
-        });
-        await recordFact({
-          workItemId: workItem.id,
-          scopeType: "dependency",
-          scopeId: workItem.id,
-          key: "push_delivery_summary",
-          value: { task_id, landed_head: task.landed_head, remote, branch: targetBranch, remote_head: remoteHead },
-          state: "verified",
-          sourceEventId: event.id,
-          sourceArtifactId: artifact.id,
-          validForSha: task.landed_head,
-          watchedPaths: task.owned_paths ?? [],
-          verifiedBy: "supervisor.remote_readback"
-        });
-      }
-      const cleanupPlan = await createCleanupPlan({ taskIds: [task_id] });
-      await saveCleanupPlan(cleanupPlan);
-      return textResult({
-        task_id,
-        remote,
-        branch: targetBranch,
-        landed_head: task.landed_head,
-        remote_head: remoteHead,
-        artifact_id: artifact.id,
-        push_verified_at: now,
-        cleanup_plan: { id: cleanupPlan.id, summary: cleanupPlan.summary, expires_at: cleanupPlan.expires_at, next_step: "Review SAFE items, then call apply_cleanup with their item IDs; cleanup is never automatic." }
-      });
-    } catch (error) {
-      return textResult({ error: "push_verification_failed", task_id, remote, branch: targetBranch, reason: error.message.split("\n")[0] });
-    }
-  }
+  async ({ task_id, remote, branch }) => textResult(await verifyDeliveryPush({ taskId: task_id, remote, branch }))
 ];
 
 export const cleanupPlanTool = [
