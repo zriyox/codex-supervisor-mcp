@@ -85,6 +85,58 @@ function applyGoalEvent(next, event) {
   return next;
 }
 
+function applyItemProgress(next, item, itemType) {
+  next.status = "running";
+  next.phase = ITEM_PHASE.get(itemType);
+  if (itemType === "command_execution") {
+    next.current_command = inferCommand(item);
+    next.current_action = next.current_command ? `Running ${next.current_command}` : "Running command";
+  } else if (itemType === "file_change") {
+    next.current_action = "Editing files";
+  } else if (itemType !== "reasoning" && itemType !== "todo_list") {
+    next.current_action = `Processing ${itemType}`;
+  }
+  return next;
+}
+
+function applyCommandCompleted(next, item, now) {
+  const command = inferCommand(item);
+  next.phase = "command";
+  next.current_command = null;
+  const exitCode = item?.exit_code ?? item?.exitCode ?? null;
+  const status = item?.status ?? "completed";
+  const entry = { command, exit_code: exitCode, status, completed_at: now };
+  // The tail of a failing command's output is the one piece of evidence
+  // a reviewer needs to tell "the build is broken" from "the network was
+  // down". Only failures keep it: the commands column is one row cell.
+  if (commandFailed(entry)) {
+    const tail = outputTail(item?.aggregated_output ?? item?.output ?? null);
+    if (tail) entry.output_tail = tail;
+  }
+  next.commands = [...(next.commands ?? []), entry];
+  return next;
+}
+
+// The row after a completed item, or null for an item type that changes nothing here.
+function applyItemCompleted(next, item, itemType, now) {
+  if (itemType === "command_execution") return applyCommandCompleted(next, item, now);
+  if (itemType === "file_change") {
+    const files = inferChangedFiles(item);
+    next.phase = "editing";
+    next.changed_files = Array.from(new Set([...(next.changed_files ?? []), ...files]));
+    return next;
+  }
+  if (itemType === "agent_message") {
+    const message = inferAgentMessage(item);
+    next.phase = "reporting";
+    if (message) next.last_message = message;
+    return next;
+  }
+  if (itemType === "error") return appendNotice(next, item?.message ?? item?.text ?? null);
+  if (itemType === "reasoning" || itemType === "mcp_tool_call" || itemType === "todo_list") return next;
+  return null;
+}
+
 export function applyCodexEvent(task, event) {
   const now = new Date().toISOString();
   const eventType = getEventType(event);
@@ -110,56 +162,11 @@ export function applyCodexEvent(task, event) {
     return next;
   }
 
-  if (ITEM_PHASE.has(itemType) && (eventType === "item.started" || eventType === "item.updated")) {
-    next.status = "running";
-    next.phase = ITEM_PHASE.get(itemType);
-    if (itemType === "command_execution") {
-      next.current_command = inferCommand(item);
-      next.current_action = next.current_command ? `Running ${next.current_command}` : "Running command";
-    } else if (itemType === "file_change") {
-      next.current_action = "Editing files";
-    } else if (itemType !== "reasoning" && itemType !== "todo_list") {
-      next.current_action = `Processing ${itemType}`;
-    }
-    return next;
-  }
+  if (ITEM_PHASE.has(itemType) && (eventType === "item.started" || eventType === "item.updated")) return applyItemProgress(next, item, itemType);
 
   if (eventType === "item.completed") {
-    if (itemType === "command_execution") {
-      const command = inferCommand(item);
-      next.phase = "command";
-      next.current_command = null;
-      const exitCode = item?.exit_code ?? item?.exitCode ?? null;
-      const status = item?.status ?? "completed";
-      const entry = { command, exit_code: exitCode, status, completed_at: now };
-      // The tail of a failing command's output is the one piece of evidence
-      // a reviewer needs to tell "the build is broken" from "the network was
-      // down". Only failures keep it: the commands column is one row cell.
-      if (commandFailed(entry)) {
-        const tail = outputTail(item?.aggregated_output ?? item?.output ?? null);
-        if (tail) entry.output_tail = tail;
-      }
-      next.commands = [...(next.commands ?? []), entry];
-      return next;
-    }
-    if (itemType === "file_change") {
-      const files = inferChangedFiles(item);
-      next.phase = "editing";
-      next.changed_files = Array.from(new Set([...(next.changed_files ?? []), ...files]));
-      return next;
-    }
-    if (itemType === "agent_message") {
-      const message = inferAgentMessage(item);
-      next.phase = "reporting";
-      if (message) next.last_message = message;
-      return next;
-    }
-    if (itemType === "error") {
-      return appendNotice(next, item?.message ?? item?.text ?? null);
-    }
-    if (itemType === "reasoning" || itemType === "mcp_tool_call" || itemType === "todo_list") {
-      return next;
-    }
+    const completed = applyItemCompleted(next, item, itemType, now);
+    if (completed) return completed;
   }
 
   if (eventType === "turn.completed") {
