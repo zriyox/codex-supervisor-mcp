@@ -132,6 +132,17 @@ export const getWorkerResultTool = [
   }
 ];
 
+// Cleanup keeps the branch; the diff is read from a worktree cut from it
+// again. Null when the worktree is there, a refusal when it cannot come back.
+async function restoreRefusal(task) {
+  try {
+    await ensureTaskWorktree(task);
+    return null;
+  } catch (error) {
+    return textResult({ error: error.code ?? "worktree_restore_failed", task_id: task.id, reason: error.message.split("\n")[0] });
+  }
+}
+
 export const getWorkerDiffTool = [
   "get_worker_diff",
   {
@@ -154,8 +165,8 @@ export const getWorkerDiffTool = [
     if (!task.worktree_path) {
       return textResult({ error: "no_worktree", task_id, external_outputs: externalOutputView(task, maxChars), reason: "this worker ran in place (its cwd is not a git repository or the worktree could not be created), so there is no isolated diff to read; call get_worker_result with includeFiles: true for the files it touched" });
     }
-    // Cleanup keeps the branch; the diff is read from a worktree cut from it again.
-    await ensureTaskWorktree(task).catch(() => false);
+    const refusal = await restoreRefusal(task);
+    if (refusal) return refusal;
     if (!file && maxChars !== undefined) {
       const diff = readWorktreeDiff(task.worktree_path, worktreeRef(task), { maxChars, paths: paths ?? [], ignorePaths: workspaceSetupIgnorePaths(task) });
       return textResult({

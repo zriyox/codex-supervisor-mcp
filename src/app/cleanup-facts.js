@@ -8,7 +8,9 @@ import { parsePorcelainLine, resolveWorktreeBase, workspaceSetupIgnorePaths, wor
 import { lstat, realpath } from "node:fs/promises";
 import { resolve } from "node:path";
 
-const git = (cwd, args) => runGit(cwd, args, { timeout: 15000, noOptionalLocks: true });
+// Raw output: porcelain status lines start with a significant space, and a
+// quoted path would never match a setup path. Callers trim single values.
+const git = (cwd, args) => runGit(cwd, args, { timeout: 15000, noOptionalLocks: true, rawPaths: true, trim: false });
 const lines = (text) => text.split("\n").filter(Boolean);
 
 function activeReason(task) {
@@ -29,7 +31,7 @@ async function identityProblem(task) {
     const info = await lstat(path);
     if (info.isSymbolicLink()) return "worktree is a symlink";
     if (await realpath(path) !== await realpath(managed)) return "worktree realpath is unexpected";
-    const branch = git(path, ["symbolic-ref", "--short", "HEAD"]);
+    const branch = git(path, ["symbolic-ref", "--short", "HEAD"]).trim();
     if (branch !== `codex/${task.id}`) return "worktree branch ownership is unexpected";
     const registered = git(task.project_root, ["worktree", "list", "--porcelain", "-z"]).split("\0").filter((line) => line.startsWith("worktree "));
     for (const line of registered) if (await realpath(line.slice(9)) === await realpath(path)) return null;
@@ -57,9 +59,12 @@ function worktreeState(task) {
   const keep = setupFilter(task);
   const status = lines(git(path, ["status", "--porcelain", "--untracked-files=all"]));
   const uncommittedPaths = status.map(parsePorcelainLine).filter((entry) => entry && keep(entry));
+  // Without the base the worker's own commits cannot be counted, and "nothing
+  // to keep" could not be told from "cannot tell".
   const base = resolveWorktreeBase(path, worktreeRef(task));
-  const unlandedCommits = base ? lines(git(path, ["rev-list", `${base}..HEAD`])).length : 0;
-  return { uncommittedPaths, unlandedCommits, head: git(path, ["rev-parse", "HEAD"]) };
+  if (!base) throw new Error("the commit this worker started from is unknown");
+  const unlandedCommits = lines(git(path, ["rev-list", `${base}..HEAD`])).length;
+  return { uncommittedPaths, unlandedCommits, head: git(path, ["rev-parse", "HEAD"]).trim() };
 }
 
 export async function cleanupFacts(task, tasks) {

@@ -4,7 +4,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
-import { readFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { dispatchArgs, git, makeRepo, tempHome, waitFor, waitForRunHostExit, withMcp } from "./helpers.js";
 
@@ -61,5 +61,35 @@ test("after the hold period the draft is committed to the branch, and the worker
     assert.ok(!landed.error, JSON.stringify(landed));
     assert.equal((await readFile(join(dir, "uncommitted.txt"), "utf8")).trim(), "draft", "the checkpointed draft landed with the rest");
     assert(existsSync(join(dir, "committed.txt")));
+  });
+});
+
+// git status marks an unstaged edit with a leading space, and a path can be a
+// single character or not ASCII. Losing either would remove unsaved work.
+test("an edit to a one-letter file and a non-ASCII file are both saved before the worktree goes", async () => {
+  const home = await tempHome("supervisor-auto-cleanup-paths-");
+  const { dir } = await makeRepo(join(home, "repo"));
+  await writeFile(join(dir, "a"), "before\n");
+  git(dir, ["add", "-A"]);
+  git(dir, ["commit", "-q", "-m", "add a"]);
+  await withMcp({ SUPERVISOR_HOME: home, FAKE_CODEX_SCENARIO: "echo-prompt", ...EVERY_POLL, CODEX_SUPERVISOR_CLEANUP_HOLD_DAYS: "0", CODEX_SUPERVISOR_NO_AUTO_CLEANUP: "1" }, async ({ call }) => {
+    const worker = await call("create_codex_worker", dispatchArgs("odd paths", dir, { sandbox: "workspace-write", ownedPaths: ["a", "笔记.txt"] }));
+    await waitFor(call, worker.id, (task) => task.status === "completed" && task.exit_code === 0);
+    await waitForRunHostExit(home, worker.id);
+    await writeFile(join(worker.worktree_path, "a"), "after\n");
+    const plan = await call("cleanup_plan", { task_ids: [worker.id] });
+    assert.equal(plan.items[0].verdict, "safe", JSON.stringify(plan.items));
+    const applied = await call("apply_cleanup", { plan_id: plan.plan_id, item_ids: [plan.items[0].id] });
+    assert.ok(applied.applied[0]?.checkpoint_commit, JSON.stringify(applied));
+    assert.equal(git(dir, ["show", `codex/${worker.id}:a`]), "after");
+
+    const second = await call("create_codex_worker", dispatchArgs("non ascii", dir, { sandbox: "workspace-write", ownedPaths: ["笔记.txt"] }));
+    await waitFor(call, second.id, (task) => task.status === "completed" && task.exit_code === 0);
+    await waitForRunHostExit(home, second.id);
+    await writeFile(join(second.worktree_path, "笔记.txt"), "草稿\n");
+    const next = await call("cleanup_plan", { task_ids: [second.id] });
+    const removed = await call("apply_cleanup", { plan_id: next.plan_id, item_ids: [next.items[0].id] });
+    assert.ok(removed.applied[0]?.checkpoint_commit, JSON.stringify(removed));
+    assert.equal(git(dir, ["show", `codex/${second.id}:笔记.txt`]), "草稿");
   });
 });

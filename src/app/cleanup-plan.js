@@ -4,7 +4,7 @@
 // Branches, task rows, events, logs and artifacts are never removed.
 import "./compose.js";
 import { cleanupVerdict, holdMsFrom } from "../domain/cleanup-policy.js";
-import { runGit } from "../infra/git.js";
+import { gitSucceeds, runGit } from "../infra/git.js";
 import { runSync } from "../infra/process.js";
 import { runIdFor } from "../infra/store/db.js";
 import { appendTaskEvent } from "../infra/store/events.js";
@@ -13,6 +13,7 @@ import { claimIdleTask, getTask, readTasks, releaseTaskRun } from "../infra/stor
 import { workspaceSetupIgnorePaths } from "../infra/worktree.js";
 import { cleanupFacts } from "./cleanup-facts.js";
 import { identityEnv } from "./landing.js";
+import { withWorktreeCreationLock } from "./worktree-setup.js";
 import { createHash, randomUUID } from "node:crypto";
 import { resolve } from "node:path";
 
@@ -81,6 +82,7 @@ function checkpointUncommitted(task) {
   const env = { ...process.env, GIT_TERMINAL_PROMPT: "0", GIT_EDITOR: "true", ...identityEnv(path) };
   const exclude = workspaceSetupIgnorePaths(task).map((entry) => `:(exclude)${entry}`);
   git(path, ["add", "-A", "--", ".", ...exclude], { env });
+  if (gitSucceeds(path, ["diff", "--cached", "--quiet"])) return null;
   git(path, ["commit", "-q", "--no-verify", "-m", `Checkpoint before worktree cleanup (${task.id})`], { env });
   return git(path, ["rev-parse", "HEAD"]);
 }
@@ -96,16 +98,19 @@ export async function removeSafeWorktree(task, fingerprint) {
     const result = await assessWorktree(task, await readTasks());
     if (result.verdict !== "safe") throw new Error(`worktree is no longer safe: ${result.reasons.join("; ")}`);
     if (result.fingerprint !== fingerprint) throw new Error("worktree changed since cleanup plan; create a new plan");
-    const checkpoint = result.checkpoint ? checkpointUncommitted(task) : null;
-    // What is left now is setup links and ignored build output, neither of which
-    // is the worker's work; a plain remove would refuse them.
-    git(task.project_root, ["worktree", "remove", "--force", task.worktree_path]);
-    try {
-      git(task.project_root, ["worktree", "prune"]);
-    } catch {
-      // pruning is housekeeping; the worktree is already gone
-    }
-    return checkpoint;
+    // The same lock that creating and restoring a worktree takes.
+    return await withWorktreeCreationLock(task.project_root, async () => {
+      const checkpoint = result.checkpoint ? checkpointUncommitted(task) : null;
+      // What is left now is setup links and ignored build output, neither of
+      // which is the worker's work; a plain remove would refuse them.
+      git(task.project_root, ["worktree", "remove", "--force", task.worktree_path]);
+      try {
+        git(task.project_root, ["worktree", "prune"]);
+      } catch {
+        // pruning is housekeeping; the worktree is already gone
+      }
+      return checkpoint;
+    });
   } finally {
     await releaseTaskRun(task.id, claim);
   }

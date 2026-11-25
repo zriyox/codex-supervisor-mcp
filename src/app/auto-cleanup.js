@@ -8,7 +8,7 @@ import { TERMINAL_STATUSES } from "../domain/status.js";
 import { scratchDir } from "../infra/paths.js";
 import { runIdFor } from "../infra/store/db.js";
 import { appendTaskEvent } from "../infra/store/events.js";
-import { readTasks } from "../infra/store/tasks.js";
+import { claimIdleTask, readTasks, releaseTaskRun } from "../infra/store/tasks.js";
 import { assessWorktree, recordRemoval, removeSafeWorktree } from "./cleanup-plan.js";
 import { existsSync } from "node:fs";
 import { rm } from "node:fs/promises";
@@ -29,7 +29,9 @@ async function sweepWorktree(task, tasks, now) {
   const assessed = await assessWorktree(task, tasks, now);
   if (assessed.verdict !== "safe") return null;
   const checkpoint = await removeSafeWorktree(task, assessed.fingerprint);
-  await recordRemoval(task, { actor: "auto_cleanup", checkpoint, reasons: assessed.reasons });
+  // The worktree is gone whether or not the audit row can be written.
+  await recordRemoval(task, { actor: "auto_cleanup", checkpoint, reasons: assessed.reasons })
+    .catch((error) => process.stderr.write(`[codex-supervisor] removed ${task.id} but could not record it: ${error.message}\n`));
   return { task_id: task.id, kind: "worktree", branch: `codex/${task.id}`, checkpoint_commit: checkpoint, reasons: assessed.reasons };
 }
 
@@ -37,8 +39,15 @@ async function sweepWorktree(task, tasks, now) {
 // store. It goes once the hold period is over.
 async function sweepScratch(task, now) {
   const path = join(scratchDir, task.id);
-  if (now < finishedAt(task) + holdMsFrom(process.env.CODEX_SUPERVISOR_CLEANUP_HOLD_DAYS) || !existsSync(path)) return null;
-  await rm(path, { recursive: true, force: true });
+  const finished = finishedAt(task);
+  if (!finished || now < finished + holdMsFrom(process.env.CODEX_SUPERVISOR_CLEANUP_HOLD_DAYS) || !existsSync(path)) return null;
+  const claim = await claimIdleTask(task.id);
+  if (!claim) return null;
+  try {
+    await rm(path, { recursive: true, force: true });
+  } finally {
+    await releaseTaskRun(task.id, claim);
+  }
   await appendTaskEvent(task.id, { type: "supervisor.cleanup_removed", kind: "scratch", removed_at: new Date(now).toISOString(), retained: ["task", "events", "jsonl", "artifacts"] },
     { runId: runIdFor(task.id, task.run_count ?? 1), actor: "auto_cleanup" }).catch(() => null);
   return { task_id: task.id, kind: "scratch" };
@@ -57,6 +66,7 @@ export async function sweepCleanup({ now = Date.now(), force = false } = {}) {
     if (examined >= SWEEP_LIMIT) break;
     try {
       if (task.workspace_kind === "scratch") {
+        examined += 1;
         const gone = await sweepScratch(task, now);
         if (gone) removed.push(gone);
         continue;
