@@ -96,6 +96,14 @@ async function waitFor(client, taskId, predicate, timeoutMs = 20000) {
     throw new Error(`timed out waiting for ${taskId}; last=${JSON.stringify(concurrentDispatchSummary(last))}`);
 }
 
+// The store as a check edits it directly. Run hosts keep writing for a moment
+// after a worker settles, so the connection waits for the lock.
+function openStore() {
+  const db = new DatabaseSync(join(home, "data", "supervisor.sqlite"));
+  db.exec("PRAGMA busy_timeout=15000");
+  return db;
+}
+
 // Every worker as its status view; the table from poll_workers is compact.
 async function listWorkers(client) {
   const table = await call(client, "poll_workers", { limit: 200 });
@@ -634,7 +642,7 @@ await test("R7-2 a row without base_commit falls back to the branch reflog", asy
   await withServer({ FAKE_CODEX_SCENARIO: "commit-in-worktree" }, async (client) => {
     const created = await call(client, "create_worker", { ...describe({ title: "old-row" }), cwd: repo });
     await waitFor(client, created.id, (task) => task.status === "completed");
-    const db = new DatabaseSync(join(home, "data", "supervisor.sqlite"));
+    const db = openStore();
     db.prepare("UPDATE tasks SET base_commit = NULL, changed_files = '[]' WHERE id = ?").run(created.id);
     db.close();
     const result = await call(client, "get_worker", { task_id: created.id, include_files: true, include: ["result"] });
@@ -696,7 +704,7 @@ await test("R8-1 wait returns the settled terminal state, never a half-written o
 // up, and the old reconcile skipped every row without a pid.
 await test("R8-2 an active row that never got a process is reconciled as lost, a fresh one is left alone", async () => {
   await withServer({}, async (client) => {
-    const db = new DatabaseSync(join(home, "data", "supervisor.sqlite"));
+    const db = openStore();
     const insert = db.prepare(`
       INSERT INTO tasks (id, title, worker, status, cwd, project_root, sandbox, prompt, created_at, updated_at, run_log, pid)
       VALUES (?, ?, 'codex', 'running', ?, ?, 'workspace-write', 'orphan', ?, ?, '/tmp/none.jsonl', ?)
