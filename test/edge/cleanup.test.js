@@ -4,8 +4,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { DatabaseSync } from "node:sqlite";
-import { dispatchArgs, git, makeRepo, repoRoot, tempHome, waitFor, waitForRunHostExit, withMcp } from "./helpers.js";
+import { dispatchArgs, git, makeRepo, repoRoot, tempHome, waitFor, waitForRunHostExit, withMcp, openStore } from "./helpers.js";
 
 function runCleanup(home, args) {
   return JSON.parse(execFileSync(process.execPath, [join(repoRoot, "src", "interface", "bin", "cleanup.js"), ...args], {
@@ -59,7 +58,7 @@ test("the cleanup CLI removes landed worktrees, keeps unsaved edits through the 
   assert(existsSync(workers.edited.worktree_path), "a review item is never removed");
   assert.notEqual(git(dir, ["branch", "--list", `codex/${workers.landed.id}`]), "", "branch is retained");
   assert(existsSync(logPath), "JSONL is retained");
-  const db = new DatabaseSync(join(home, "data", "supervisor.sqlite"));
+  const db = openStore(home);
   assert.equal(db.prepare("SELECT count(*) AS count FROM tasks WHERE id = ?").get(workers.landed.id).count, 1, "task row is retained");
   assert.ok(db.prepare("SELECT count(*) AS count FROM task_events WHERE task_id = ?").get(workers.landed.id).count > 0, "events are retained");
   assert.equal(db.prepare("SELECT delivery_state FROM work_items WHERE task_id = ?").get(workers.landed.id).delivery_state, "cleanup_removed");

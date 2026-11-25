@@ -204,3 +204,12 @@ export async function startWebServer(env) {
     }
   };
 }
+
+// The store as a test reads or edits it directly. Run hosts keep writing for a
+// moment after a worker settles, so the connection waits for the lock instead
+// of failing with "database is locked".
+export function openStore(home) {
+  const db = new DatabaseSync(join(home, "data", "supervisor.sqlite"));
+  db.exec("PRAGMA busy_timeout=15000");
+  return db;
+}

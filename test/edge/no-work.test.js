@@ -2,8 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { join } from "node:path";
 import { writeFile } from "node:fs/promises";
-import { DatabaseSync } from "node:sqlite";
-import { dispatchArgs, git, makeRepo, tempHome, waitFor, withMcp } from "./helpers.js";
+import { dispatchArgs, git, makeRepo, tempHome, waitFor, withMcp, openStore } from "./helpers.js";
 
 test("a write run with no new output or command is marked no_work even when its previous run worked", async () => {
   const home = await tempHome("supervisor-no-work-");
@@ -18,7 +17,7 @@ test("a write run with no new output or command is marked no_work even when its 
   await withMcp({ SUPERVISOR_HOME: home, FAKE_CODEX_SCENARIO: "echo-prompt" }, async ({ call }) => {
     await call("resume_codex_worker", { task_id: worker.id, prompt: "make further progress" });
     await waitFor(call, worker.id, (row) => row.exit_code === 0 && row.run_count === 2);
-    const db = new DatabaseSync(join(home, "data", "supervisor.sqlite"));
+    const db = openStore(home);
     try {
       const row = db.prepare("SELECT attention_reason, run_evidence FROM tasks WHERE id=?").get(worker.id);
       assert.equal(row.attention_reason, "no_work");
@@ -44,7 +43,7 @@ test("read-only research without editing or shell commands is not called no_work
   await withMcp({ SUPERVISOR_HOME: home, FAKE_CODEX_SCENARIO: "echo-prompt" }, async ({ call }) => {
     const worker = await call("create_codex_worker", dispatchArgs("research", dir, { ownedPaths: [] }));
     await waitFor(call, worker.id, (row) => row.exit_code === 0);
-    const db = new DatabaseSync(join(home, "data", "supervisor.sqlite"));
+    const db = openStore(home);
     try { assert.equal(db.prepare("SELECT attention_reason FROM tasks WHERE id=?").get(worker.id).attention_reason, null); }
     finally { db.close(); }
   });

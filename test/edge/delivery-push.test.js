@@ -1,10 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { DatabaseSync } from "node:sqlite";
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
-import { dispatchArgs, git, makeRepo, tempHome, waitFor, withMcp } from "./helpers.js";
+import { dispatchArgs, git, makeRepo, tempHome, waitFor, withMcp, openStore } from "./helpers.js";
 
 test("land and remote push verification are distinct delivery states", async () => {
   const home = await tempHome("supervisor-delivery-");
@@ -38,7 +37,7 @@ test("land and remote push verification are distinct delivery states", async () 
     const content = JSON.parse(artifact.artifact.content);
     assert.equal(content.landed_head, verified.landed_head);
     assert.equal(content.remote_head, verified.remote_head);
-    const db = new DatabaseSync(join(home, "data", "supervisor.sqlite"));
+    const db = openStore(home);
     const outsideId = "00000000-0000-4000-8000-000000000001";
     db.prepare("INSERT INTO artifacts (id, run_id, type, uri, created_at) VALUES (?, ?, ?, ?, ?)")
       .run(outsideId, proof.run_id, "outside", join(dir, "first.txt"), new Date().toISOString());
@@ -48,7 +47,7 @@ test("land and remote push verification are distinct delivery states", async () 
     assert.equal(outside.artifact.reason, "artifact_uri_not_managed");
   });
 
-  const db = new DatabaseSync(join(home, "data", "supervisor.sqlite"));
+  const db = openStore(home);
   const task = db.prepare("SELECT landed_head, landed_branch, push_verified_at, push_remote, push_branch, push_remote_head FROM tasks WHERE id = ?").get(worker.id);
   assert.equal(task.landed_branch, "main");
   assert.equal(task.push_remote, "origin");

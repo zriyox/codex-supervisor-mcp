@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { tempHome, withMcp } from "./helpers.js";
+import { tempHome, withMcp, openStore } from "./helpers.js";
 
 test("native goal updates reach overview and results without overwriting worker lifecycle", async () => {
   const home = await tempHome("supervisor-native-goal-");
@@ -15,7 +15,7 @@ test("native goal updates reach overview and results without overwriting worker 
   goals.prepare("INSERT INTO thread_goals VALUES (?,?,?,?,?,?,?,?,?)").run("native-thread", "goal", "native objective", "blocked", null, 123, 7, Date.now(), Date.now());
   await withMcp({ SUPERVISOR_HOME: home, CODEX_HOME: codexHome }, async ({ call }) => {
     await call("list_codex_workers", {});
-    const db = new DatabaseSync(join(home, "data", "supervisor.sqlite"));
+    const db = openStore(home);
     const now = new Date().toISOString();
     db.prepare(`INSERT INTO tasks (id,title,worker,status,cwd,project_root,sandbox,prompt,created_at,updated_at,run_log,thread_id,exit_code)
       VALUES ('native-worker','goal','codex','completed',?,?,'read-only','test',?,?,'unused','native-thread',0)`).run(home, home, now, now);

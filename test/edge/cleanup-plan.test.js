@@ -3,9 +3,8 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
-import { DatabaseSync } from "node:sqlite";
 import { join } from "node:path";
-import { dispatchArgs, git, makeRepo, tempHome, waitFor, waitForRunHostExit, withMcp } from "./helpers.js";
+import { dispatchArgs, git, makeRepo, tempHome, waitFor, waitForRunHostExit, withMcp, openStore } from "./helpers.js";
 
 async function readyWorker(home, call, repo, remote) {
   const worker = await call("create_codex_worker", dispatchArgs("ready", repo, {
@@ -20,7 +19,7 @@ async function readyWorker(home, call, repo, remote) {
   git(repo, ["push", "-q", remote, "main"]);
   const verified = await call("verify_delivery_push", { task_id: worker.id, remote });
   assert.ok(verified.push_verified_at, JSON.stringify(verified));
-  const settled = new DatabaseSync(join(home, "data", "supervisor.sqlite"));
+  const settled = openStore(home);
   settled.prepare("UPDATE tasks SET pid=NULL, run_host_pid=NULL, acceptance_results=json_remove(acceptance_results,'$.supervisor_pid') WHERE id=?").run(worker.id);
   settled.close();
   return worker;
@@ -39,7 +38,7 @@ test("cleanup MCP plans, revalidates fingerprints and retains ledger history", a
     const plan = await call("cleanup_plan", { task_ids: [worker.id] });
     assert.equal(plan.summary.safe, 1);
     const item = plan.items[0];
-    const db = new DatabaseSync(join(home, "data", "supervisor.sqlite"));
+    const db = openStore(home);
     db.prepare("UPDATE cleanup_plans SET expires_at = ? WHERE id = ?").run(new Date(Date.now() - 1000).toISOString(), plan.plan_id);
     db.close();
     const expired = await call("apply_cleanup", { plan_id: plan.plan_id, item_ids: [item.id] });
@@ -82,7 +81,7 @@ test("landing alone makes a worktree safe; a live process blocks it and a landed
     const plain = await landedOnly("no-acceptance-no-push");
     assert.equal((await verdictOf(plain)).verdict, "safe");
 
-    const db = new DatabaseSync(join(home, "data", "supervisor.sqlite"));
+    const db = openStore(home);
     db.prepare("UPDATE tasks SET pid = ? WHERE id = ?").run(process.pid, plain.id);
     assert.equal((await verdictOf(plain)).verdict, "blocked");
     db.prepare("UPDATE tasks SET pid = NULL WHERE id = ?").run(plain.id);

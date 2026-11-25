@@ -5,7 +5,7 @@ import { test, before } from "node:test";
 import assert from "node:assert/strict";
 import { join } from "node:path";
 import { readFile } from "node:fs/promises";
-import { dispatchArgs, makeRepo, tempHome, waitFor, withMcp } from "./helpers.js";
+import { dispatchArgs, makeRepo, tempHome, waitFor, withMcp, openStore } from "./helpers.js";
 
 const home = await tempHome("supervisor-ask-");
 const { dir: repo } = await makeRepo(join(home, "repo"));
@@ -20,8 +20,7 @@ before(async () => {
     const second = await call("create_codex_worker", dispatchArgs("no-thread", repo));
     legacy = await waitFor(call, second.id, (t) => t.status === "completed" && t.exit_code === 0);
   });
-  const { DatabaseSync } = await import("node:sqlite");
-  const db = new DatabaseSync(join(home, "data", "supervisor.sqlite"));
+  const db = openStore(home);
   db.prepare("UPDATE tasks SET thread_id = NULL WHERE id = ?").run(legacy.id);
   db.close();
 });

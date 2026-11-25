@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { dispatchArgs, makeRepo, tempHome, waitFor, waitForRunHostExit, withMcp } from "./helpers.js";
+import { dispatchArgs, makeRepo, tempHome, waitFor, waitForRunHostExit, withMcp, openStore } from "./helpers.js";
 
 for (const goalStatus of ["active", "paused", "blocked", "usage_limited", "budget_limited", "complete", "missing_database"]) test(`native goal ${goalStatus} uses a compatible resume schema`, async () => {
   const home = await tempHome("supervisor-resume-schema-");
@@ -38,7 +38,7 @@ for (const goalStatus of ["active", "paused", "blocked", "usage_limited", "budge
     assert.equal(second.thread_id, threadId);
     assert.equal(second.attention_reason, null, JSON.stringify(second));
 
-    const db = new DatabaseSync(join(home, "data", "supervisor.sqlite"));
+    const db = openStore(home);
     const acceptedFacts = db.prepare("SELECT count(*) AS total FROM facts WHERE key='accepted_outcome' AND scope_id=?").get(`work-${worker.id}`).total;
     assert.equal(acceptedFacts, withSchema ? 2 : 1, "schema-free prose must remain candidate-only even when acceptance passes");
     db.prepare("UPDATE tasks SET status='lost', exit_code=NULL, error=?, attention_reason=NULL, run_evidence=NULL WHERE id=?")
@@ -48,7 +48,7 @@ for (const goalStatus of ["active", "paused", "blocked", "usage_limited", "budge
     assert.equal(reconciled.status, "completed", JSON.stringify(reconciled));
     assert.equal(reconciled.exit_code, 0);
     assert.equal(reconciled.attention_reason, null);
-    const verify = new DatabaseSync(join(home, "data", "supervisor.sqlite"));
+    const verify = openStore(home);
     const evidence = JSON.parse(verify.prepare("SELECT run_evidence FROM tasks WHERE id=?").get(worker.id).run_evidence);
     assert.equal(evidence.structured_report.format, withSchema ? "json_schema" : "text");
     verify.close();

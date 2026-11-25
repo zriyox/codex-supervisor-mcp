@@ -1,8 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { DatabaseSync } from "node:sqlite";
 import { join } from "node:path";
-import { dispatchArgs, makeRepo, tempHome, waitFor, withMcp } from "./helpers.js";
+import { dispatchArgs, makeRepo, tempHome, waitFor, withMcp, openStore } from "./helpers.js";
 
 const PASS = 'node -e "process.exit(0)"';
 const FAIL = 'node -e "process.exit(9)"';
@@ -26,7 +25,7 @@ test("worker reports become candidates and acceptance alone promotes verified fa
     assert.equal(searched.next_cursor, null);
     assert.ok(searched.coverage.omitted.some((entry) => entry.reason === "candidate_and_nonverified_facts_excluded"));
 
-    const db = new DatabaseSync(join(home, "data", "supervisor.sqlite"));
+    const db = openStore(home);
     const candidate = db.prepare("SELECT id FROM facts WHERE work_item_id = (SELECT id FROM work_items WHERE task_id = ?) AND state = 'candidate'").get(passed.id);
     db.close();
     const promoted = await call("promote_worker_fact", { fact_id: candidate.id });
@@ -38,7 +37,7 @@ test("worker reports become candidates and acceptance alone promotes verified fa
     const revoked = await call("revoke_worker_fact", { fact_id: promoted.fact.id, reason: "main-thread audit found it redundant" });
     assert.equal(revoked.fact.state, "revoked");
     assert.equal(revoked.fact.supersedes_id, promoted.fact.id);
-    const auditDb = new DatabaseSync(join(home, "data", "supervisor.sqlite"));
+    const auditDb = openStore(home);
     assert.equal(auditDb.prepare("SELECT state FROM facts WHERE id = ?").get(promoted.fact.id).state, "verified");
     assert.equal(auditDb.prepare("SELECT state FROM facts WHERE id = ?").get(revoked.fact.id).state, "revoked");
     auditDb.close();
@@ -50,7 +49,7 @@ test("worker reports become candidates and acceptance alone promotes verified fa
     const evidence = await call("get_worker_evidence", { task_id: passed.id });
     assert.ok(evidence.events.some((event) => event.type === "supervisor.fact_promoted"));
     assert.ok(evidence.events.some((event) => event.type === "supervisor.fact_revoked"));
-    const rejectedDb = new DatabaseSync(join(home, "data", "supervisor.sqlite"));
+    const rejectedDb = openStore(home);
     const rejectedCandidate = rejectedDb.prepare("SELECT id FROM facts WHERE work_item_id = (SELECT id FROM work_items WHERE task_id = ?) AND state = 'candidate'").get(failed.id);
     rejectedDb.close();
     const rejectedRevocation = await call("revoke_worker_fact", { fact_id: rejectedCandidate.id, reason: "candidate was disproved" });
@@ -59,7 +58,7 @@ test("worker reports become candidates and acceptance alone promotes verified fa
     assert.equal(refusedPromotion.error, "fact_already_revoked");
   });
 
-  const db = new DatabaseSync(join(home, "data", "supervisor.sqlite"));
+  const db = openStore(home);
   const acceptedFacts = db.prepare("SELECT * FROM facts WHERE work_item_id = (SELECT id FROM work_items WHERE task_id = ?) ORDER BY created_at").all(passed.id);
   assert.equal(acceptedFacts.length, 4);
   assert.deepEqual(acceptedFacts.map((fact) => [fact.state, fact.scope_type, fact.key]), [
