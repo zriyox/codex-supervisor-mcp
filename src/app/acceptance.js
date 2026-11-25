@@ -91,6 +91,50 @@ function killTree(child) {
   }, KILL_GRACE_MS).unref();
 }
 
+// cmd.exe and the default POSIX sh report only the last pipeline stage. Use one
+// explicit shell contract on every platform, including Windows installations
+// where Git's Bash is not on a GUI client's PATH.
+function resolveBash(env) {
+  if (process.platform !== "win32") {
+    if (existsSync("/bin/bash")) return "/bin/bash";
+    const found = findBinaryPath("bash", { env });
+    if (!found) throw new Error("acceptance requires Bash with pipefail; install Bash or add it to PATH");
+    return found;
+  }
+  const git = findBinaryPath("git", { env });
+  const candidates = git ? [
+    join(dirname(git), "..", "bin", "bash.exe"),
+    join(dirname(git), "..", "usr", "bin", "bash.exe"),
+    join(dirname(git), "bash.exe")
+  ] : [];
+  for (const root of [env.ProgramFiles, env["ProgramFiles(x86)"], env.LOCALAPPDATA && join(env.LOCALAPPDATA, "Programs")].filter(Boolean)) {
+    candidates.push(join(root, "Git", "bin", "bash.exe"));
+  }
+  const onPath = findBinaryPath("bash", { env });
+  // Windows' System32/WindowsApps launchers start WSL, which cannot run
+  // the worker's Windows paths and toolchain under the same contract.
+  if (onPath && !/[\\/](?:System32|WindowsApps)[\\/]/i.test(onPath)) candidates.push(onPath);
+  const bash = candidates.find((candidate) => existsSync(candidate));
+  if (!bash) throw new Error("acceptance requires Git for Windows Bash; install Git for Windows or add its bin directory to PATH");
+  return bash;
+}
+
+function spawnAcceptanceShell(cwd, env) {
+  const bash = resolveBash(env);
+  const shellEnv = { ...env };
+  // Non-interactive Bash reads BASH_ENV even with --noprofile/--norc. A
+  // user's startup file must not switch off the acceptance failure flags.
+  delete shellEnv.BASH_ENV;
+  delete shellEnv.ENV;
+  return spawnProcess(bash, ["--noprofile", "--norc", "-e", "-o", "pipefail", "-s"], {
+    cwd,
+    env: shellEnv,
+    stdio: ["pipe", "pipe", "pipe"],
+    windowsHide: true,
+    detached: process.platform !== "win32"
+  });
+}
+
 function runOne(command, { cwd, env, timeoutMs, onSpawn }) {
   return new Promise((resolveRun) => {
     const startedAt = Date.now();
@@ -98,42 +142,7 @@ function runOne(command, { cwd, env, timeoutMs, onSpawn }) {
     let total = 0;
     let child;
     try {
-      // cmd.exe and the default POSIX sh report only the last pipeline stage.
-      // Use one explicit shell contract on every platform, including Windows
-      // installations where Git's Bash is not on a GUI client's PATH.
-      let bash = "/bin/bash";
-      if (process.platform === "win32") {
-        const git = findBinaryPath("git", { env });
-        const candidates = git ? [
-          join(dirname(git), "..", "bin", "bash.exe"),
-          join(dirname(git), "..", "usr", "bin", "bash.exe"),
-          join(dirname(git), "bash.exe")
-        ] : [];
-        for (const root of [env.ProgramFiles, env["ProgramFiles(x86)"], env.LOCALAPPDATA && join(env.LOCALAPPDATA, "Programs")].filter(Boolean)) {
-          candidates.push(join(root, "Git", "bin", "bash.exe"));
-        }
-        const onPath = findBinaryPath("bash", { env });
-        // Windows' System32/WindowsApps launchers start WSL, which cannot run
-        // the worker's Windows paths and toolchain under the same contract.
-        if (onPath && !/[\\/](?:System32|WindowsApps)[\\/]/i.test(onPath)) candidates.push(onPath);
-        bash = candidates.find((candidate) => existsSync(candidate));
-        if (!bash) throw new Error("acceptance requires Git for Windows Bash; install Git for Windows or add its bin directory to PATH");
-      } else if (!existsSync(bash)) {
-        bash = findBinaryPath("bash", { env });
-        if (!bash) throw new Error("acceptance requires Bash with pipefail; install Bash or add it to PATH");
-      }
-      const shellEnv = { ...env };
-      // Non-interactive Bash reads BASH_ENV even with --noprofile/--norc. A
-      // user's startup file must not switch off the acceptance failure flags.
-      delete shellEnv.BASH_ENV;
-      delete shellEnv.ENV;
-      child = spawnProcess(bash, ["--noprofile", "--norc", "-e", "-o", "pipefail", "-s"], {
-        cwd,
-        env: shellEnv,
-        stdio: ["pipe", "pipe", "pipe"],
-        windowsHide: true,
-        detached: process.platform !== "win32"
-      });
+      child = spawnAcceptanceShell(cwd, env);
     } catch (error) {
       resolveRun({ command, exit_code: null, signal: null, duration_ms: 0, timed_out: false, output_tail: `spawn failed: ${error.message}` });
       return;
