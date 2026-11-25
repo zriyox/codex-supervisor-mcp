@@ -15,7 +15,7 @@ Node 22.13.0 or newer. Board changes run under `npm run web:dev`. The layout and
 ## Changing code
 
 - One change per commit. The message says why, not what; the diff says what.
-- A behaviour change comes with a test. Worker-side behaviour is replayed through a scenario in `src/test-fixtures/fake-codex.js`, never through the real Codex.
+- A behaviour change comes with a test. Worker-side behaviour is replayed through a scenario in `test/fixtures/fake-codex.js`, never through the real Codex.
 - Tests must not depend on the machine: no git identity, `PATH`, network or writable `/tmp` as a given. CI's Linux and Windows runners have no git identity; that is how 0.7.0 broke.
 - All three platforms must pass. Windows pitfalls are the `.cmd` shim, path separators and the lack of signals; see "Windows" in the README.
 - A new tool or a changed argument updates three things together: `skills/codex-supervisor/SKILL.md`, the tool table and tool count in both READMEs. The skill ships inside the package, so a skill change reaches users only with a release.
