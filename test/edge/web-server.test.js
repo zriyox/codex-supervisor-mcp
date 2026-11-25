@@ -106,7 +106,7 @@ import { spawn } from "node:child_process";
 import { repoRoot } from "./helpers.js";
 
 async function runEntry({ cwd, env, port = 0 }) {
-  const child = spawn(process.execPath, [join(repoRoot, "src", "web-server.js")], {
+  const child = spawn(process.execPath, [join(repoRoot, "src", "interface", "bin", "web-server.js")], {
     cwd,
     env: { ...process.env, SUPERVISOR_HOME: "", CODEX_SUPERVISOR_NO_UPDATE_CHECK: "1", ...env, SUPERVISOR_WEB_PORT: String(port) },
     stdio: ["ignore", "pipe", "pipe"]

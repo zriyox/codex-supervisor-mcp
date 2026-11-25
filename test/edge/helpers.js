@@ -12,7 +12,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 
 export const repoRoot = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
-export const fakeCodex = join(repoRoot, "src", "test-fixtures", "fake-codex.js");
+export const fakeCodex = join(repoRoot, "test", "fixtures", "fake-codex.js");
 export const packageVersion = JSON.parse(
   await import("node:fs/promises").then((fs) => fs.readFile(join(repoRoot, "package.json"), "utf8"))
 ).version;
@@ -169,7 +169,7 @@ export async function fakeRegistry(plan) {
 
 export async function startWebServer(env) {
   const { spawn } = await import("node:child_process");
-  const child = spawn(process.execPath, [join(repoRoot, "src", "web-server.js")], {
+  const child = spawn(process.execPath, [join(repoRoot, "src", "interface", "bin", "web-server.js")], {
     env: { ...process.env, CODEX_BIN: fakeCodex, CODEX_SUPERVISOR_NO_UPDATE_CHECK: "1", ...env, SUPERVISOR_WEB_PORT: "0" },
     stdio: ["ignore", "pipe", "pipe"]
   });

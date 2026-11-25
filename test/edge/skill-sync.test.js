@@ -13,7 +13,7 @@ process.env.HOME = home;
 process.env.USERPROFILE = home;
 delete process.env.CODEX_HOME;
 delete process.env.CLAUDE_CONFIG_DIR;
-const { installSkill, skillRoots, skillSource, syncSkills } = await import("../../src/skill-sync.js");
+const { installSkill, skillRoots, skillSource, syncSkills } = await import("../../src/infra/skill-sync.js");
 const source = await readFile(skillSource, "utf8");
 const claudeSkill = join(home, ".claude", "skills", "codex-supervisor", "SKILL.md");
 

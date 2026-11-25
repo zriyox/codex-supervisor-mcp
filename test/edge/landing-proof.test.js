@@ -4,7 +4,7 @@ import childProcess from "node:child_process";
 import { syncBuiltinESMExports } from "node:module";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { landWorker } from "../../src/landing.js";
+import { landWorker } from "../../src/app/landing.js";
 import { git, makeRepo, tempHome } from "./helpers.js";
 
 test("patch mapping failure does not replay already integrated commits", async (context) => {

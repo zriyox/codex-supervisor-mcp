@@ -155,7 +155,7 @@ test("fresh: true drops the fork and takes a new one; a resumed worker gets a ne
 });
 
 test("sideTurnConfigArgs: every top-level server, quoted or not, nothing else", async () => {
-  const { sideTurnConfigArgs } = await import("../../src/side-chat.js");
+  const { sideTurnConfigArgs } = await import("../../src/app/side-chat.js");
   const args = sideTurnConfigArgs('[mcp_servers.a]\n[mcp_servers.a.env]\n[mcp_servers."b-c"] # note\n[model_providers.x]\n  [mcp_servers.d]\n');
   assert.deepEqual(args, ["-c", "mcp_servers.a.enabled=false", "-c", "mcp_servers.b-c.enabled=false", "-c", "mcp_servers.d.enabled=false"]);
   assert.deepEqual(sideTurnConfigArgs('[mcp_servers."has space"]\n'), [], "a name codex cannot take bare is left alone rather than breaking the config");

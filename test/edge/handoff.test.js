@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { buildHandoff } from "../../src/handoff.js";
+import { buildHandoff } from "../../src/infra/handoff.js";
 import { tempHome } from "./helpers.js";
 
 test("handoff is bounded while uncommitted inputs have absolute refs and hashes", async () => {

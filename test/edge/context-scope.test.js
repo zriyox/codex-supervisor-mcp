@@ -25,7 +25,7 @@ test("worker context excludes session peers and includes only scoped verified fa
   });
 
   process.env.SUPERVISOR_HOME = home;
-  const { getWorkItemForTask, latestContextSnapshotForTask, recordFact } = await import("../../src/task-store.js");
+  const { getWorkItemForTask, latestContextSnapshotForTask, recordFact } = await import("../../src/infra/store/task-store.js");
   const ownWork = await getWorkItemForTask(target.id);
   const peerWork = await getWorkItemForTask(peer.id);
   const ownFact = await recordFact({ workItemId: ownWork.id, scopeType: "work_item", scopeId: ownWork.id, key: "own", value: { note: "OWN_VERIFIED_FACT" }, state: "verified", validForSha: target.base_commit });

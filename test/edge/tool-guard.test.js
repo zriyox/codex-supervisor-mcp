@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, mkdir, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { evaluateToolUse } from "../../src/tool-guard.js";
+import { evaluateToolUse } from "../../src/runners/codex/tool-guard.js";
 
 test("patch ownership checks every file, rename destination, traversal and symlink", async () => {
   const root = await mkdtemp(join(tmpdir(), "supervisor-guard-"));

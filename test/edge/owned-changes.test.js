@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { findOutsideOwnedChanges } from "../../src/owned-changes.js";
+import { findOutsideOwnedChanges } from "../../src/domain/owned-changes.js";
 
 test("project ownership maps into the isolated worker checkout", () => {
   const task = { project_root: "/repo", worktree_path: "/workers/a", owned_paths: ["/repo/src", "/repo/one.js"] };

@@ -4,7 +4,7 @@ import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { dispatchArgs, makeRepo, tempHome, waitFor, withMcp } from "./helpers.js";
-import { commandsEquivalent, normalizeObservedCommand } from "../../src/worker-preflight.js";
+import { commandsEquivalent, normalizeObservedCommand } from "../../src/domain/worker-preflight.js";
 
 test("preflight matches the shell wrapper Codex emits around a command", () => {
   assert.equal(normalizeObservedCommand("/bin/zsh -lc 'git status --short'"), "git status --short");

@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { classifyFailure } from "../../src/failure-class.js";
+import { classifyFailure } from "../../src/domain/failure-class.js";
 
 test("failure classification separates provider, supervisor, model, acceptance and worker causes", () => {
   assert.deepEqual(classifyFailure({ status: "failed", error: "upstream_status: 400; provider: DeepSeek" }), {

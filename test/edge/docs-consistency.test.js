@@ -27,7 +27,7 @@ function mentionedTools(markdown, heading, end, registered) {
 
 test("both READMEs and both references document every registered MCP tool", async () => {
   const [source, zh, en, zhRef, enRef] = await Promise.all([
-    read("src/mcp-server.js"),
+    read("src/interface/mcp/server.js"),
     read("README.md"),
     read("README.en.md"),
     read("docs/reference.md"),

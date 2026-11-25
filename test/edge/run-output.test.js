@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { snapshotTaskOutput } from "../../src/worktree.js";
+import { snapshotTaskOutput } from "../../src/infra/worktree.js";
 import { git, makeRepo, tempHome } from "./helpers.js";
 
 test("current-run output comparison does not count earlier committed edits or drafts again", async () => {
