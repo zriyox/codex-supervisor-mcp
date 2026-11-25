@@ -1,4 +1,4 @@
-import { execFileSync, spawn } from "node:child_process";
+import { runSync, spawnProcess } from "../../infra/process.js";
 import { defaultBinDirs, findBinaryPath, resolveCommand, shimMessage } from "../../infra/bin-resolver.js";
 import { applyCodexEvent } from "./event-parser.js";
 
@@ -21,7 +21,7 @@ export class CodexRunnerAdapter {
   capabilityPreflight(target = this.resolveTarget()) {
     if (target.error) return { ok: false, error: target.error };
     try {
-      const help = execFileSync(target.cmd, [...target.prefixArgs, "exec", "--help"], {
+      const help = runSync(target.cmd, [...target.prefixArgs, "exec", "--help"], {
         encoding: "utf8",
         timeout: 15000,
         windowsHide: true,
@@ -65,7 +65,7 @@ export class CodexRunnerAdapter {
   }
 
   start(target, args, options) {
-    return spawn(target.cmd, [...target.prefixArgs, ...args], options);
+    return spawnProcess(target.cmd, [...target.prefixArgs, ...args], options);
   }
 
   parseEvent(task, event) {
@@ -75,7 +75,7 @@ export class CodexRunnerAdapter {
   cancelChild(child) {
     if (process.platform === "win32" && child.pid) {
       try {
-        execFileSync("taskkill", ["/PID", String(child.pid), "/T", "/F"], { stdio: "ignore", timeout: 5000, windowsHide: true });
+        runSync("taskkill", ["/PID", String(child.pid), "/T", "/F"], { stdio: "ignore", timeout: 5000, windowsHide: true });
         return;
       } catch {
         // fall through to the process handle
@@ -86,7 +86,7 @@ export class CodexRunnerAdapter {
 
   cancelPid(pid) {
     if (process.platform === "win32") {
-      execFileSync("taskkill", ["/PID", String(pid), "/T", "/F"], { stdio: "ignore", timeout: 5000, windowsHide: true });
+      runSync("taskkill", ["/PID", String(pid), "/T", "/F"], { stdio: "ignore", timeout: 5000, windowsHide: true });
       return;
     }
     process.kill(pid, "SIGTERM");

@@ -1,7 +1,7 @@
+import { runGit } from "./git.js";
 import { createHash } from "node:crypto";
 import { createReadStream, existsSync } from "node:fs";
 import { lstat, mkdir, readdir, readlink, rm } from "node:fs/promises";
-import { execFileSync } from "node:child_process";
 import { join, relative, resolve } from "node:path";
 import { scratchDir } from "./paths.js";
 
@@ -21,11 +21,7 @@ function isInside(root, path) {
 
 export function isGitCheckout(cwd) {
   try {
-    return execFileSync(process.env.GIT_BIN?.trim() || "git", ["-C", cwd, "rev-parse", "--is-inside-work-tree"], {
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "ignore"],
-      timeout: 15000
-    }).trim() === "true";
+    return runGit(cwd, ["rev-parse", "--is-inside-work-tree"], { stderr: "ignore", timeout: 15000 }) === "true";
   } catch {
     return false;
   }

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
+import { runGit } from "../../infra/git.js";
 import "../../app/compose.js";
 import { existsSync, readFileSync } from "node:fs";
-import { execFileSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
@@ -156,13 +156,7 @@ const OVERVIEW_CAP_LEVELS = [
   { title: 0, goal: 0, action: 0, path: 0 }
 ];
 
-function git(cwd, args) {
-  return execFileSync(process.env.GIT_BIN?.trim() || "git", ["-C", cwd, ...args], {
-    encoding: "utf8",
-    timeout: 60000,
-    stdio: ["ignore", "pipe", "pipe"]
-  }).trim();
-}
+const git = (cwd, args) => runGit(cwd, args, { timeout: 60000 });
 
 // `current_action` is "Running <command>", and a command can be a heredoc that
 // writes a whole file. Returning it whole put tens of thousands of characters
@@ -797,7 +791,7 @@ server.registerTool(
   async ({ cwd, acceptance, baseRef = "HEAD", timeoutMs }) => {
     let base;
     try {
-      base = execFileSync("git", ["-C", cwd, "rev-parse", "--verify", `${baseRef}^{commit}`], { encoding: "utf8", timeout: 10000, stdio: ["ignore", "pipe", "pipe"] }).trim();
+      base = runGit(cwd, ["rev-parse", "--verify", `${baseRef}^{commit}`], { timeout: 10000 });
     } catch {
       return textResult({ error: "invalid_base_ref", phase: "preflight", reason: `baseRef does not resolve in ${cwd}`, proves_worker_completion: false });
     }

@@ -6,13 +6,12 @@
 // does the same thing with the same guard rails a careful person would use:
 // the target must be clean, it is never switched to another branch, and a
 // conflict leaves nothing half-applied.
-import { execFileSync } from "node:child_process";
+import { runGit } from "../infra/git.js";
 import { existsSync, rmSync } from "node:fs";
 import { join, relative } from "node:path";
 import { filterWorkspaceSetupChanges, parsePorcelainLine, resolveWorktreeBase, worktreeRef, readWorktreeChanges, readWorktreeDiff, workspaceSetupIgnorePaths } from "../infra/worktree.js";
 import { findOutsideOwnedChanges } from "../domain/owned-changes.js";
 
-const defaultGitBin = process.env.GIT_BIN?.trim() || "git";
 const PATCH_ID_MAX_BUFFER = 256 * 1024 * 1024;
 
 // A commit needs a committer. On a machine where git has no user.name or
@@ -27,12 +26,12 @@ export function identityEnv(cwd) {
   let name = "";
   let email = "";
   try {
-    name = execFileSync(defaultGitBin, ["-C", cwd, "config", "user.name"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 10000 }).trim();
+    name = runGit(cwd, ["config", "user.name"], { stderr: "ignore", timeout: 10000 });
   } catch {
     // unset
   }
   try {
-    email = execFileSync(defaultGitBin, ["-C", cwd, "config", "user.email"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 10000 }).trim();
+    email = runGit(cwd, ["config", "user.email"], { stderr: "ignore", timeout: 10000 });
   } catch {
     // unset
   }
@@ -48,14 +47,8 @@ export function identityEnv(cwd) {
 }
 
 function git(cwd, args, { timeout = 60000, input = null, maxBuffer = 1024 * 1024, encoding = "utf8" } = {}) {
-  return execFileSync(defaultGitBin, ["-C", cwd, "-c", "core.quotePath=false", ...args], {
-    encoding,
-    input,
-    timeout,
-    maxBuffer,
-    stdio: [input == null ? "ignore" : "pipe", "pipe", "pipe"],
-    env: { ...process.env, GIT_TERMINAL_PROMPT: "0", GIT_EDITOR: "true", ...identityEnv(cwd) }
-  });
+  const env = { ...process.env, GIT_TERMINAL_PROMPT: "0", GIT_EDITOR: "true", ...identityEnv(cwd) };
+  return runGit(cwd, args, { timeout, input, maxBuffer, encoding, env, rawPaths: true, trim: false });
 }
 
 function lines(output) {

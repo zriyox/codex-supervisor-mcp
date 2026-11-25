@@ -7,9 +7,9 @@
 // integrity of what npm unpacked in node_modules/.package-lock.json, and
 // the registry says what the integrity of that version should be. A
 // mismatch means the files on disk are not the published build.
+import { runGit } from "../git.js";
 import { existsSync, readFileSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { execFileSync } from "node:child_process";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { dataDir } from "../paths.js";
@@ -97,7 +97,7 @@ export function installedPackage() {
   }
   if (info.source === "git") {
     try {
-      info.commit = execFileSync("git", ["-C", packageRoot, "rev-parse", "HEAD"], { encoding: "utf8", timeout: 5000, stdio: ["ignore", "pipe", "ignore"] }).trim();
+      info.commit = runGit(packageRoot, ["rev-parse", "HEAD"], { timeout: 5000, stderr: "ignore" });
     } catch {
       // a checkout without a usable git: still a checkout
     }

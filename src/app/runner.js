@@ -1,8 +1,9 @@
+import { gitBin, gitSucceeds, runGit } from "../infra/git.js";
+import { describeProcess, runToExit, spawnProcess } from "../infra/process.js";
 import "./compose.js";
 import { closeSync, createWriteStream, existsSync, openSync } from "node:fs";
 import { lstat, mkdir, realpath, rm, stat, symlink } from "node:fs/promises";
 import { createHash, randomUUID } from "node:crypto";
-import { execFileSync, spawn } from "node:child_process";
 import { basename, join, resolve, relative, sep, dirname, isAbsolute } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -51,7 +52,6 @@ const processes = new Map();
 // taskId -> control object of an acceptance run in progress ({ kill, cancelled }).
 const acceptanceRuns = new Map();
 const cancelledTasks = new Set();
-const defaultGitBin = process.env.GIT_BIN?.trim() || "git";
 const allowedReasoningEfforts = new Set(["minimal", "low", "medium", "high"]);
 const MAX_RUN_HOST_PROMPT_BYTES = 4 * 1024 * 1024;
 const RUN_HOST_STARTUP_TIMEOUT_MS = process.platform === "win32" ? 120000 : 30000;
@@ -110,23 +110,8 @@ async function exists(path) {
   }
 }
 
-function runCommand(command, args, options = {}) {
-  return new Promise((resolvePromise, reject) => {
-    const child = spawn(command, args, { stdio: "ignore", windowsHide: true, ...options });
-    child.on("exit", (code) => {
-      if (code === 0) resolvePromise();
-      else reject(new Error(`${command} ${args.join(" ")} exited with ${code}`));
-    });
-    child.on("error", reject);
-  });
-}
-
 function resolveCommit(cwd, ref) {
-  return execFileSync(defaultGitBin, ["-C", cwd, "rev-parse", "--verify", "--quiet", `${ref}^{commit}`], {
-    encoding: "utf8",
-    timeout: 15000,
-    stdio: ["ignore", "pipe", "ignore"]
-  }).trim();
+  return runGit(cwd, ["rev-parse", "--verify", "--quiet", `${ref}^{commit}`], { timeout: 15000, stderr: "ignore" });
 }
 
 function invalidBaseRefError(cwd, baseRef) {
@@ -162,8 +147,8 @@ async function ensureWorktree(cwd, taskId, baseRef = null) {
   try {
     await rm(taskWorktreeDir, { recursive: true, force: true });
     const branch = `codex/${taskId}`;
-    await runCommand(defaultGitBin, ["-C", cwd, "worktree", "add", "--detach", taskWorktreeDir, baseCommit]);
-    await runCommand(defaultGitBin, ["-C", taskWorktreeDir, "switch", "-c", branch]);
+    await runToExit(gitBin(), ["-C", cwd, "worktree", "add", "--detach", taskWorktreeDir, baseCommit]);
+    await runToExit(gitBin(), ["-C", taskWorktreeDir, "switch", "-c", branch]);
     return { path: taskWorktreeDir, baseCommit };
   } catch (error) {
     const failure = new Error(`could not create isolated worker checkout: ${error.message}`);
@@ -225,7 +210,7 @@ async function prepareWorktreeWorkspace(setup, projectRoot, worktreePath, taskId
     }
   }
   if (setup.submodules) {
-    await runCommand(defaultGitBin, ["-c", "protocol.file.allow=always", "-C", worktreePath, "submodule", "update", "--init", "--recursive"]);
+    await runToExit(gitBin(), ["-c", "protocol.file.allow=always", "-C", worktreePath, "submodule", "update", "--init", "--recursive"]);
   }
   if (setup.commands.length) {
     const result = await runAcceptance(setup.commands, { cwd: worktreePath, taskId, timeoutMs: DEFAULT_ACCEPTANCE_TIMEOUT_MS });
@@ -350,7 +335,7 @@ function failedStart(record, reason) {
 // instead of "spawn". Both paths are handled so a bad CODEX_BIN marks the task
 // failed instead of taking the whole MCP process down.
 async function spawnAndAwaitStart(target, args, options) {
-  const child = spawn(target.cmd, [...target.prefixArgs, ...args], options);
+  const child = spawnProcess(target.cmd, [...target.prefixArgs, ...args], options);
   const earlyOutput = { stdout: [], stderr: [], capture: true };
   child.stdout?.on("data", (chunk) => { if (earlyOutput.capture) earlyOutput.stdout.push(chunk); });
   child.stderr?.on("data", (chunk) => { if (earlyOutput.capture) earlyOutput.stderr.push(chunk); });
@@ -823,7 +808,7 @@ async function startTrackedRun(job) {
   }
   let host;
   try {
-    host = spawn(process.execPath, [fileURLToPath(import.meta.url), "--run-host"], {
+    host = spawnProcess(process.execPath, [fileURLToPath(import.meta.url), "--run-host"], {
       detached: true, stdio: ["ignore", hostLogFd, hostLogFd, "ipc"],
       env: process.env, windowsHide: true
     });
@@ -876,15 +861,7 @@ function dependencyError(code, message, details = {}) {
 }
 
 function containsCommit(cwd, ancestor, descendant) {
-  try {
-    execFileSync(defaultGitBin, ["-C", cwd, "merge-base", "--is-ancestor", ancestor, descendant], {
-      stdio: "ignore",
-      timeout: 15000
-    });
-    return true;
-  } catch {
-    return false;
-  }
+  return gitSucceeds(cwd, ["merge-base", "--is-ancestor", ancestor, descendant]);
 }
 
 async function validateDependencies(dependsOn, projectRoot, baseCommit) {
@@ -1049,8 +1026,8 @@ export async function createCodexWorker({
     try {
       await prepareWorktreeWorkspace(normalizedWorkspaceSetup, projectRoot, worktreePath, id);
     } catch (error) {
-      await runCommand(defaultGitBin, ["-C", projectRoot, "worktree", "remove", worktreePath]).catch(() => {});
-      await runCommand(defaultGitBin, ["-C", projectRoot, "branch", "-D", `codex/${id}`]).catch(() => {});
+      await runToExit(gitBin(), ["-C", projectRoot, "worktree", "remove", worktreePath]).catch(() => {});
+      await runToExit(gitBin(), ["-C", projectRoot, "branch", "-D", `codex/${id}`]).catch(() => {});
       throw error;
     }
   }
@@ -1187,8 +1164,8 @@ export async function createCodexWorker({
     if (worktreePath) {
       // This checkout belongs to this not-yet-started dispatch and contains
       // no model edits. Remove it normally; never force-remove user work.
-      await runCommand(defaultGitBin,["-C",projectRoot,"worktree","remove",worktreePath]).catch(()=>{});
-      await runCommand(defaultGitBin,["-C",projectRoot,"branch","-D",`codex/${id}`]).catch(()=>{});
+      await runToExit(gitBin(),["-C",projectRoot,"worktree","remove",worktreePath]).catch(()=>{});
+      await runToExit(gitBin(),["-C",projectRoot,"branch","-D",`codex/${id}`]).catch(()=>{});
     }
     if (workspace.scratchPath) await rm(workspace.scratchPath, { recursive: true, force: true }).catch(() => {});
     throw error;
@@ -1373,56 +1350,6 @@ if (process.argv[1] === fileURLToPath(import.meta.url) && process.argv[2] === "-
     clearInterval(keepAlive);
     if (process.connected) process.disconnect();
   });
-}
-
-// `powershell` by name is not always on PATH for a process a GUI client
-// started, so prefer the copy that ships with Windows. Only the CIM path needs
-// it; the rest of this file shells out to nothing but taskkill and git.
-function powershellBin() {
-  const root = process.env.SystemRoot?.trim() || "C:\\Windows";
-  const full = join(root, "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
-  return existsSync(full) ? full : "powershell";
-}
-
-// A pid recorded on disk is only signalled once it is confirmed to still be a
-// Codex worker, so a recycled pid belonging to an unrelated process is never
-// killed. Windows has no `ps`: CIM is the only reliable source for a full command
-// line, and the full line matters because the npm shim is bypassed by running
-// `node <entry>`, which puts the word "codex" in the arguments, not the image
-// name. `tasklist` is the fallback when PowerShell is unavailable - it only
-// reports the image name, so it can confirm a native codex.exe but never a
-// `node <entry>` worker.
-//
-// The timeout is generous on purpose: this runs once per cross-process cancel,
-// and a cold Windows PowerShell on a fresh machine routinely takes several
-// seconds to print anything. A tight timeout here silently degrades to the
-// useless tasklist probe, and the cancel comes back "process_not_found".
-function describeProcess(pid) {
-  const options = { encoding: "utf8", timeout: 15000, windowsHide: true };
-  try {
-    if (process.platform === "win32") {
-      try {
-        const viaCim = execFileSync(
-          powershellBin(),
-          [
-            "-NoLogo",
-            "-NoProfile",
-            "-NonInteractive",
-            "-Command",
-            `(Get-CimInstance Win32_Process -Filter "ProcessId=${Number(pid)}").CommandLine`
-          ],
-          options
-        ).trim();
-        if (viaCim) return viaCim;
-      } catch {
-        // fall through to the image-name probe below
-      }
-      return execFileSync("tasklist", ["/FI", `PID eq ${Number(pid)}`, "/FO", "CSV", "/NH"], options).trim();
-    }
-    return execFileSync("ps", ["-p", String(pid), "-o", "command="], options).trim();
-  } catch {
-    return "";
-  }
 }
 
 function isLikelyCodexProcess(pid) {

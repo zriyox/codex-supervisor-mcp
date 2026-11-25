@@ -1,6 +1,6 @@
+import { gitSucceeds } from "../infra/git.js";
 import "./compose.js";
 import { buildHandoff } from "../infra/handoff.js";
-import { execFileSync } from "node:child_process";
 import { approxTokenCount } from "../domain/truncate.js";
 import { createContextSnapshot, listContextFacts, runIdFor } from "../infra/store/task-store.js";
 
@@ -8,15 +8,7 @@ const MAX_CONTEXT_TOKENS = 1500;
 
 function factAppliesToBase(task, fact) {
   if (!fact.valid_for_sha || fact.valid_for_sha === task.base_commit) return true;
-  try {
-    execFileSync(process.env.GIT_BIN?.trim() || "git", ["-C", task.project_root, "merge-base", "--is-ancestor", fact.valid_for_sha, task.base_commit], {
-      stdio: "ignore",
-      timeout: 15000
-    });
-    return true;
-  } catch {
-    return false;
-  }
+  return gitSucceeds(task.project_root, ["merge-base", "--is-ancestor", fact.valid_for_sha, task.base_commit]);
 }
 
 function clip(value, max = 360) {

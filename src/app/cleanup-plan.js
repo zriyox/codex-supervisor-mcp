@@ -1,7 +1,8 @@
+import { runGit } from "../infra/git.js";
+import { runSync } from "../infra/process.js";
 import "./compose.js";
 import { createHash, randomUUID } from "node:crypto";
 import { lstat, realpath } from "node:fs/promises";
-import { execFileSync } from "node:child_process";
 import { resolve } from "node:path";
 import { ACTIVE_STATUSES } from "../domain/status.js";
 import { worktreesDir } from "../infra/paths.js";
@@ -9,13 +10,7 @@ import { appendTaskEvent, getTask, isPidAlive, markCleanupPlanItemApplied, readT
 
 export const CLEANUP_PLAN_TTL_MS = 15 * 60 * 1000;
 
-function git(cwd, args) {
-  return execFileSync(process.env.GIT_BIN?.trim() || "git", ["--no-optional-locks", "-C", cwd, ...args], {
-    encoding: "utf8",
-    timeout: 15000,
-    stdio: ["ignore", "pipe", "pipe"]
-  }).trim();
-}
+const git = (cwd, args) => runGit(cwd, args, { timeout: 15000, noOptionalLocks: true });
 
 function hash(value) {
   return createHash("sha256").update(value).digest("hex");
@@ -23,7 +18,7 @@ function hash(value) {
 
 async function directoryBytes(path) {
   try {
-    const output = execFileSync("du", ["-sk", path], { encoding: "utf8", timeout: 30000, stdio: ["ignore", "pipe", "ignore"] }).trim();
+    const output = runSync("du", ["-sk", path], { encoding: "utf8", timeout: 30000, stdio: ["ignore", "pipe", "ignore"] }).trim();
     const kib = Number(output.split(/\s+/)[0]);
     return Number.isFinite(kib) ? kib * 1024 : 0;
   } catch {

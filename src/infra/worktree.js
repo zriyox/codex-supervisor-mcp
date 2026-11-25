@@ -10,13 +10,12 @@
 // of five workers all did exactly that and reported no changed files at all -
 // so the committed part is read as `git diff --name-only <base> HEAD`, where
 // base is the commit the worktree was created from.
-import { execFileSync } from "node:child_process";
+import { runGit } from "./git.js";
 import { existsSync, readFileSync, lstatSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
 import { truncateMiddleChars } from "../domain/truncate.js";
 import { createHash } from "node:crypto";
 
-const defaultGitBin = process.env.GIT_BIN?.trim() || "git";
 
 // Two global flags on every read here.
 //
@@ -30,13 +29,7 @@ const defaultGitBin = process.env.GIT_BIN?.trim() || "git";
 // worktree, from status polls and the board, and on Windows a status poll
 // holding index.lock made the worker's own `git add` fail and the worker
 // exit non-zero. An observer must never lock what it observes.
-function git(worktreePath, args) {
-  return execFileSync(defaultGitBin, ["--no-optional-locks", "-C", worktreePath, "-c", "core.quotePath=false", ...args], {
-    encoding: "utf8",
-    timeout: 15000,
-    stdio: ["ignore", "pipe", "ignore"]
-  });
-}
+const git = (worktreePath, args) => runGit(worktreePath, args, { timeout: 15000, noOptionalLocks: true, rawPaths: true, stderr: "ignore", trim: false });
 
 export function parsePorcelainLine(line) {
   // " M path", "?? path", "R  old -> new"

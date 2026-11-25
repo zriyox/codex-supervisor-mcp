@@ -1,6 +1,28 @@
 import js from "@eslint/js";
 import globals from "globals";
 
+// What each layer may NOT import.
+const LAYERS = {
+  interface: [],
+  app: ["interface"],
+  domain: ["app", "infra", "interface", "runners"],
+  infra: ["app", "interface", "runners"],
+  runners: ["app", "interface"]
+};
+// Blocking calls and platform-specific process handling live in these two files.
+const PROCESS_MODULES = ["src/infra/git.js", "src/infra/process.js"];
+const IO_MODULES = ["node:fs", "node:fs/promises", "node:sqlite", "node:http", "node:net"];
+
+function layerPattern(layer, forbidden) {
+  return { regex: `^(\\.\\./)+(${forbidden.join("|")})/`, message: `src/${layer} may not import from ${forbidden.join(", ")}.` };
+}
+
+function restrictions(layer, forbidden) {
+  const paths = [{ name: "node:child_process", message: "Use src/infra/process.js or src/infra/git.js." }];
+  if (layer === "domain") paths.push(...IO_MODULES.map((name) => ({ name, message: "src/domain is pure: no IO." })));
+  return { paths, ...(forbidden.length ? { patterns: [layerPattern(layer, forbidden)] } : {}) };
+}
+
 export default [
   { ignores: ["web/**", "node_modules/**", "data/**", "assets/**"] },
   js.configs.recommended,
@@ -20,29 +42,15 @@ export default [
   },
   // Layering. Dependencies point downward only: interface -> app -> domain,
   // with infra and runners reached from app. docs/architecture.md has the map.
-  ...[
-    ["domain", ["app", "infra", "interface", "runners"]],
-    ["infra", ["app", "interface", "runners"]],
-    ["runners", ["app", "interface"]],
-    ["app", ["interface"]]
-  ].map(([layer, forbidden]) => ({
-    files: [`src/${layer}/**/*.js`],
-    rules: {
-      "no-restricted-imports": ["error", {
-        patterns: [{
-          regex: `^(\\.\\./)+(${forbidden.join("|")})/`,
-          message: `src/${layer} may not import from ${forbidden.join(", ")}.`
-        }]
-      }]
-    }
+  // One rule object per layer, because a later no-restricted-imports replaces
+  // an earlier one for the same file instead of adding to it.
+  ...Object.entries(LAYERS).map(([layer, forbidden]) => ({
+    files: [`src/${layer}/**/*.js`, `src/${layer}/**/*.jsx`],
+    ignores: PROCESS_MODULES,
+    rules: { "no-restricted-imports": ["error", restrictions(layer, forbidden)] }
   })),
   {
-    files: ["src/domain/**/*.js"],
-    rules: {
-      "no-restricted-imports": ["error", {
-        paths: ["node:fs", "node:fs/promises", "node:child_process", "node:sqlite", "node:http", "node:net"].map((name) => ({ name, message: "src/domain is pure: no IO." })),
-        patterns: [{ regex: "^(\\.\\./)+(app|infra|interface|runners)/", message: "src/domain may not import another layer." }]
-      }]
-    }
+    files: PROCESS_MODULES,
+    rules: { "no-restricted-imports": ["error", { patterns: [layerPattern("infra", LAYERS.infra)] }] }
   }
 ];

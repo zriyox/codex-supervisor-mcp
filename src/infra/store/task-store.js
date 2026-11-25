@@ -1,7 +1,7 @@
+import { runGit } from "../git.js";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { execFileSync } from "node:child_process";
 import { artifactsDir, dataDir, dbPath, runsDir } from "../paths.js";
 import { ACTIVE_STATUSES, PHASES, TERMINAL_STATUSES } from "../../domain/status.js";
 import { extractAgentMessage, readNativeGoal } from "./runner-readers.js";
@@ -1298,13 +1298,7 @@ function repoRelativePaths(projectRoot, paths) {
   });
 }
 
-function git(cwd, args) {
-  return execFileSync(process.env.GIT_BIN?.trim() || "git", ["-C", cwd, ...args], {
-    encoding: "utf8",
-    timeout: 15000,
-    stdio: ["ignore", "pipe", "ignore"]
-  }).trim();
-}
+const git = (cwd, args) => runGit(cwd, args, { timeout: 15000, stderr: "ignore" });
 
 function shaCoversBase(projectRoot, validForSha, baseSha) {
   if (!validForSha || !baseSha) return true;

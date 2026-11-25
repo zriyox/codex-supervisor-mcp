@@ -11,7 +11,7 @@
 // It only ever touches a copy that npm installed globally. A git checkout,
 // an `npm link`, a project-local dependency and an npx cache copy are left
 // alone, and the worker double-checks against `npm root -g` before writing.
-import { spawn } from "node:child_process";
+import { spawnProcess } from "../process.js";
 import { closeSync, openSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
@@ -68,7 +68,7 @@ async function launchWorker({ version, packageRoot, registry }) {
   if (registry) args.push("--registry", registry);
   const log = openSync(logPath, "a");
   try {
-    const child = spawn(process.execPath, args, {
+    const child = spawnProcess(process.execPath, args, {
       detached: true,
       stdio: ["ignore", log, log],
       env: { ...process.env, CODEX_SUPERVISOR_NO_AUTO_UPDATE: "1" },

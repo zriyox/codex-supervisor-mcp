@@ -6,7 +6,7 @@
 //
 // Writes data/auto-update.json at every step so the server (and a human)
 // can see what happened without a terminal: running -> done | failed | skipped.
-import { execFile } from "node:child_process";
+import { runFile } from "../process.js";
 import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { mkdir, open, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
@@ -14,7 +14,7 @@ import { promisify } from "node:util";
 import { dataDir } from "../paths.js";
 import { resolveCommand } from "../bin-resolver.js";
 
-const run = promisify(execFile);
+const run = promisify(runFile);
 const PACKAGE_NAME = "codex-supervisor-mcp";
 const statePath = join(dataDir, "auto-update.json");
 const lockPath = join(dataDir, "auto-update.lock");

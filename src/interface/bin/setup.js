@@ -9,7 +9,7 @@
 //   codex-supervisor-setup --target claude --force
 //
 // Set CODEX_SUPERVISOR_SKIP_SETUP=1 to opt out of the automatic run.
-import { execFile } from "node:child_process";
+import { runFile } from "../../infra/process.js";
 import { existsSync, readdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join } from "node:path";
@@ -22,7 +22,7 @@ import {
   shimMessage
 } from "../../infra/bin-resolver.js";
 
-const run = promisify(execFile);
+const run = promisify(runFile);
 
 import { installSkill, skillRoots } from "../../infra/skill-sync.js";
 
