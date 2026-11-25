@@ -3,11 +3,12 @@ import globals from "globals";
 
 // What each layer may NOT import.
 const LAYERS = {
-  interface: [],
-  app: ["interface"],
-  domain: ["app", "infra", "interface", "runners"],
-  infra: ["app", "interface", "runners"],
-  runners: ["app", "interface"]
+  interface: ["run-host"],
+  "run-host": ["interface"],
+  app: ["interface", "run-host"],
+  domain: ["app", "infra", "interface", "runners", "run-host"],
+  infra: ["app", "interface", "runners", "run-host"],
+  runners: ["app", "interface", "run-host"]
 };
 // Blocking calls and platform-specific process handling live in these two files.
 const PROCESS_MODULES = ["src/infra/git.js", "src/infra/process.js"];

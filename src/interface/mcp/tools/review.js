@@ -1,4 +1,4 @@
-import { createCodexWorker } from "../../../app/runner.js";
+import { createCodexWorker } from "../../../app/dispatch.js";
 import { appendTaskEvent } from "../../../infra/store/events.js";
 import { createReviewAssignment, getReviewByVerifierTask, recordJsonArtifact, recordReviewFinding, resolveReviewFinding } from "../../../infra/store/records.js";
 import { getTask } from "../../../infra/store/tasks.js";

@@ -1,3 +1,4 @@
+import "./compose.js";
 import { runGit } from "../infra/git.js";
 import { appendTaskEvent } from "../infra/store/events.js";
 import { getSession } from "../infra/store/sessions.js";

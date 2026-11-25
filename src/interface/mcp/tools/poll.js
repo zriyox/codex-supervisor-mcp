@@ -1,5 +1,5 @@
 import { createCleanupPlan } from "../../../app/cleanup-plan.js";
-import { recoverEligibleRuns } from "../../../app/runner.js";
+import { recoverEligibleRuns } from "../../../app/resume.js";
 import { buildOverviewDelta } from "../../../domain/overview-delta.js";
 import { collectWorkerChanges } from "../../../domain/worker-changes.js";
 import { cleanupHint } from "../../../infra/cleanup-hint.js";

@@ -1,4 +1,5 @@
-import { createCodexWorker, createFollowupWorker } from "../../src/app/runner.js";
+import { createCodexWorker } from "../../src/app/dispatch.js";
+import { createFollowupWorker } from "../../src/app/followup.js";
 import { getTask, taskEventCount } from "../../src/infra/store/tasks.js";
 import { readTaskEvents } from "../../src/infra/store/events.js";
 

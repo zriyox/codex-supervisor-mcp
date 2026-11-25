@@ -1,6 +1,6 @@
 import { applyCleanupPlan, createCleanupPlan } from "../../../app/cleanup-plan.js";
 import { followupChainIds, git, landOneWorkerTask } from "../../../app/land-chain.js";
-import { cancelCodexWorker } from "../../../app/runner.js";
+import { cancelCodexWorker } from "../../../app/cancel.js";
 import { ACTIVE_STATUSES } from "../../../domain/status.js";
 import { appendTaskEvent } from "../../../infra/store/events.js";
 import { getCleanupPlan, readCleanupHistory, recordJsonArtifact, saveCleanupPlan, updateWorkItemDelivery } from "../../../infra/store/records.js";

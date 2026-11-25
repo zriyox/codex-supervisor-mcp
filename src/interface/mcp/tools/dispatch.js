@@ -1,5 +1,7 @@
 import { runAcceptance } from "../../../app/acceptance.js";
-import { createCodexWorker, createFollowupWorker, resumeCodexWorker } from "../../../app/runner.js";
+import { createCodexWorker } from "../../../app/dispatch.js";
+import { createFollowupWorker } from "../../../app/followup.js";
+import { resumeCodexWorker } from "../../../app/resume.js";
 import { readPreflightResult } from "../../../domain/worker-preflight.js";
 import { runGit } from "../../../infra/git.js";
 import { getTask } from "../../../infra/store/tasks.js";

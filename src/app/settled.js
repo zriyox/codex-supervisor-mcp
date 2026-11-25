@@ -1,3 +1,4 @@
+import "./compose.js";
 import { readPreflightResult } from "../domain/worker-preflight.js";
 import { TERMINAL_STATUSES } from "../domain/status.js";
 import { isPidAlive } from "../infra/store/tasks.js";
