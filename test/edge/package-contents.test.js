@@ -39,7 +39,7 @@ test("the npm tarball includes every local import reachable from its CLI entries
     visited.add(file);
     const source = await readFile(join(repoRoot, file), "utf8");
     // Cover static imports/re-exports, side-effect imports and literal dynamic
-    // imports (web-server.js loads web-app.js only after resolving the store).
+    // imports (web-server.js loads web/app.js only after resolving the store).
     const localImports = /\bfrom\s*["'](\.[^"']+)["']|\bimport\s*(?:\(\s*)?["'](\.[^"']+)["']/g;
     for (const match of source.matchAll(localImports)) {
       const dependency = posix.normalize(posix.join(posix.dirname(file), match[1] ?? match[2]));

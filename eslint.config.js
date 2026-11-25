@@ -36,9 +36,22 @@ export default [
       parserOptions: { ecmaFeatures: { jsx: true } }
     },
     rules: {
-      // A bare `catch {}` is how this codebase says "best effort"; an empty block of any other kind is a mistake.
+      // A bare `catch {}` is how the tests say "best effort"; src/ has a stricter rule below.
       "no-empty": ["error", { allowEmptyCatch: true }],
       "no-unused-vars": ["error", { args: "after-used", argsIgnorePattern: "^_", caughtErrors: "none", ignoreRestSiblings: true, varsIgnorePattern: "^(_|React$)" }]
+    }
+  },
+  // Size limits for shipped code. A file or function that outgrows them is
+  // doing more than one job. Strings are exempt from the line length because
+  // tool descriptions and error messages are long by nature.
+  {
+    files: ["src/**/*.js", "src/**/*.jsx"],
+    rules: {
+      "max-lines": ["error", { max: 400 }],
+      "max-lines-per-function": ["error", { max: 80, IIFEs: true }],
+      "max-len": ["error", { code: 160, ignoreStrings: true, ignoreTemplateLiterals: true, ignoreRegExpLiterals: true, ignoreUrls: true }],
+      // An empty catch needs a comment saying why the error can be ignored.
+      "no-empty": ["error", { allowEmptyCatch: false }]
     }
   },
   // Layering. Dependencies point downward only: interface -> app -> domain,

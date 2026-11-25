@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Entry for `codex-supervisor-web`. Decides which store to open, then starts
-// the board (web-app.js).
+// the board (web/app.js).
 //
 //   codex-supervisor-web                     # http://127.0.0.1:7877
 //   SUPERVISOR_WEB_PORT=8080 codex-supervisor-web
