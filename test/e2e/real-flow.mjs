@@ -85,8 +85,8 @@ async function settle(taskId, timeoutMs = 600000) {
 }
 
 const WORK = [
-  { file: "alpha.txt", line: "alpha-done" },
-  { file: "beta.txt", line: "beta-done" }
+  { file: "alpha.txt", seed: "alpha", line: "alpha-done" },
+  { file: "beta.txt", seed: "beta", line: "beta-done" }
 ];
 const session = `e2e-${Date.now()}`;
 let failure = null;
@@ -118,6 +118,8 @@ try {
   })));
   for (const worker of created) assert.ok(worker.id, `create failed: ${JSON.stringify(worker).slice(0, 600)}`);
   const ids = created.map((worker) => worker.id);
+  // A server that ignored SUPERVISOR_HOME would be working on the real store.
+  assert.ok(existsSync(join(home, "data", "supervisor.sqlite")), `SUPERVISOR_HOME=${home} was ignored`);
   step("create", { ids });
 
   const waited = await call(TOOL.wait, { task_ids: ids, mode: "all" });
@@ -139,7 +141,7 @@ try {
     const landed = await call(TOOL.land, { task_id: id, commitMessage: `Append ${WORK[index].line} to ${WORK[index].file}` });
     assert.ok(landed.landed_head || landed.landed || landed.head, `land ${id}: ${JSON.stringify(landed).slice(0, 600)}`);
   }
-  for (const work of WORK) assert.match(await readFile(join(repo, work.file), "utf8"), new RegExp(`${work.line}\\n?$`));
+  for (const work of WORK) assert.equal(await readFile(join(repo, work.file), "utf8"), `${work.seed}\n${work.line}\n`);
   assert.equal(git(["status", "--porcelain"]), "", "integration checkout is dirty after land");
   step("land", { commits: Number(git(["rev-list", "--count", "HEAD"])) });
 
