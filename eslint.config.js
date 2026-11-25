@@ -12,16 +12,19 @@ const LAYERS = {
 };
 // Blocking calls and platform-specific process handling live in these two files.
 const PROCESS_MODULES = ["src/infra/git.js", "src/infra/process.js"];
-const IO_MODULES = ["node:fs", "node:fs/promises", "node:sqlite", "node:http", "node:net"];
+// Builtins are matched with and without the node: prefix.
+const PROCESS_PATTERN = { regex: "^(node:)?child_process$", message: "Use src/infra/process.js or src/infra/git.js." };
+const IO_PATTERN = { regex: "^(node:)?(fs|fs/promises|sqlite|http|https|net|dgram|worker_threads)$", message: "src/domain is pure: no IO." };
 
 function layerPattern(layer, forbidden) {
   return { regex: `^(\\.\\./)+(${forbidden.join("|")})/`, message: `src/${layer} may not import from ${forbidden.join(", ")}.` };
 }
 
 function restrictions(layer, forbidden) {
-  const paths = [{ name: "node:child_process", message: "Use src/infra/process.js or src/infra/git.js." }];
-  if (layer === "domain") paths.push(...IO_MODULES.map((name) => ({ name, message: "src/domain is pure: no IO." })));
-  return { paths, ...(forbidden.length ? { patterns: [layerPattern(layer, forbidden)] } : {}) };
+  const patterns = [PROCESS_PATTERN];
+  if (layer === "domain") patterns.push(IO_PATTERN);
+  if (forbidden.length) patterns.push(layerPattern(layer, forbidden));
+  return { patterns };
 }
 
 export default [

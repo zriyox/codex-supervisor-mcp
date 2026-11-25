@@ -177,14 +177,20 @@ export const cancelCodexWorkerTool = [
     // A cancel that stopped an acceptance run leaves the worker's own
     // terminal status in place; the exit handler records the verdict.
     if (result.cancelled && task && result.via !== "acceptance") {
-      await upsertTask({
-        ...task,
-        status: "cancelled",
-        phase: null,
-        cancel_requested_at: now,
-        updated_at: now,
-        completed_at: task.completed_at ?? now
-      });
+      // The run host may have written the terminal row while the signal was
+      // being delivered. Read the row again and only close one that is still
+      // open; writing the earlier snapshot back would undo that final write.
+      const current = await getTask(task_id);
+      if (current && ACTIVE_STATUSES.has(current.status)) {
+        await upsertTask({
+          ...current,
+          status: "cancelled",
+          phase: null,
+          cancel_requested_at: now,
+          updated_at: now,
+          completed_at: current.completed_at ?? now
+        });
+      }
     }
     return textResult(result);
   }

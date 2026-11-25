@@ -67,6 +67,15 @@ function noteStdinFailure(run, error) {
   });
 }
 
+// finalizeChild runs detached from any caller. A rejection there would end the
+// run host as an unhandled rejection and leave the row half-written, so it is
+// reported and noted on the row instead; reconcile then treats the row as a
+// run whose exit was never recorded.
+async function noteFinalizeFailure(run, error) {
+  process.stderr.write(`[codex-supervisor] finalize failed for ${run.record.id}: ${error.message}\n`);
+  await persist(run, { ...run.live, error: run.live.error ?? `supervisor could not finish recording this run: ${error.message}`, updated_at: new Date().toISOString() });
+}
+
 export async function trackRunInHost({ record, args, prompt, logPath, spawnOptions = {}, outputSchema = true }) {
   const capability = codexRunner.capabilityPreflight();
   if (!capability.ok) return failedStart(record, capability.error);
@@ -100,10 +109,9 @@ export async function trackRunInHost({ record, args, prompt, logPath, spawnOptio
 
   let settleRun;
   const settled = new Promise((resolveSettled) => { settleRun = resolveSettled; });
-  child.once("close", (code, signal) => { void finalizeChild(run, code, signal).finally(settleRun); });
-  if (child.exitCode !== null || child.signalCode !== null) {
-    setImmediate(() => { void finalizeChild(run, child.exitCode, child.signalCode).finally(settleRun); });
-  }
+  const finalize = (code, signal) => { void finalizeChild(run, code, signal).catch((error) => noteFinalizeFailure(run, error)).finally(settleRun); };
+  child.once("close", finalize);
+  if (child.exitCode !== null || child.signalCode !== null) setImmediate(() => finalize(child.exitCode, child.signalCode));
 
   try {
     child.stdin.end(launch.prompt);

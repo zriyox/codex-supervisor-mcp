@@ -92,6 +92,22 @@ test("unknown ids, unknown routes, wrong methods and path traversal are all refu
   assert.ok(typeof traversal.body !== "object" || !traversal.body.name, "must not serve files outside web/dist");
 });
 
+test("a browser request that changes something is refused unless it comes from the board's own origin", async () => {
+  const stop = `/api/workers/${encodeURIComponent(ids.a)}/chat/stop`;
+  const other = await web.get(stop, { method: "POST", headers: { origin: "http://evil.example" } });
+  assert.equal(other.status, 403);
+  assert.equal(other.body.error, "cross_origin_refused");
+  // A rebound DNS name makes Origin and Host agree; a loopback board still refuses it.
+  const port = new URL(web.base).port;
+  const rebound = await web.get(stop, { method: "POST", headers: { origin: `http://evil.example:${port}`, host: `evil.example:${port}` } });
+  assert.equal(rebound.status, 403);
+  const own = await web.get(stop, { method: "POST", headers: { origin: web.base } });
+  assert.equal(own.status, 200);
+  const noOrigin = await web.get(stop, { method: "POST" });
+  assert.equal(noOrigin.status, 200);
+  assert.equal((await web.get("/api/overview", { headers: { origin: "http://evil.example" } })).status, 200, "reads stay open");
+});
+
 test("the version endpoint answers even with the update check disabled", async () => {
   const { status, body } = await web.get("/api/version");
   assert.equal(status, 200);

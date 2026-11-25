@@ -1,3 +1,4 @@
+import { failedStart } from "./run-state.js";
 import "./compose.js";
 import { frameWorkerPrompt } from "../domain/prompt.js";
 import { buildRuntimeContract, createPreflightMetadata, readPreflightResult, runtimeContractHash } from "../domain/worker-preflight.js";
@@ -7,7 +8,7 @@ import { buildHandoff } from "../infra/handoff.js";
 import { runToExit } from "../infra/process.js";
 import { resolveWritableRoot } from "../infra/sandbox-roots.js";
 import { getSession, upsertSession } from "../infra/store/sessions.js";
-import { getTask, reserveTaskOwnership, taskRunPath } from "../infra/store/tasks.js";
+import { getTask, reserveTaskOwnership, taskRunPath, upsertTask } from "../infra/store/tasks.js";
 import { isGitCheckout, prepareWorkspace } from "../infra/workspace-kind.js";
 import { codexRunner } from "../runners/codex/adapter.js";
 import { DEFAULT_ACCEPTANCE_TIMEOUT_MS, isArtifactOnlyAcceptance, normalizeAcceptance } from "./acceptance.js";
@@ -109,7 +110,7 @@ function withDispatchDefaults(input) {
 // order of the checks is the order callers see the errors in.
 async function validateDispatch(input) {
   const { task, acceptance, cwd, reasoningEffort, ownedPaths, goal, context, contracts, externalOutputs, sandbox } = input;
-  const { networkAccess, writableRoots, maxRunMs, maxTotalMs, forbid, allowedCommands, baseRef } = input;
+  const { networkAccess, writableRoots, maxRunMs, maxTotalMs, forbid, allowedCommands, baseRef, preflight } = input;
   if (!task || typeof task !== "string") throw new Error("task is required");
   const acceptanceCommands = normalizeAcceptance(acceptance);
   if (!cwd || typeof cwd !== "string") throw new Error("cwd is required");
@@ -147,6 +148,10 @@ async function validateDispatch(input) {
     if (!Array.isArray(values) || values.length > 100 || values.some((value) => typeof value !== "string" || !value.trim())) throw new Error(`${name} must be a list of at most 100 nonempty strings`);
   }
   if (baseRef && !isGitCheckout(cwd)) throw invalidBaseRefError(cwd, baseRef);
+  if (preflight && (!Array.isArray(preflight.probeCommands) || preflight.probeCommands.length === 0
+    || preflight.probeCommands.some((command) => typeof command !== "string" || !command.trim()))) {
+    throw new Error("preflight.probeCommands must be a nonempty list of shell commands");
+  }
   return { acceptanceCommands, validatedGoal, resolvedWritableRoots };
 }
 
@@ -211,10 +216,6 @@ async function createWorkerWorktree({ workspace, projectRoot, normalizedWorkspac
 function buildGuard(input, place, worktree, resolvedWritableRoots) {
   const { forbid, allowedCommands, preflight, externalOutputs, networkAccess, maxRunMs, maxTotalMs, sandbox, context, contracts } = input;
   const { workspace, projectRoot, normalizedOwnedPaths, normalizedWorkspaceSetup } = place;
-  if (preflight && (!Array.isArray(preflight.probeCommands) || preflight.probeCommands.length === 0
-    || preflight.probeCommands.some((command) => typeof command !== "string" || !command.trim()))) {
-    throw new Error("preflight.probeCommands must be a nonempty list of shell commands");
-  }
   const guardPolicy = {
     forbid,
     // Probe commands need enough permission to prove the worker environment,
@@ -370,7 +371,7 @@ export async function createCodexWorker(rawInput) {
 
   const { sandbox, model, reasoningEffort, skipGitRepoCheck, task } = input;
   const args = codexRunner.startArgs({ cwd: effectiveCwd, sandbox, model, reasoningEffort, skipGitRepoCheck });
-  const started = await startTrackedRun({
+  const job = {
     record,
     args,
     prompt: frameWorkerPrompt(task, {
@@ -383,6 +384,13 @@ export async function createCodexWorker(rawInput) {
     // inherit the worktree as its OS cwd: otherwise a login shell may restore
     // the project directory and relative probes read the wrong checkout.
     spawnOptions: { cwd: effectiveCwd }
-  });
-  return started.record;
+  };
+  try {
+    return (await startTrackedRun(job)).record;
+  } catch (error) {
+    // The row is reserved as queued, which blocks its paths for every later
+    // dispatch. A start that threw never ran, so the row is closed as failed.
+    await upsertTask(failedStart(job.record, `dispatch failed before the worker started: ${error.message}`).record).catch(() => {});
+    throw error;
+  }
 }

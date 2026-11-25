@@ -106,10 +106,34 @@ function serveStatic(res, pathname) {
   createReadStream(file).pipe(res);
 }
 
+const LOOPBACK_NAMES = new Set(["127.0.0.1", "localhost", "[::1]", "::1"]);
+
+// A page on another site can send a POST here without a CORS preflight, and a
+// rebound DNS name can make its origin look local. A browser request that
+// changes something must come from the board's own origin, and when the board
+// listens on loopback that origin must be a loopback name. Clients that send
+// no Origin (curl, the tests) are not browsers and are let through.
+function crossSiteRefusal(req) {
+  if (req.method === "GET" || req.method === "HEAD") return null;
+  const origin = req.headers.origin;
+  if (!origin) return null;
+  let parsed;
+  try {
+    parsed = new URL(origin);
+  } catch {
+    return "the Origin header is not a URL";
+  }
+  if (parsed.host !== req.headers.host) return "the request comes from another origin";
+  if (LOOPBACK_NAMES.has(host) && !LOOPBACK_NAMES.has(parsed.hostname)) return "the board listens on loopback and the origin is not a loopback name";
+  return null;
+}
+
 async function route(req, res) {
   const url = new URL(req.url ?? "/", `http://${host}`);
   const parts = url.pathname.split("/").filter(Boolean);
   if (parts[0] !== "api") return serveStatic(res, url.pathname);
+  const refusal = crossSiteRefusal(req);
+  if (refusal) return json(res, 403, { error: "cross_origin_refused", message: refusal });
 
   // The side chat is the one place the board does something: it forks the
   // worker's Codex thread for a read-only side question.
