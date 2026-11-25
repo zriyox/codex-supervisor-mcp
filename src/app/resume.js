@@ -25,94 +25,78 @@ import { appendFile } from "node:fs/promises";
 // spawn failure cannot leave the row describing the old base. A rebase that
 // does not go through puts the worktree back and throws with the file list;
 // the worker is not started. Refused while the worker is still running.
-export async function resumeCodexWorker({ taskId, prompt, rebaseOnto = null, acceptance = undefined, context = undefined }) {
-  if (!prompt || typeof prompt !== "string") throw new Error("prompt is required");
-  let task = await getTask(taskId);
-  if (!task) throw new Error(`task not found: ${taskId}`);
-  if (task.guard_policy?.maxTotalMs && Date.now() - Date.parse(task.created_at) >= task.guard_policy.maxTotalMs) {
-    const error = new Error("total time quota exceeded; inspect partial work and explicitly dispatch a revised budget");error.code="time_quota_exceeded";throw error;
-  }
-  if (context !== undefined) {
-    await buildHandoff({ context });
-    task = { ...task, input_context: { ...task.input_context, context } };
-  }
-  const claim = await claimTaskRun(taskId, task.run_count ?? 0);
-  if (!claim) {
-    const error = new Error(`task ${taskId} is active or already claimed by another dispatcher; wait for it to settle`);
-    error.code = "worker_active";
-    throw error;
-  }
-  try {
-  const session = task.session_id ? await getSession(task.session_id) : null;
-  if (session?.approval_state === "waiting_user") {
-    const error = new Error("session is waiting for user approval; do not resume");
-    error.code = "session_waiting_user";
-    throw error;
-  }
+function coded(code, message, details = undefined) {
+  const error = new Error(message);
+  error.code = code;
+  if (details !== undefined) error.details = details;
+  return error;
+}
+
+// `acceptance` replaces the stored commands when given; an empty list
+// clears them. Left out, the stored commands stay.
+async function refreshAcceptance(task, session, acceptance) {
   const inheritedAcceptance = task.session_policy_revision == null ? task.acceptance : task.acceptance_local;
   const localAcceptance = acceptance === undefined ? inheritedAcceptance : normalizeAcceptance(acceptance);
-  // `acceptance` replaces the stored commands when given; an empty list
-  // clears them. Left out, the stored commands stay.
-  if (acceptance !== undefined || session) {
-    const commands = normalizeAcceptance([...(session?.default_acceptance ?? []), ...(localAcceptance ?? [])]);
-    task = {
-      ...task,
-      acceptance: commands,
-      acceptance_local: localAcceptance,
-      session_policy_revision: session?.policy_revision ?? null,
-      acceptance_timeout_ms: commands ? (task.acceptance_timeout_ms ?? DEFAULT_ACCEPTANCE_TIMEOUT_MS) : null,
-      updated_at: new Date().toISOString()
-    };
-    await upsertTask(task);
+  if (acceptance === undefined && !session) return task;
+  const commands = normalizeAcceptance([...(session?.default_acceptance ?? []), ...(localAcceptance ?? [])]);
+  const updated = {
+    ...task,
+    acceptance: commands,
+    acceptance_local: localAcceptance,
+    session_policy_revision: session?.policy_revision ?? null,
+    acceptance_timeout_ms: commands ? (task.acceptance_timeout_ms ?? DEFAULT_ACCEPTANCE_TIMEOUT_MS) : null,
+    updated_at: new Date().toISOString()
+  };
+  await upsertTask(updated);
+  return updated;
+}
+
+// Moves the worktree onto a newer base before the worker continues. A conflict
+// is thrown back with the details and no worker is started.
+async function rebaseBeforeResume(task, rebaseOnto) {
+  if (ACTIVE_STATUSES.has(task.status) || processes.has(task.id)) {
+    throw coded("worker_active", `task ${task.id} is still ${task.status}; wait for it to settle (or cancel it) before rebasing its worktree`);
   }
+  if (!task.worktree_path) throw coded("no_worktree", `task ${task.id} ran in place and has no worktree to rebase`);
+  let ontoCommit;
+  try {
+    ontoCommit = resolveCommit(task.project_root, rebaseOnto);
+  } catch {
+    throw coded("invalid_rebase_onto", `rebaseOnto "${rebaseOnto}" does not resolve to a commit in ${task.project_root}`);
+  }
+  const rebase = rebaseWorktree(task, ontoCommit);
+  if (rebase.error) throw coded(rebase.error, rebase.reason, rebase);
+  if (rebase.noop || rebase.base_commit === task.base_commit) return { task, rebase };
+  const moved = { ...task, base_commit: rebase.base_commit, updated_at: new Date().toISOString() };
+  await upsertTask(moved);
+  return { task: moved, rebase };
+}
+
+// Only a thread with no native goal, or one explicitly stored as complete,
+// can safely resume with a structured output schema. Paused, blocked,
+// usage-limited and budget-limited goals are not complete; Codex can still
+// activate their goal turn and reject the incompatible schema.
+function resumeAllowsOutputSchema(threadId) {
+  const goalRead = readNativeGoalState(threadId);
+  return ["missing_goal", "missing_database"].includes(goalRead.state)
+    || (goalRead.state === "available" && goalRead.goal?.storage_status === "complete");
+}
+
+async function resumeClaimed(claimed, { prompt, rebaseOnto, acceptance }) {
+  const session = claimed.session_id ? await getSession(claimed.session_id) : null;
+  if (session?.approval_state === "waiting_user") throw coded("session_waiting_user", "session is waiting for user approval; do not resume");
+  let task = await refreshAcceptance(claimed, session, acceptance);
   if (!task.thread_id) {
     throw new Error(
-      `task ${taskId} has no Codex thread_id recorded. Only workers created by this version of codex-supervisor-mcp can be resumed; use create_codex_followup_worker otherwise.`
+      `task ${task.id} has no Codex thread_id recorded. Only workers created by this version of codex-supervisor-mcp can be resumed; use create_codex_followup_worker otherwise.`
     );
   }
   let rebase = null;
-  if (rebaseOnto) {
-    if (ACTIVE_STATUSES.has(task.status) || processes.has(task.id)) {
-      const error = new Error(`task ${taskId} is still ${task.status}; wait for it to settle (or cancel it) before rebasing its worktree`);
-      error.code = "worker_active";
-      throw error;
-    }
-    if (!task.worktree_path) {
-      const error = new Error(`task ${taskId} ran in place and has no worktree to rebase`);
-      error.code = "no_worktree";
-      throw error;
-    }
-    let ontoCommit;
-    try {
-      ontoCommit = resolveCommit(task.project_root, rebaseOnto);
-    } catch {
-      const error = new Error(`rebaseOnto "${rebaseOnto}" does not resolve to a commit in ${task.project_root}`);
-      error.code = "invalid_rebase_onto";
-      throw error;
-    }
-    rebase = rebaseWorktree(task, ontoCommit);
-    if (rebase.error) {
-      const error = new Error(rebase.reason);
-      error.code = rebase.error;
-      error.details = rebase;
-      throw error;
-    }
-    if (!rebase.noop && rebase.base_commit !== task.base_commit) {
-      task = { ...task, base_commit: rebase.base_commit, updated_at: new Date().toISOString() };
-      await upsertTask(task);
-    }
-  }
+  if (rebaseOnto) ({ task, rebase } = await rebaseBeforeResume(task, rebaseOnto));
 
   const cwd = (await exists(task.cwd)) ? task.cwd : task.project_root;
   const args = codexRunner.resumeArgs(task);
-  const goalRead = readNativeGoalState(task.thread_id);
-  // Only a thread with no native goal, or one explicitly stored as complete,
-  // can safely resume with a structured output schema. Paused, blocked,
-  // usage-limited and budget-limited goals are not complete; Codex can still
-  // activate their goal turn and reject the incompatible schema.
-  const outputSchema = ["missing_goal", "missing_database"].includes(goalRead.state)
-    || (goalRead.state === "available" && goalRead.goal?.storage_status === "complete");
-
+  const outputSchema = resumeAllowsOutputSchema(task.thread_id);
   const started = await startTrackedRun({
     record: { ...task, resumed_from: task.resumed_from ?? task.id },
     args,
@@ -125,7 +109,26 @@ export async function resumeCodexWorker({ taskId, prompt, rebaseOnto = null, acc
     spawnOptions: { cwd }
   });
   return rebase ? { ...started.record, rebase } : started.record;
-  } finally { await releaseTaskRun(taskId, claim); }
+}
+
+export async function resumeCodexWorker({ taskId, prompt, rebaseOnto = null, acceptance = undefined, context = undefined }) {
+  if (!prompt || typeof prompt !== "string") throw new Error("prompt is required");
+  let task = await getTask(taskId);
+  if (!task) throw new Error(`task not found: ${taskId}`);
+  if (task.guard_policy?.maxTotalMs && Date.now() - Date.parse(task.created_at) >= task.guard_policy.maxTotalMs) {
+    throw coded("time_quota_exceeded", "total time quota exceeded; inspect partial work and explicitly dispatch a revised budget");
+  }
+  if (context !== undefined) {
+    await buildHandoff({ context });
+    task = { ...task, input_context: { ...task.input_context, context } };
+  }
+  const claim = await claimTaskRun(taskId, task.run_count ?? 0);
+  if (!claim) throw coded("worker_active", `task ${taskId} is active or already claimed by another dispatcher; wait for it to settle`);
+  try {
+    return await resumeClaimed(task, { prompt, rebaseOnto, acceptance });
+  } finally {
+    await releaseTaskRun(taskId, claim);
+  }
 }
 
 export async function recoverEligibleRuns() {
