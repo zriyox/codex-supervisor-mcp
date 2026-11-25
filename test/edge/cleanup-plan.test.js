@@ -82,9 +82,10 @@ test("landing alone makes a worktree safe; a live process blocks it and a landed
     assert.equal((await verdictOf(plain)).verdict, "safe");
 
     const db = openStore(home);
-    db.prepare("UPDATE tasks SET pid = ? WHERE id = ?").run(process.pid, plain.id);
+    // A run whose exit was never recorded and whose process is alive is still running.
+    db.prepare("UPDATE tasks SET pid = ?, exit_code = NULL WHERE id = ?").run(process.pid, plain.id);
     assert.equal((await verdictOf(plain)).verdict, "blocked");
-    db.prepare("UPDATE tasks SET pid = NULL WHERE id = ?").run(plain.id);
+    db.prepare("UPDATE tasks SET pid = NULL, exit_code = 0 WHERE id = ?").run(plain.id);
     db.close();
 
     // The plan was made while the commit was on main. Main then loses it.
