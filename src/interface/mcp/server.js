@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import "../../app/compose.js";
+import { installCrashGuard } from "../../infra/crash-guard.js";
 import { syncSkills } from "../../infra/skill-sync.js";
 import { packageVersion } from "./meta.js";
 import { refreshUpdateState, UPDATE_RECHECK_MS } from "./update-state.js";
@@ -10,6 +11,8 @@ import { cleanupTool, landWorkerTool, verifyPushTool } from "./tools/deliver.js"
 import { factsTool, getArtifactTool, reviewTool } from "./tools/optional.js";
 import { askWorkerTool, describeSessionTool, findWorksTool, getWorkerDiffTool, getWorkerTool } from "./tools/read.js";
 import { pollWorkersTool, waitWorkersTool } from "./tools/track.js";
+
+installCrashGuard("mcp-server");
 
 const server = new McpServer({
   name: "codex-supervisor",
