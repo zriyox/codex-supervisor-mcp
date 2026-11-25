@@ -102,8 +102,11 @@ function recoveredRow(task, recoveredEvidence, now) {
 // not evidence that the worker vanished. Acceptance keeps its own verdict;
 // recovering the worker completion must never imply that checks passed.
 async function recoverTerminalTurn(task) {
-  if (task.exit_code != null || task.signal || !task.started_at
-    || isPidAlive(task.pid) || isPidAlive(task.run_host_pid)) return false;
+  if (task.exit_code != null || task.signal || !task.started_at) return false;
+  // A row is only ever marked lost after both of its processes were seen gone,
+  // so its pids are history; the system reuses them, on Windows within
+  // seconds, and a stranger with the old pid must not hold the row at lost.
+  if (task.status !== "lost" && (isPidAlive(task.pid) || isPidAlive(task.run_host_pid))) return false;
   const runId = runIdFor(task.id, task.run_count);
   const events = openDb().prepare(`
     SELECT payload FROM task_events WHERE task_id = ? AND run_id = ? ORDER BY seq
