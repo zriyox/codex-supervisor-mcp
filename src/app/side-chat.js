@@ -23,10 +23,13 @@
 //   board restarted mid-turn ........ turn marked interrupted
 //   session ended ................... fork deleted, history cleared
 import "./compose.js";
-import { randomUUID } from "node:crypto";
-import { codexConfigText, disableMcpServerArgs } from "../runners/codex/mcp-config.js";
-import { codexRunner } from "../runners/codex/adapter.js";
+import { answerOf, partsFromChunks, turnView } from "../domain/side-turn-view.js";
 import { closeSideSession, getSideSession, insertSideTurn, interruptRunningSideTurns, openSideSession, readSideTurns, setSideSessionFork, updateSideTurn } from "../infra/store/sessions.js";
+import { codexRunner } from "../runners/codex/adapter.js";
+import { chunksFor } from "../runners/codex/chat-chunks.js";
+import { codexConfigText, disableMcpServerArgs } from "../runners/codex/mcp-config.js";
+import { endStream, sseHead, writeChunk } from "./sse.js";
+import { randomUUID } from "node:crypto";
 
 const TURN_TIMEOUT_MS = 10 * 60 * 1000;
 
@@ -82,7 +85,6 @@ export async function prepareSideSession(task, { fresh = false } = {}) {
   }
   return { session, refreshed };
 }
-const OUTPUT_CLIP = 4000;
 
 // taskId -> { turnId, child, chunks, watchers: Set<res>, startedAt, question, state }
 const running = new Map();
@@ -92,168 +94,6 @@ async function sweepOnce() {
   if (swept) return;
   swept = true;
   await interruptRunningSideTurns();
-}
-
-function clip(text, max = OUTPUT_CLIP) {
-  if (typeof text !== "string") return text ?? null;
-  return text.length <= max ? text : `${text.slice(0, max)}\n…(${text.length - max} more characters)`;
-}
-
-// ---- Codex event -> UI message stream chunks
-
-function chunksFor(event, state) {
-  const item = event.item ?? {};
-  const out = [];
-  switch (event.type) {
-    case "thread.started":
-      if (event.thread_id) out.push({ type: "data-session", data: { fork_thread_id: event.thread_id } });
-      break;
-    case "turn.started":
-      out.push({ type: "start-step" });
-      break;
-    case "item.started":
-    case "item.updated":
-      if (item.type === "command_execution" && !state.toolsSeen.has(item.id)) {
-        state.toolsSeen.add(item.id);
-        out.push({ type: "tool-input-available", toolCallId: item.id, toolName: "shell", input: { command: item.command ?? "" } });
-      }
-      break;
-    case "item.completed":
-      switch (item.type) {
-        case "reasoning": {
-          const id = `r-${item.id}`;
-          out.push({ type: "reasoning-start", id }, { type: "reasoning-delta", id, delta: item.text ?? "" }, { type: "reasoning-end", id });
-          break;
-        }
-        case "agent_message": {
-          const id = `t-${item.id}`;
-          out.push({ type: "text-start", id }, { type: "text-delta", id, delta: item.text ?? "" }, { type: "text-end", id });
-          break;
-        }
-        case "command_execution":
-          if (!state.toolsSeen.has(item.id)) {
-            state.toolsSeen.add(item.id);
-            out.push({ type: "tool-input-available", toolCallId: item.id, toolName: "shell", input: { command: item.command ?? "" } });
-          }
-          out.push({
-            type: "tool-output-available",
-            toolCallId: item.id,
-            output: { exit_code: item.exit_code ?? null, status: item.status ?? null, output: clip(item.aggregated_output ?? "") }
-          });
-          break;
-        case "file_change":
-          out.push(
-            { type: "tool-input-available", toolCallId: item.id, toolName: "edit", input: { changes: item.changes ?? [] } },
-            { type: "tool-output-available", toolCallId: item.id, output: { status: item.status ?? "completed" } }
-          );
-          break;
-        case "web_search":
-        case "mcp_tool_call":
-          out.push(
-            { type: "tool-input-available", toolCallId: item.id, toolName: item.type, input: { ...item, id: undefined, type: undefined } },
-            { type: "tool-output-available", toolCallId: item.id, output: { status: item.status ?? "completed" } }
-          );
-          break;
-        case "error":
-          // Startup notices (unknown config keys, missing model metadata) come
-          // through as error items. They are not the answer failing.
-          out.push({ type: "data-notice", data: { message: item.message ?? item.text ?? "" } });
-          break;
-        default:
-          break;
-      }
-      break;
-    case "turn.completed":
-      out.push({ type: "finish-step" });
-      if (event.usage) {
-        out.push({ type: "data-usage", data: event.usage });
-        state.usage = event.usage;
-      }
-      state.completed = true;
-      break;
-    case "turn.failed":
-      out.push({ type: "error", errorText: event.error?.message ?? event.error ?? event.message ?? "Codex turn failed" });
-      state.failed = true;
-      break;
-    case "error":
-      out.push({ type: "data-notice", data: { message: event.message ?? event.error ?? "" } });
-      break;
-    default:
-      break;
-  }
-  return out;
-}
-
-// ---- stream plumbing
-
-function sseHead(res) {
-  res.writeHead(200, {
-    "content-type": "text/event-stream; charset=utf-8",
-    "cache-control": "no-cache, no-transform",
-    connection: "keep-alive",
-    "x-vercel-ai-ui-message-stream": "v1",
-    "x-accel-buffering": "no"
-  });
-}
-
-function writeChunk(res, chunk) {
-  if (!res.writableEnded) res.write(`data: ${JSON.stringify(chunk)}\n\n`);
-}
-
-function endStream(res) {
-  if (!res.writableEnded) res.end("data: [DONE]\n\n");
-}
-
-// Chunks of a turn, assembled into the UIMessage parts the page shows for a
-// finished (or interrupted) turn. The page rebuilds history from this.
-export function partsFromChunks(chunks) {
-  const parts = [];
-  const open = new Map(); // id -> part for text / reasoning
-  const tools = new Map(); // toolCallId -> part
-  for (const c of chunks) {
-    switch (c.type) {
-      case "text-start":
-        open.set(c.id, { type: "text", text: "", state: "streaming" });
-        parts.push(open.get(c.id));
-        break;
-      case "text-delta":
-        if (open.has(c.id)) open.get(c.id).text += c.delta ?? "";
-        break;
-      case "text-end":
-        if (open.has(c.id)) open.get(c.id).state = "done";
-        break;
-      case "reasoning-start":
-        open.set(c.id, { type: "reasoning", text: "", state: "streaming" });
-        parts.push(open.get(c.id));
-        break;
-      case "reasoning-delta":
-        if (open.has(c.id)) open.get(c.id).text += c.delta ?? "";
-        break;
-      case "reasoning-end":
-        if (open.has(c.id)) open.get(c.id).state = "done";
-        break;
-      case "tool-input-available": {
-        const part = { type: `tool-${c.toolName}`, toolCallId: c.toolCallId, state: "input-available", input: c.input };
-        tools.set(c.toolCallId, part);
-        parts.push(part);
-        break;
-      }
-      case "tool-output-available":
-        if (tools.has(c.toolCallId)) {
-          tools.get(c.toolCallId).state = "output-available";
-          tools.get(c.toolCallId).output = c.output;
-        }
-        break;
-      case "data-notice":
-      case "data-usage":
-      case "data-session":
-        parts.push({ type: c.type, data: c.data });
-        break;
-      default:
-        break;
-    }
-  }
-  return parts;
 }
 
 // ---- public API
@@ -299,68 +139,48 @@ export function attachToTurn(taskId, res) {
   return true;
 }
 
-// Start a turn. `res` (optional) becomes the first watcher. Resolves when the
-// turn has ended, however it ended.
-export async function runSideTurn({ task, text, res = null, fresh = false }) {
-  await sweepOnce();
-  if (!task.thread_id) throw Object.assign(new Error("this worker recorded no thread_id, so there is no Codex thread to fork"), { code: "no_thread" });
-  if (running.has(task.id)) throw Object.assign(new Error("a side turn is already running for this worker"), { code: "busy" });
-  const target = codexRunner.resolveTarget();
-  if (target.error) throw Object.assign(new Error(target.error), { code: "codex_missing" });
-
-  const { session, refreshed } = await prepareSideSession(task, { fresh });
-
+function startSideChild(target, task, session) {
   const args = codexRunner.forkSideArgs({ forkThreadId: session.fork_thread_id, workerThreadId: task.thread_id, model: task.model });
   args.splice(-2, 0, ...sideTurnConfigArgs(codexConfigText()));
-
   const cwd = task.worktree_path || task.project_root || process.cwd();
-  const child = codexRunner.start(target, args, {
+  return codexRunner.start(target, args, {
     cwd,
     stdio: ["pipe", "pipe", "pipe"],
     env: { ...process.env, NO_COLOR: "1" },
     windowsHide: true
   });
+}
 
+// The in-memory side of a running turn: its chunks so far, who is watching,
+// and how it was stopped. Chunks are written through to the store in batches.
+async function openLiveTurn(task, text, child) {
   const turnId = `turn-${Date.now()}-${randomUUID().slice(0, 8)}`;
   const startedAt = new Date().toISOString();
   const state = { toolsSeen: new Set(), completed: false, failed: false, usage: null };
-  const live = { turnId, child, chunks: [], watchers: new Set(), startedAt, question: text, state };
-  running.set(task.id, live);
-  await insertSideTurn({ id: turnId, task_id: task.id, question: text, status: "running", chunks: [], started_at: startedAt });
-
-  let persistTimer = null;
+  const live = { turnId, child, chunks: [], watchers: new Set(), startedAt, question: text, state, stderr: "", stoppedBy: null, persistTimer: null };
   const persistSoon = () => {
-    if (persistTimer) return;
-    persistTimer = setTimeout(() => {
-      persistTimer = null;
+    if (live.persistTimer) return;
+    live.persistTimer = setTimeout(() => {
+      live.persistTimer = null;
       updateSideTurn(turnId, { chunks: live.chunks }).catch(() => {});
     }, 250);
   };
-  const broadcast = (chunk) => {
+  live.broadcast = (chunk) => {
     live.chunks.push(chunk);
     for (const w of live.watchers) writeChunk(w, chunk);
     persistSoon();
   };
-
-  if (res) {
-    sseHead(res);
-    live.watchers.add(res);
-    res.on("close", () => live.watchers.delete(res));
-  }
-  broadcast({ type: "start", messageId: turnId });
-
-  let rest = "";
-  let stderr = "";
-  let stoppedBy = null;
-  const timer = setTimeout(() => {
-    stoppedBy = "timeout";
-    codexRunner.cancelChild(child);
-  }, TURN_TIMEOUT_MS);
   live.stop = (reason) => {
-    stoppedBy = reason;
+    live.stoppedBy = reason;
     codexRunner.cancelChild(child);
   };
+  running.set(task.id, live);
+  await insertSideTurn({ id: turnId, task_id: task.id, question: text, status: "running", chunks: [], started_at: startedAt });
+  return live;
+}
 
+function pipeSideOutput(child, live, session, taskId) {
+  let rest = "";
   child.stdout.setEncoding("utf8");
   child.stdout.on("data", (chunk) => {
     rest += chunk;
@@ -377,76 +197,77 @@ export async function runSideTurn({ task, text, res = null, fresh = false }) {
       }
       if (event.type === "thread.started" && !session.fork_thread_id && event.thread_id) {
         session.fork_thread_id = event.thread_id;
-        setSideSessionFork(task.id, event.thread_id).catch(() => {});
+        setSideSessionFork(taskId, event.thread_id).catch(() => {});
       }
-      for (const part of chunksFor(event, live.state)) broadcast(part);
+      for (const part of chunksFor(event, live.state)) live.broadcast(part);
     }
   });
   child.stderr.setEncoding("utf8");
   child.stderr.on("data", (chunk) => {
-    stderr = (stderr + chunk).slice(-4000);
+    live.stderr = (live.stderr + chunk).slice(-4000);
   });
+}
+
+// How the turn ended, and the error to show when it did not complete.
+function sideTurnOutcome(live, code, signal) {
+  if (live.state.failed) return { status: "failed", error: live.chunks.find((c) => c.type === "error")?.errorText ?? "Codex turn failed", announce: false };
+  if (live.state.completed) return { status: "completed", error: null, announce: false };
+  if (live.stoppedBy === "timeout") {
+    return { status: "timed_out", error: `the side turn ran past ${TURN_TIMEOUT_MS / 60000} minutes and was stopped`, announce: true };
+  }
+  if (live.stoppedBy) return { status: "stopped", error: "stopped", announce: true };
+  const tail = live.stderr.trim().split("\n").filter((l) => !l.includes("rmcp::transport")).slice(-3).join("\n");
+  const why = signal ? `stopped by ${signal}` : `codex exited with code ${code}`;
+  return { status: "failed", error: tail ? `${why}: ${tail}` : why, announce: true };
+}
+
+async function settleSideTurn(live, taskId, code, signal) {
+  if (live.persistTimer) clearTimeout(live.persistTimer);
+  const { status, error, announce } = sideTurnOutcome(live, code, signal);
+  if (announce) live.broadcast({ type: "error", errorText: error });
+  live.broadcast({ type: "finish" });
+  for (const w of live.watchers) endStream(w);
+  live.watchers.clear();
+  running.delete(taskId);
+  await updateSideTurn(live.turnId, { status, chunks: live.chunks, usage: live.state.usage, error, ended_at: new Date().toISOString() }).catch(() => {});
+  return status;
+}
+
+// Start a turn. `res` (optional) becomes the first watcher. Resolves when the
+// turn has ended, however it ended.
+export async function runSideTurn({ task, text, res = null, fresh = false }) {
+  await sweepOnce();
+  if (!task.thread_id) throw Object.assign(new Error("this worker recorded no thread_id, so there is no Codex thread to fork"), { code: "no_thread" });
+  if (running.has(task.id)) throw Object.assign(new Error("a side turn is already running for this worker"), { code: "busy" });
+  const target = codexRunner.resolveTarget();
+  if (target.error) throw Object.assign(new Error(target.error), { code: "codex_missing" });
+
+  const { session, refreshed } = await prepareSideSession(task, { fresh });
+  const child = startSideChild(target, task, session);
+  const live = await openLiveTurn(task, text, child);
+  if (res) {
+    sseHead(res);
+    live.watchers.add(res);
+    res.on("close", () => live.watchers.delete(res));
+  }
+  live.broadcast({ type: "start", messageId: live.turnId });
+  const timer = setTimeout(() => live.stop("timeout"), TURN_TIMEOUT_MS);
+  pipeSideOutput(child, live, session, task.id);
   child.stdin.on("error", () => {});
   child.stdin.end(sideQuestionText(text));
 
   return new Promise((resolve) => {
     const finish = async (code, signal) => {
       clearTimeout(timer);
-      if (persistTimer) clearTimeout(persistTimer);
-      let status = "completed";
-      let error = null;
-      if (live.state.failed) {
-        status = "failed";
-        error = live.chunks.find((c) => c.type === "error")?.errorText ?? "Codex turn failed";
-      } else if (!live.state.completed) {
-        if (stoppedBy === "timeout") {
-          status = "timed_out";
-          error = `the side turn ran past ${TURN_TIMEOUT_MS / 60000} minutes and was stopped`;
-        } else if (stoppedBy) {
-          status = "stopped";
-          error = "stopped";
-        } else {
-          status = "failed";
-          const tail = stderr.trim().split("\n").filter((l) => !l.includes("rmcp::transport")).slice(-3).join("\n");
-          const why = signal ? `stopped by ${signal}` : `codex exited with code ${code}`;
-          error = tail ? `${why}: ${tail}` : why;
-        }
-        broadcast({ type: "error", errorText: error });
-      }
-      broadcast({ type: "finish" });
-      for (const w of live.watchers) endStream(w);
-      live.watchers.clear();
-      running.delete(task.id);
-      await updateSideTurn(turnId, { status, chunks: live.chunks, usage: live.state.usage, error, ended_at: new Date().toISOString() }).catch(() => {});
-      resolve({ status, turnId, forkThreadId: session.fork_thread_id, refreshed });
+      const status = await settleSideTurn(live, task.id, code, signal);
+      resolve({ status, turnId: live.turnId, forkThreadId: session.fork_thread_id, refreshed });
     };
     child.on("error", (error) => {
-      stderr += `\nfailed to start codex: ${error.message}`;
+      live.stderr += `\nfailed to start codex: ${error.message}`;
       finish(-1, null);
     });
     child.on("exit", finish);
   });
-}
-
-// The answer of a turn, as the text parts joined; null while nothing has
-// been said yet.
-function answerOf(turn) {
-  const parts = partsFromChunks(turn.chunks ?? []);
-  const text = parts.filter((p) => p.type === "text").map((p) => p.text).join("\n").trim();
-  return text || null;
-}
-
-function turnView(turn) {
-  return {
-    turn_id: turn.id,
-    question: turn.question,
-    status: turn.status,
-    answer: answerOf(turn),
-    usage: turn.usage ?? null,
-    error: turn.error ?? null,
-    started_at: turn.started_at ?? null,
-    ended_at: turn.ended_at ?? null
-  };
 }
 
 // The newest side turn of a worker, for a caller that asked earlier and
