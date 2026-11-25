@@ -65,47 +65,35 @@ test("cleanup MCP plans, revalidates fingerprints and retains ledger history", a
   });
 });
 
-test("cleanup blocks no-acceptance workers and rechecks remote reachability before apply", async () => {
-  const home = await tempHome("supervisor-cleanup-remote-recheck-");
+test("landing alone makes a worktree safe; a live process blocks it and a landed commit that left the target does not count", async () => {
+  const home = await tempHome("supervisor-cleanup-policy-");
   const { dir, first } = await makeRepo(join(home, "repo"));
-  const remotePath = join(home, "remote.git");
-  await mkdir(remotePath);
-  execFileSync("git", ["init", "--bare", "-q", remotePath]);
-  git(dir, ["remote", "add", "origin", remotePath]);
-  git(dir, ["push", "-q", "-u", "origin", "main"]);
-  await withMcp({ SUPERVISOR_HOME: home, FAKE_CODEX_SCENARIO: "commit-in-worktree" }, async ({ call }) => {
-    const noAcceptance = await call("create_codex_worker", dispatchArgs("no-acceptance", dir, {
-      sandbox: "workspace-write", ownedPaths: ["committed.txt", "uncommitted.txt"]
-    }));
-    await waitFor(call, noAcceptance.id, (task) => task.status === "completed" && task.exit_code === 0);
-    await waitForRunHostExit(home, noAcceptance.id);
-    const landedWithoutAcceptance = await call("land_codex_worker", { task_id: noAcceptance.id, commitMessage: "land without acceptance" });
-    assert.ok(!landedWithoutAcceptance.error, JSON.stringify(landedWithoutAcceptance));
-    git(dir, ["push", "-q", "origin", "main"]);
-    assert.ok((await call("verify_delivery_push", { task_id: noAcceptance.id })).push_verified_at);
-    const noAcceptancePlan = await call("cleanup_plan", { task_ids: [noAcceptance.id] });
-    assert.equal(noAcceptancePlan.items[0].verdict, "blocked");
-    assert.match(noAcceptancePlan.items[0].reasons.join(" "), /acceptance is not explicitly passed/);
+  await withMcp({ SUPERVISOR_HOME: home, FAKE_CODEX_SCENARIO: "commit-in-worktree", CODEX_SUPERVISOR_NO_AUTO_CLEANUP: "1" }, async ({ call }) => {
+    const landedOnly = async (title) => {
+      const worker = await call("create_codex_worker", dispatchArgs(title, dir, { sandbox: "workspace-write", ownedPaths: ["committed.txt", "uncommitted.txt"] }));
+      await waitFor(call, worker.id, (task) => task.status === "completed" && task.exit_code === 0);
+      await waitForRunHostExit(home, worker.id);
+      const landed = await call("land_codex_worker", { task_id: worker.id, commitMessage: `land ${title}` });
+      assert.ok(!landed.error, JSON.stringify(landed));
+      return worker;
+    };
+    const verdictOf = async (worker) => (await call("cleanup_plan", { task_ids: [worker.id] })).items[0];
 
-    const activeWorker = await readyWorker(home, call, dir, "origin");
+    const plain = await landedOnly("no-acceptance-no-push");
+    assert.equal((await verdictOf(plain)).verdict, "safe");
+
     const db = new DatabaseSync(join(home, "data", "supervisor.sqlite"));
-    db.prepare("UPDATE tasks SET pid = ? WHERE id = ?").run(process.pid, activeWorker.id);
+    db.prepare("UPDATE tasks SET pid = ? WHERE id = ?").run(process.pid, plain.id);
+    assert.equal((await verdictOf(plain)).verdict, "blocked");
+    db.prepare("UPDATE tasks SET pid = NULL WHERE id = ?").run(plain.id);
     db.close();
-    const activePlan = await call("cleanup_plan", { task_ids: [activeWorker.id] });
-    assert.equal(activePlan.items[0].verdict, "blocked");
-    assert.match(activePlan.items[0].reasons.join(" "), /worker process is still active/);
-    const reset = new DatabaseSync(join(home, "data", "supervisor.sqlite"));
-    reset.prepare("UPDATE tasks SET pid = NULL WHERE id = ?").run(activeWorker.id);
-    reset.close();
 
-    const worker = await readyWorker(home, call, dir, "origin");
-    const plan = await call("cleanup_plan", { task_ids: [worker.id] });
-    const safe = plan.items.find((item) => item.verdict === "safe");
-    assert.ok(safe, JSON.stringify(plan));
-    git(dir, ["push", "-q", "--force", "origin", `${first}:main`]);
-    const applied = await call("apply_cleanup", { plan_id: plan.plan_id, item_ids: [safe.id] });
-    assert.equal(applied.applied.length, 0);
-    assert.match(applied.skipped[0].reason, /landed head is no longer reachable/);
-    assert(existsSync(worker.worktree_path));
+    // The plan was made while the commit was on main. Main then loses it.
+    const plan = await call("cleanup_plan", { task_ids: [plain.id] });
+    git(dir, ["reset", "-q", "--hard", first]);
+    const applied = await call("apply_cleanup", { plan_id: plan.plan_id, item_ids: [plan.items[0].id] });
+    assert.equal(applied.applied.length, 0, JSON.stringify(applied));
+    assert(existsSync(plain.worktree_path));
+    assert.equal((await verdictOf(plain)).verdict, "review", "work that is no longer on the target is unlanded work again");
   });
 });

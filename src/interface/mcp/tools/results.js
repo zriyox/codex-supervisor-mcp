@@ -1,3 +1,4 @@
+import { ensureTaskWorktree } from "../../../app/restore-worktree.js";
 import { askWorker, endSideSession, latestSideTurn } from "../../../app/side-chat.js";
 import { isGoalNeedingAttention, TERMINAL_STATUSES } from "../../../domain/status.js";
 import { truncateMiddleChars, truncateReport } from "../../../domain/truncate.js";
@@ -153,6 +154,8 @@ export const getWorkerDiffTool = [
     if (!task.worktree_path) {
       return textResult({ error: "no_worktree", task_id, external_outputs: externalOutputView(task, maxChars), reason: "this worker ran in place (its cwd is not a git repository or the worktree could not be created), so there is no isolated diff to read; call get_worker_result with includeFiles: true for the files it touched" });
     }
+    // Cleanup keeps the branch; the diff is read from a worktree cut from it again.
+    await ensureTaskWorktree(task).catch(() => false);
     if (!file && maxChars !== undefined) {
       const diff = readWorktreeDiff(task.worktree_path, worktreeRef(task), { maxChars, paths: paths ?? [], ignorePaths: workspaceSetupIgnorePaths(task) });
       return textResult({

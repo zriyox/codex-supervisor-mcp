@@ -89,7 +89,7 @@ export const verifyDeliveryPushTool = [
   "verify_delivery_push",
   {
     title: "Verify landed work reached a remote branch",
-    description: "Fetch a remote branch and prove the worker's landed_head is reachable from it. This never pushes or deploys. A passing check records push_verified; cleanup eligibility may depend on this evidence.",
+    description: "Fetch a remote branch and prove the worker's landed_head is reachable from it. This never pushes or deploys. A passing check records push_verified.",
     inputSchema: {
       task_id: z.string().min(1),
       remote: z.string().min(1).default("origin"),
@@ -103,7 +103,7 @@ export const cleanupPlanTool = [
   "cleanup_plan",
   {
     title: "Plan safe worktree cleanup",
-    description: "Classify managed worktrees as safe, review or blocked. The plan is read-only, expires after 15 minutes, estimates reclaimable bytes and never deletes branches, task rows, events, JSONL logs or artifacts.",
+    description: "Show why each managed worktree is safe, review or blocked. Safe worktrees (landed, or nothing to keep, or past the hold period) are removed automatically during polling, so call this to see reasons and dates or to remove one right away with apply_cleanup. Read-only; the plan expires after 15 minutes.",
     inputSchema: {
       task_ids: z.array(z.string().min(1)).max(200).optional(),
       project_root: z.string().min(1).optional()
@@ -131,7 +131,7 @@ export const applyCleanupTool = [
   "apply_cleanup",
   {
     title: "Apply a safe cleanup plan",
-    description: "Remove only selected SAFE worktrees from an unexpired cleanup plan after a second proof check. Uses git worktree remove and prune only; retains the branch, task row, event stream, JSONL log and artifacts.",
+    description: "Remove selected SAFE worktrees from an unexpired cleanup plan now, after assessing them again. Uncommitted edits are committed to the worker branch first. Keeps the branch, task row, event stream, JSONL log and artifacts.",
     inputSchema: {
       plan_id: z.string().uuid(),
       item_ids: z.array(z.string().uuid()).min(1).max(200)

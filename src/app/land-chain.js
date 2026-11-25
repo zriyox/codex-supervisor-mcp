@@ -1,3 +1,4 @@
+import { ensureTaskWorktree } from "./restore-worktree.js";
 import "./compose.js";
 import { runGit } from "../infra/git.js";
 import { appendTaskEvent } from "../infra/store/events.js";
@@ -67,6 +68,8 @@ export async function landOneWorkerTask(taskId, options = {}) {
   if (!isSettled(task)) return { error: "worker_active", task_id: taskId, reason: "wait for this run and acceptance to settle before landing" };
   if (session?.approval_state === "waiting_user") return { error: "session_waiting_user", task_id: taskId, reason: "session requires user approval before landing" };
   if (session && task.session_policy_revision !== session.policy_revision) return { error: "session_policy_stale", task_id: taskId, current_revision: session.policy_revision, checked_revision: task.session_policy_revision, reason: "requirements changed; resume with the current objective and rerun acceptance before landing" };
+  // Cleanup may have removed the worktree of work that never landed; its branch brings it back.
+  if (!task.landed_at) await ensureTaskWorktree(task);
   if (skipAlreadyLanded && task.landed_at && (!task.worktree_path || !existsSync(task.worktree_path))) {
     try {
       const targetBranch = git(task.project_root, ["symbolic-ref", "--short", "HEAD"]);

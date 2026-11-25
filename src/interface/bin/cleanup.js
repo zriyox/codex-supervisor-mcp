@@ -29,7 +29,7 @@ function parseArgs(argv) {
 }
 
 function printHelp() {
-  console.log(`Usage: npm run cleanup -- [options]
+  console.log(`Usage: codex-supervisor-cleanup [options]
 
 Options:
   --dry-run          Create and print a SAFE / REVIEW / BLOCKED plan. Default.

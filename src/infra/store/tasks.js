@@ -192,6 +192,36 @@ export async function claimTaskRun(taskId, expectedRun) {
   });
 }
 
+// The same lock a dispatcher takes before it runs a task, for work that needs
+// the task to stay idle without running it (removing its worktree). Null when
+// the task is running, settling, or held by a live dispatcher.
+export async function claimIdleTask(taskId) {
+  await ensureFilesystem();
+  const connection = openDb();
+  return runWithRetry(connection, () => {
+    connection.exec("BEGIN IMMEDIATE");
+    try {
+      const row = connection.prepare("SELECT * FROM tasks WHERE id=?").get(taskId);
+      const claim = connection.prepare("SELECT * FROM run_claims WHERE task_id=?").get(taskId);
+      const busy = !row || ACTIVE_STATUSES.has(row.status)
+        || (["completed", "failed"].includes(row.status) && row.exit_code == null)
+        || decodeJson(row.acceptance_results, null)?.status === "running"
+        || (claim && isPidAlive(claim.owner_pid));
+      let token = null;
+      if (!busy) {
+        token = randomUUID();
+        connection.prepare("INSERT INTO run_claims VALUES (?,?,?) ON CONFLICT(task_id) DO UPDATE SET token=excluded.token,owner_pid=excluded.owner_pid")
+          .run(taskId, token, process.pid);
+      }
+      connection.exec("COMMIT");
+      return token;
+    } catch (error) {
+      connection.exec("ROLLBACK");
+      throw error;
+    }
+  });
+}
+
 export async function releaseTaskRun(taskId, token) {
   openDb().prepare("DELETE FROM run_claims WHERE task_id=? AND token=?").run(taskId, token);
 }

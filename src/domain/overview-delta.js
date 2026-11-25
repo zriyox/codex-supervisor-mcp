@@ -8,7 +8,7 @@ function readyToLand(task) {
 
 function readyToClean(task, readyToCleanTaskIds = null) {
   if (readyToCleanTaskIds) return readyToCleanTaskIds.has(task.id);
-  return task.push_verified_at && ["cleanup_eligible"].includes(task.delivery_state);
+  return task.delivery_state === "cleanup_eligible";
 }
 
 function attentionReason(task) {
@@ -22,7 +22,7 @@ function nextAction(task, { attention, readyToLand, readyToClean }) {
   if (attention) return "inspect the worker evidence and resolve the recorded blocker";
   if (task.delivery_state === "cleanup_eligible" && !readyToClean) return "rerun cleanup_plan; the previous cleanup proof is no longer current";
   if (readyToLand) return "review the diff and acceptance, then land the worker";
-  if (readyToClean) return "review the cleanup plan item, then explicitly apply it";
+  if (readyToClean) return "nothing to do: the worktree is removed on a later poll, and its branch is kept";
   if (task.status === "completed" && !task.landed_at) return "review the worker result and decide whether to land it";
   return null;
 }

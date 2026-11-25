@@ -9,10 +9,10 @@ export function cleanupThreshold(raw = process.env.SUPERVISOR_CLEANUP_HINT) {
   return Number.isFinite(value) && value >= 0 ? value : DEFAULT_THRESHOLD;
 }
 
-// A batch that never cleans up should say so instead of quietly growing to
-// hundreds of worktrees. The hint only reports a count and the two commands;
-// deletion stays a deliberate step, because cleanup only removes worktrees that
-// are merged and clean and keeps dirty, unmerged, lost and failed work.
+// Safe worktrees are removed automatically, so a store that still holds this
+// many has work that is being kept on purpose (unlanded and inside the hold
+// period, or needing review) or has automatic cleanup switched off. The hint
+// reports the count and where to look.
 export async function cleanupHint({ list = readdir, root = supervisorRoot, dir = worktreesDir, threshold = cleanupThreshold() } = {}) {
   if (!threshold) return null;
   let entries;
@@ -21,10 +21,9 @@ export async function cleanupHint({ list = readdir, root = supervisorRoot, dir =
   return {
     worktrees: entries,
     threshold,
-    command: `SUPERVISOR_HOME=${root} npm run cleanup -- --dry-run`,
+    command: `SUPERVISOR_HOME=${root} codex-supervisor-cleanup --dry-run`,
     apply: null,
-    next_step: "Review the dry-run plan_id and a SAFE item id, then call apply_cleanup; CLI apply also requires --plan and --item.",
-    note: "only acceptance-passed, push-verified, clean worktrees without active processes or dependents become SAFE; apply retains branches and evidence"
+    next_step: "Read the plan: REVIEW items say when they become removable. Land or resume the work you still want; apply_cleanup removes a SAFE item right away.",
+    note: "a worktree is SAFE once its work has landed, or has nothing to keep, or its hold period is over; uncommitted edits are saved on the worker branch first, and branches and evidence are never removed"
   };
 }
-

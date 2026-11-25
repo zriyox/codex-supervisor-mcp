@@ -1,3 +1,4 @@
+import { ensureTaskWorktree } from "./restore-worktree.js";
 import "./compose.js";
 import { frameWorkerPrompt } from "../domain/prompt.js";
 import { ACTIVE_STATUSES } from "../domain/status.js";
@@ -91,6 +92,7 @@ async function resumeClaimed(claimed, { prompt, rebaseOnto, acceptance }) {
       `task ${task.id} has no Codex thread_id recorded. Only workers created by this version of codex-supervisor-mcp can be resumed; use create_codex_followup_worker otherwise.`
     );
   }
+  await ensureTaskWorktree(task);
   let rebase = null;
   if (rebaseOnto) ({ task, rebase } = await rebaseBeforeResume(task, rebaseOnto));
 

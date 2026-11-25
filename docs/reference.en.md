@@ -22,9 +22,9 @@ Thirty-nine.
 | `get_worker_diff` | `task_id`, `file`, `hunk`, `pageSize`, `cursor`, `maxChars`, `paths` | What the worker actually changed. The default response is a complete file/hunk index. Select one file and page hunks with `hunk` or `cursor`; `maxChars` without `file` keeps the legacy bounded full-diff mode |
 | `ask_codex_worker` | `task_id`, `question`, `timeoutMs`, `maxChars`, `fresh`, `end` | Ask the worker on the side. Its thread is forked into a read-only session with no network and no MCP tools; the worker itself is untouched. A resumed worker gets a new fork by itself, `fresh` forces one, `end` deletes it |
 | `land_codex_worker` | `task_id`, `onto`, `commitMessage`, `includeFollowupParents`, `commitMessages`, `ignoreAcceptance`, `allowOutsideOwned` | Cherry-pick the worker's `codex/<id>` commits onto the current branch of the dispatch directory: clean target only, a conflict rolls back, a failed acceptance is refused. A malformed report summary no longer blocks an explicit landing when acceptance and the reviewed diff are sound. `commitMessage` first commits the current worker's uncommitted edits as one commit. `includeFollowupParents` lands the follow-up chain root first and `commitMessages` supplies a distinct checkpoint message for any task in that chain; `ignoreAcceptance` lands anyway |
-| `verify_delivery_push` | `task_id`, `remote`, `branch` | Fetch a remote branch and prove landed_head is reachable; records push_verified and creates a cleanup plan without pushing or deploying |
-| `cleanup_plan` | `task_ids`, `project_root` | Create a 15-minute SAFE / REVIEW / BLOCKED plan with reasons and fingerprints; SAFE requires explicit acceptance, delivery proof, clean state and no active process/dependency |
-| `apply_cleanup` | `plan_id`, `item_ids` | Revalidate selected SAFE items, fetch the remote and prove landed SHA reachability, then run only git worktree remove/prune |
+| `verify_delivery_push` | `task_id`, `remote`, `branch` | Fetch a remote branch and prove landed_head is reachable; records push_verified; never pushes or deploys |
+| `cleanup_plan` | `task_ids`, `project_root` | Create a 15-minute SAFE / REVIEW / BLOCKED plan with reasons, fingerprints and an estimate of reclaimable space. Landed or unchanged work is SAFE; unlanded work is REVIEW during its hold period, with the date it ends |
+| `apply_cleanup` | `plan_id`, `item_ids` | Remove the selected SAFE items now. Each is assessed again and its fingerprint checked; uncommitted edits are committed to `codex/<id>` first. Keeps the branch, task, events, JSONL and artifacts |
 | `cleanup_history` | `task_id`, `limit` | Read cleanup decisions and applied removals; never deletes anything |
 | `get_worker_summary` | `task_id` | One paragraph: goal, status, changes, last command and message |
 | `get_codex_worker_status` | `task_id`, `includePrompt`, `promptMaxChars` | One worker in detail |
@@ -116,7 +116,21 @@ Dispatch checks required hooks/output-schema support (Codex 0.162+); unsupported
 
 Ownership reservation and task insertion are atomic across MCP dispatch/resume processes; ownership remains reserved during acceptance or exit settlement. Failure to create an isolated Git checkout is explicit and never falls back to executing in the project directory.
 
-Cleanup previews by default: `npm run cleanup -- --dry-run`. Apply only selected existing items: `npm run cleanup -- --apply --plan <plan_id> --item <item_id>`. SAFE requires acceptance passed, remote delivery proof, a clean worktree, no active process/dependent and verified Git registration/ownership; apply re-fetches the remote and proves the landed SHA remains reachable. Dirty, unaccepted, unlanded, force-pushed-away, lost/failed or unproven work is preserved with a reason.
+Cleanup runs by itself. `check_workers` and `overview_delta` sweep at most once every 10 minutes, remove the SAFE worktrees and list them under `cleaned`. The rules:
+
+| Situation | Verdict |
+|---|---|
+| The worker or its acceptance is running, or an active worker depends on it | BLOCKED |
+| Landed, the commit still on the target branch, worktree clean | SAFE |
+| Finished without changing anything (failed, cancelled, timed out, an empty run) | SAFE |
+| Unlanded commits or uncommitted edits | REVIEW during the hold period, SAFE after it |
+| The path, branch or Git registration does not match | REVIEW, never handled automatically |
+
+The hold period is 7 days from the moment the worker finished; `CODEX_SUPERVISOR_CLEANUP_HOLD_DAYS` changes it. Before a worktree with uncommitted edits is removed, the edits are committed to `codex/<id>`. Paths linked in by `workspaceSetup` and gitignored build output are not edits and are not saved. Branches, tasks, events, JSONL and artifacts are always kept.
+
+After a worktree is gone, `resume_codex_worker`, `land_codex_worker`, `ask_codex_worker` and `get_worker_diff` cut it again from the branch and redo `workspaceSetup`, so cleanup never strands unfinished work.
+
+By hand: `cleanup_plan` shows the verdicts and reasons, `apply_cleanup` removes SAFE items at once; from a shell, `codex-supervisor-cleanup --dry-run` and `codex-supervisor-cleanup --apply --plan <plan_id> --item <item_id>`. `CODEX_SUPERVISOR_NO_AUTO_CLEANUP=1` turns the automatic sweep off. A research worker's scratch directory goes after the same hold period.
 
 ## What the board shows
 
@@ -168,7 +182,9 @@ A terminal state lands in two steps: `turn.completed` sets `completed`, the proc
 | `CODEX_SUPERVISOR_NO_UPDATE_CHECK` | unset | `1` disables the update check |
 | `CODEX_SUPERVISOR_REGISTRY` | `https://registry.npmjs.org` | Registry for the update check and the auto-update |
 | `CODEX_SUPERVISOR_UPDATE_TIMEOUT_MS` | `4000` | How long to wait for the registry |
-| `CODEX_SUPERVISOR_NO_AUTO_UPDATE` | unset | `1` turns the background auto-update off (notify only) |
+| `CODEX_SUPERVISOR_NO_AUTO_UPDATE` | unset | `1` turns off background updates and only notifies |
+| `CODEX_SUPERVISOR_NO_AUTO_CLEANUP` | unset | `1` turns off automatic worktree cleanup; `apply_cleanup` still works |
+| `CODEX_SUPERVISOR_CLEANUP_HOLD_DAYS` | `7` | Days unlanded work is kept after its worker finished; `0` keeps nothing |
 | `CODEX_SUPERVISOR_SKIP_SKILL_SYNC` | unset | `1` turns the skill sync at server start off |
 | `CODEX_SUPERVISOR_SKIP_SETUP` | unset | `1` skips the `postinstall` setup |
 | `CODEX_SUPERVISOR_NPM` | unset | npm for the auto-update; default is the one shipped with the running node |
