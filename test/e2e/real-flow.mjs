@@ -63,7 +63,7 @@ const transport = new StdioClientTransport({
   args: [join(packageRoot, installed.bin[PACKAGE] ?? "src/mcp-server.js")],
   cwd: home,
   env: { ...process.env, SUPERVISOR_HOME: home, CODEX_SUPERVISOR_NO_UPDATE_CHECK: "1", CODEX_SUPERVISOR_NO_AUTO_UPDATE: "1", CODEX_SUPERVISOR_SKIP_SKILL_SYNC: "1" },
-  stderr: "pipe"
+  stderr: "inherit"
 });
 const client = new Client({ name: "supervisor-e2e", version: "1.0.0" });
 await client.connect(transport);
