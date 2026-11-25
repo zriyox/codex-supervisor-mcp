@@ -19,6 +19,8 @@ function processExitFailure(stderr) {
   if (/\b401\b|unauthori[sz]ed|not logged in|login required|invalid api key|missing api key|\b403\b|forbidden/i.test(stderr)) {
     return withDetail({ source: "auth", code: "auth_failed", retryable: false });
   }
+  // A process of an earlier run still holds the session; it clears when that process ends.
+  if (/already has an active writer|thread-store conflict/i.test(stderr)) return withDetail({ source: "runner_session", code: "session_busy", retryable: true });
   const provider = providerFailure(stderr);
   if (provider) return withDetail(provider);
   if (/\b429\b|rate.?limit|too many requests/i.test(stderr)) return withDetail({ source: "provider", code: "provider_rate_limited", retryable: true });

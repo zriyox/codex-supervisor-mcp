@@ -43,7 +43,7 @@ const step = (name, detail) => {
   console.error(`ok  ${name} ${JSON.stringify(detail)}`);
 };
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-const TERMINAL = ["completed", "failed", "cancelled", "lost"];
+const TERMINAL = ["completed", "failed", "cancelled", "lost", "timed_out"];
 
 const transport = new StdioClientTransport({
   command: process.execPath,
@@ -187,6 +187,61 @@ try {
   assert.ok(landedDraft.landed_head || landedDraft.landed || landedDraft.head, `land after cleanup: ${JSON.stringify(landedDraft).slice(0, 600)}`);
   assert.equal((await readFile(join(repo, "notes.txt"), "utf8")).trim(), "draft-kept");
   step("land after cleanup", { commits: Number(git(["rev-list", "--count", "HEAD"])) });
+
+  // A worker that runs out of its time budget is timed_out, not lost, and is not retried.
+  const hurried = await call("create_worker", {
+    cwd: repo, sandbox: { mode: "workspace-write" }, owned_paths: ["slow.txt"],
+    title: "runs out of time",
+    task: "Write a 400 word essay about rivers into slow.txt, one sentence per line.",
+    goal: { objective: "slow.txt holds the essay" },
+    limits: { max_run_ms: 2000 },
+    session: { id: session }
+  });
+  assert.ok(hurried.id, `create failed: ${JSON.stringify(hurried).slice(0, 600)}`);
+  const hurriedSettled = await settle(hurried.id);
+  assert.equal(hurriedSettled.status, "timed_out", JSON.stringify(hurriedSettled).slice(0, 600));
+  assert.equal(hurriedSettled.failure?.source, "time_limit");
+  const afterTimeout = await call("poll_workers", { cursor: polled.next_cursor });
+  assert.deepEqual((afterTimeout.recoveries ?? []).filter((entry) => (entry.task_id ?? entry.id) === hurried.id), [], "a timed-out worker was retried");
+  step("time budget", { status: hurriedSettled.status, reason: hurriedSettled.attention_reason, source: hurriedSettled.failure.source });
+
+  // Kill the run host and the worker under it: the first poll finds the run dead and resumes it once.
+  const victim = await call("create_worker", {
+    cwd: repo, sandbox: { mode: "workspace-write", allowed_commands: ["sleep 40"] }, owned_paths: ["gamma.txt"],
+    title: "is killed mid-run",
+    task: "First run the shell command: sleep 40. After it finishes, create gamma.txt containing exactly one line: gamma-done. Do not run git add or git commit.",
+    goal: { objective: "gamma.txt exists with the line gamma-done" },
+    acceptance: { commands: ["grep -q gamma-done gamma.txt"] },
+    session: { id: session }
+  });
+  assert.ok(victim.id, `create failed: ${JSON.stringify(victim).slice(0, 600)}`);
+  let running = null;
+  for (let waited = 0; waited < 120000 && !(running?.pid && running.thread_id); waited += 2000) {
+    await sleep(2000);
+    running = await call("get_worker", { task_id: victim.id, include: ["status"] });
+  }
+  assert.ok(running?.pid && running.thread_id, `the worker never started: ${JSON.stringify(running).slice(0, 600)}`);
+  const hosts = execFileSync("pgrep", ["-f", "run-host/entry.js"], { encoding: "utf8" }).trim().split("\n").map(Number).filter(Boolean);
+  for (const pid of [...hosts, running.pid]) {
+    try { process.kill(pid, "SIGKILL"); } catch { /* already gone */ }
+  }
+  // The CLI is a launcher around a binary that can outlive it and still hold the
+  // session, so recovery waits until nothing of the dead run is left.
+  let cursor = afterTimeout.next_cursor;
+  let recovered = false;
+  let polls = 0;
+  for (let waited = 0; waited < 240000 && !recovered; waited += 5000) {
+    await sleep(5000);
+    const afterKill = await call("poll_workers", { cursor });
+    cursor = afterKill.next_cursor ?? cursor;
+    polls += 1;
+    recovered = (afterKill.recoveries ?? []).some((entry) => (entry.task_id ?? entry.id) === victim.id);
+  }
+  assert.ok(recovered, `the killed run was not recovered after ${polls} polls`);
+  const victimSettled = await settle(victim.id);
+  assert.equal(victimSettled.status, "completed", JSON.stringify(victimSettled).slice(0, 600));
+  assert.equal(victimSettled.run_count, 2);
+  step("killed run host", { killed: hosts.length + 1, recovered, polls, status: victimSettled.status, runs: victimSettled.run_count });
 } catch (error) {
   failure = error;
 } finally {
