@@ -11,6 +11,104 @@ import { isSettled } from "../../../app/settled.js";
 import { compactLiveness, summarizeTask } from "../views/task.js";
 import { z } from "zod";
 
+// Polls until the selected workers settle, the budget runs out or the client
+// cancels. Returns whether the client cancelled.
+async function pollUntilSettled({ task_ids, mode, pollMs, emitProgress }, { startedAt, effectiveTimeoutMs }, extra) {
+  const progressToken = extra?._meta?.progressToken;
+  let lastProgressAt = -Infinity;
+  while (Date.now() - startedAt < effectiveTimeoutMs) {
+    if (extra?.signal.aborted) return true;
+    await reconcileDetachedActiveTasks();
+    const tasks = (await getTasks(task_ids)).filter(Boolean);
+    const settledCount = tasks.filter(isSettled).length;
+    const isDone = mode === "any" ? settledCount > 0 : settledCount === task_ids.length;
+    if (isDone) break;
+    const elapsed = Date.now() - startedAt;
+    if (emitProgress && progressToken != null && elapsed - lastProgressAt >= 30000) {
+      await extra.sendNotification({ method: "notifications/progress", params: {
+        progressToken, progress: elapsed, total: effectiveTimeoutMs,
+        message: `${settledCount}/${task_ids.length} workers settled; wait budget only`
+      } }).catch(() => {});
+      lastProgressAt = elapsed;
+    }
+    await sleep(Math.min(pollMs, Math.max(0, effectiveTimeoutMs - (Date.now() - startedAt))));
+  }
+  return false;
+}
+
+function budgetExhaustedHint(effectiveTimeoutMs) {
+  const budgetLabel =
+    effectiveTimeoutMs >= 60000
+      ? `${Math.round(effectiveTimeoutMs / 60000)}-minute`
+      : `${Math.round(effectiveTimeoutMs / 1000)}-second`;
+  return `Workers are still running; the ${budgetLabel} wait budget ran out. Reuse the same task_ids for a short wait, or schedule check_workers for long monitoring. Set allowLongWait only after verifying the client's MCP timeout supports the requested budget; do not start another long wait while a background wait is active.`;
+}
+
+function compactWorkerRow(task) {
+  return {
+    id: task.id,
+    title: clip(task.title, 60),
+    status: task.status,
+    phase: task.phase ?? null,
+    exit_code: task.exit_code ?? null,
+    changed_file_count: readTaskChanges(task).length,
+    acceptance: acceptanceVerdict(task),
+    ...compactLiveness(task),
+    updated_at: task.updated_at ?? null
+  };
+}
+
+function fullWorkerRows(tasks, { includeEvents, eventLimit, eventMaxChars, eventKinds }) {
+  return Promise.all(
+    tasks.map(async (task) => ({
+      ...summarizeTask(task),
+      recent_events: includeEvents
+        ? await readTaskEvents(task.id, eventLimit, eventKinds ?? null).then((events) =>
+            eventMaxChars === undefined ? events : events.map((event) => truncateEventStrings(event, eventMaxChars))
+          )
+        : undefined
+    }))
+  );
+}
+
+async function waitForWorkers(input, extra) {
+  const { task_ids, mode, timeoutMinutes, timeoutMs, allowLongWait, includeEvents, compact: requestedCompact } = input;
+  const compact = requestedCompact ?? !includeEvents;
+  const startedAt = Date.now();
+  const requestedTimeoutMs = timeoutMs ?? timeoutMinutes * 60 * 1000;
+  const effectiveTimeoutMs = allowLongWait ? requestedTimeoutMs : Math.min(requestedTimeoutMs, 60000);
+  const clientCancelled = await pollUntilSettled(input, { startedAt, effectiveTimeoutMs }, extra);
+
+  await reconcileDetachedActiveTasks();
+  const tasks = (await getTasks(task_ids)).filter(Boolean);
+  const missingIds = task_ids.filter((taskId) => !tasks.some((task) => task.id === taskId));
+  const settledTasks = tasks.filter(isSettled);
+  const timedOut =
+    mode === "any" ? settledTasks.length === 0 : settledTasks.length !== task_ids.length;
+  const summaries = await fullWorkerRows(tasks, input);
+
+  return textResult(withUpdate({
+    mode,
+    timed_out: timedOut,
+    still_running: timedOut,
+    termination_reason: clientCancelled ? "client_cancelled" : timedOut ? "budget_exhausted" : "settled",
+    next_step: timedOut ? budgetExhaustedHint(effectiveTimeoutMs) : null,
+    waited_ms: Date.now() - startedAt,
+    timeout_ms: effectiveTimeoutMs,
+    requested_timeout_ms: requestedTimeoutMs,
+    timeout_capped: effectiveTimeoutMs !== requestedTimeoutMs,
+    timeout_minutes: Math.round(effectiveTimeoutMs / 60000),
+    missing_ids: missingIds,
+    completed_count: tasks.filter((task) => task.status === "completed").length,
+    failed_count: tasks.filter((task) => task.status === "failed").length,
+    cancelled_count: tasks.filter((task) => task.status === "cancelled").length,
+    lost_count: tasks.filter((task) => task.status === "lost").length,
+    active_count: tasks.filter((task) => ACTIVE_STATUSES.has(task.status)).length,
+    acceptance_failed_count: tasks.filter((task) => task.acceptance_results?.passed === false).length,
+    workers: compact ? tasks.map(compactWorkerRow) : summaries
+  }));
+}
+
 export const waitCodexWorkersTool = [
   "wait_codex_workers",
   {
@@ -43,103 +141,5 @@ export const waitCodexWorkersTool = [
       compact: z.boolean().optional()
     }
   },
-  async ({
-    task_ids,
-    mode,
-    timeoutMinutes,
-    timeoutMs,
-    allowLongWait,
-    pollMs,
-    emitProgress,
-    includeEvents,
-    eventLimit,
-    eventMaxChars,
-    eventKinds,
-    compact: requestedCompact
-  }, extra) => {
-    const compact = requestedCompact ?? !includeEvents;
-    const startedAt = Date.now();
-    const requestedTimeoutMs = timeoutMs ?? timeoutMinutes * 60 * 1000;
-    const effectiveTimeoutMs = allowLongWait ? requestedTimeoutMs : Math.min(requestedTimeoutMs, 60000);
-    let tasks = [];
-    const progressToken = extra?._meta?.progressToken;
-    let lastProgressAt = -Infinity;
-
-    let clientCancelled = false;
-    while (Date.now() - startedAt < effectiveTimeoutMs) {
-      if (extra?.signal.aborted) { clientCancelled = true; break; }
-      await reconcileDetachedActiveTasks();
-      tasks = (await getTasks(task_ids)).filter(Boolean);
-      const settledCount = tasks.filter(isSettled).length;
-      const isDone = mode === "any" ? settledCount > 0 : settledCount === task_ids.length;
-      if (isDone) break;
-      const elapsed = Date.now() - startedAt;
-      if (emitProgress && progressToken != null && elapsed - lastProgressAt >= 30000) {
-        await extra.sendNotification({ method: "notifications/progress", params: {
-          progressToken, progress: elapsed, total: effectiveTimeoutMs,
-          message: `${settledCount}/${task_ids.length} workers settled; wait budget only`
-        } }).catch(() => {});
-        lastProgressAt = elapsed;
-      }
-      await sleep(Math.min(pollMs, Math.max(0, effectiveTimeoutMs - (Date.now() - startedAt))));
-    }
-
-    await reconcileDetachedActiveTasks();
-    tasks = (await getTasks(task_ids)).filter(Boolean);
-    const missingIds = task_ids.filter((taskId) => !tasks.some((task) => task.id === taskId));
-    const settledTasks = tasks.filter(isSettled);
-    const timedOut =
-      mode === "any" ? settledTasks.length === 0 : settledTasks.length !== task_ids.length;
-
-    const summaries = await Promise.all(
-      tasks.map(async (task) => ({
-        ...summarizeTask(task),
-        recent_events: includeEvents
-          ? await readTaskEvents(task.id, eventLimit, eventKinds ?? null).then((events) =>
-              eventMaxChars === undefined ? events : events.map((event) => truncateEventStrings(event, eventMaxChars))
-            )
-          : undefined
-      }))
-    );
-
-    const budgetLabel =
-      effectiveTimeoutMs >= 60000
-        ? `${Math.round(effectiveTimeoutMs / 60000)}-minute`
-        : `${Math.round(effectiveTimeoutMs / 1000)}-second`;
-
-    return textResult(withUpdate({
-      mode,
-      timed_out: timedOut,
-      still_running: timedOut,
-      termination_reason: clientCancelled ? "client_cancelled" : timedOut ? "budget_exhausted" : "settled",
-      next_step: timedOut
-        ? `Workers are still running; the ${budgetLabel} wait budget ran out. Reuse the same task_ids for a short wait, or schedule check_workers for long monitoring. Set allowLongWait only after verifying the client's MCP timeout supports the requested budget; do not start another long wait while a background wait is active.`
-        : null,
-      waited_ms: Date.now() - startedAt,
-      timeout_ms: effectiveTimeoutMs,
-      requested_timeout_ms: requestedTimeoutMs,
-      timeout_capped: effectiveTimeoutMs !== requestedTimeoutMs,
-      timeout_minutes: Math.round(effectiveTimeoutMs / 60000),
-      missing_ids: missingIds,
-      completed_count: tasks.filter((task) => task.status === "completed").length,
-      failed_count: tasks.filter((task) => task.status === "failed").length,
-      cancelled_count: tasks.filter((task) => task.status === "cancelled").length,
-      lost_count: tasks.filter((task) => task.status === "lost").length,
-      active_count: tasks.filter((task) => ACTIVE_STATUSES.has(task.status)).length,
-      acceptance_failed_count: tasks.filter((task) => task.acceptance_results?.passed === false).length,
-      workers: compact
-        ? tasks.map((task) => ({
-            id: task.id,
-            title: clip(task.title, 60),
-            status: task.status,
-            phase: task.phase ?? null,
-            exit_code: task.exit_code ?? null,
-            changed_file_count: readTaskChanges(task).length,
-            acceptance: acceptanceVerdict(task),
-            ...compactLiveness(task),
-            updated_at: task.updated_at ?? null
-          }))
-        : summaries
-    }));
-  }
+  waitForWorkers
 ];
