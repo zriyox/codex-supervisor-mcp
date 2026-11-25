@@ -127,7 +127,7 @@ By hand: `cleanup` shows the verdicts and reasons, `cleanup` removes SAFE items 
 | Where | What |
 |---|---|
 | Left column | One row per session: title, worker count, how many running, last activity. Version and update notice at the bottom |
-| Session page | Counts (total / running / done / failed / lost); while workers run, the command each one is on |
+| Session page | Counts (total / running / done / failed / timed out / lost); while workers run, the command each one is on |
 | Worker table | One row per worker: status, title, current command or last report line, duration, files changed, commands run |
 | Worker drawer | Seven tabs: overview, report, changes, commands, events, task, side chat |
 | Side chat | Ask the worker a question, the way Codex's `/btw` works: its thread is forked into a read-only side session, the running work is untouched. Multi-turn, stoppable, and a page that leaves picks up where it was |
@@ -144,6 +144,7 @@ Light and dark follow the system. No external resources.
 | `failed` | Non-zero exit, `turn.failed`, spawn failure |
 | `cancelled` | Stopped by `cancel_worker` |
 | `lost` | Worker killed by an outside signal, run process disappeared, or a row whose process never started. `resume_worker` picks it up |
+| `timed_out` | `limits.max_run_ms` or `limits.max_total_ms` ran out and the supervisor stopped the worker. Never retried automatically. After a per-run limit, `resume_worker` starts a fresh run clock; after the total limit, continue with `create_worker` and `followup_of`, giving new `limits` |
 
 A terminal state lands in two steps: `turn.completed` sets `completed`, the process exit writes `exit_code`; `wait_workers` returns only after the exit code is in. Windows has no signals, so an outside kill reports as `failed` with an exit code. Native Codex goals: `paused` / `blocked` count as `running` and go to `needs_attention`, `usageLimited` / `budgetLimited` as `failed`.
 

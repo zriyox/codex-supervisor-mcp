@@ -103,6 +103,7 @@ async function waitForWorkers(input, extra) {
     failed_count: tasks.filter((task) => task.status === "failed").length,
     cancelled_count: tasks.filter((task) => task.status === "cancelled").length,
     lost_count: tasks.filter((task) => task.status === "lost").length,
+    timed_out_count: tasks.filter((task) => task.status === "timed_out").length,
     active_count: tasks.filter((task) => ACTIVE_STATUSES.has(task.status)).length,
     acceptance_failed_count: tasks.filter((task) => task.acceptance_results?.passed === false).length,
     workers: compact ? tasks.map(compactWorkerRow) : summaries

@@ -112,6 +112,7 @@ description: 用 Codex CLI 并行做可独立验收的功能包，每路一个 G
 |---|---|
 | 主线程挂了 | worker 的独立进程会继续记录日志、状态和验收。新窗口用 `find_works` 按 session 接回 |
 | worker 变 `lost` | 确实中断才 `resume_worker`；worktree、改动和线程都保留 |
+| worker 变 `timed_out` | 时间预算用完被停掉，不会自动重试。先看已有改动；`run_time_limit` 可以 `resume_worker`（每轮重新计时），`total_time_limit` 只能 `followup_of` 带新 `limits` 接续 |
 | worktree 落后主线 | `resume_worker` 带 `rebase_onto: "HEAD"` |
 | worker 失败 | 先看 `failure.source` 和 `error`，区分 provider、supervisor、workspace setup、model output、acceptance、worker process |
 | worktree 被清掉了 | 照常 `resume_worker` / `land_worker` / `get_worker_diff` / `ask_worker`，会从分支切回来 |

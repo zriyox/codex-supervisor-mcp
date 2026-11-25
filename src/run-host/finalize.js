@@ -27,6 +27,8 @@ function terminalStatus(run, stored, code, signal) {
   if (stored && TERMINAL_STATUSES.has(stored.status) && stored.status !== live.status) return stored.status;
   if (run.terminalEvent && TERMINAL_STATUSES.has(live.status)) return live.status;
   if (cancelRequested) return "cancelled";
+  // The supervisor stopped it for running out of time; the signal was its own.
+  if (run.quotaReason) return "timed_out";
   // Killed by a signal nobody asked for: the worker did not fail, it
   // vanished. Re-running is the fix, so it is reported as lost.
   if (signal) return "lost";

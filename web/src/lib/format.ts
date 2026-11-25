@@ -6,7 +6,8 @@ export const STATUS_LABEL: Record<Status, string> = {
   completed: "已完成",
   failed: "失败",
   cancelled: "已取消",
-  lost: "已丢失"
+  lost: "已丢失",
+  timed_out: "已超时"
 };
 
 export const PHASE_LABEL: Record<Exclude<Phase, null>, string> = {
@@ -24,7 +25,8 @@ export const STATUS_COLOR: Record<Status, { text: string; bg: string }> = {
   completed: { text: "text-green", bg: "bg-green" },
   failed: { text: "text-red", bg: "bg-red" },
   cancelled: { text: "text-gray", bg: "bg-gray" },
-  lost: { text: "text-indigo", bg: "bg-indigo" }
+  lost: { text: "text-indigo", bg: "bg-indigo" },
+  timed_out: { text: "text-purple", bg: "bg-purple" }
 };
 
 // Worker reports are markdown. In a one-line preview the syntax is noise.

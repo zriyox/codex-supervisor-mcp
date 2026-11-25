@@ -21,7 +21,9 @@ export function classifyFailure(task) {
   if (attention === "invalid_report" || /Invalid final worker report/i.test(error)) return { source: "model_output", code: "invalid_report", retryable: true };
   if (task.acceptance_results?.passed === false) return { source: "acceptance", code: "acceptance_failed", retryable: true };
   if (attention === "no_work" || attention === "two_stall") return { source: "worker_progress", code: attention, retryable: false };
-  if (attention === "time_limit" || attention === "total_time_limit") return { source: "supervisor_process", code: attention, retryable: false };
+  if (task.status === "timed_out" || attention === "run_time_limit" || attention === "total_time_limit") {
+    return { source: "time_limit", code: attention || "time_limit", retryable: false };
+  }
   if (task.status === "lost") return { source: "supervisor_process", code: "worker_lost", retryable: true };
   if (task.status === "cancelled") return { source: "caller", code: "cancelled", retryable: true };
   if (/codex exited with code/i.test(error)) return { source: "worker_process", code: "process_exit_nonzero", retryable: true };

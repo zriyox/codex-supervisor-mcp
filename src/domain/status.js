@@ -4,13 +4,16 @@
 // phase   = what the worker is doing right now. Only meaningful while
 //           status === "running"; NULL once the work reaches a terminal status.
 
-export const TASK_STATUSES = ["queued", "running", "completed", "failed", "cancelled", "lost"];
+// timed_out is a worker the supervisor stopped because its time budget ran
+// out. It is not lost: nothing vanished, and re-running it unchanged would
+// only run out of time again.
+export const TASK_STATUSES = ["queued", "running", "completed", "failed", "cancelled", "lost", "timed_out"];
 
 export const PHASES = ["starting", "thinking", "command", "editing", "reporting"];
 
 export const ACTIVE_STATUSES = new Set(["queued", "running"]);
 
-export const TERMINAL_STATUSES = new Set(["completed", "failed", "cancelled", "lost"]);
+export const TERMINAL_STATUSES = new Set(["completed", "failed", "cancelled", "lost", "timed_out"]);
 
 // Codex native thread goal status -> work status.
 // Storage uses snake_case ("usage_limited"); the RPC layer uses camelCase

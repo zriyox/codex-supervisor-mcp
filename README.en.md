@@ -169,6 +169,7 @@ rm -rf ~/.claude/skills/codex-supervisor ~/.agents/skills/codex-supervisor ~/.co
 | `codex only resolved to a shell shim` | Windows found only the `.cmd`; the package entry is gone | Reinstall `@openai/codex`, or point `CODEX_BIN` at `codex.js` |
 | `Cannot find module 'node:sqlite'` | Node older than 22.13.0 | Upgrade Node |
 | Worker is `lost` | The worker or its run process was killed | Read the events, then `resume_worker` |
+| Worker is `timed_out` | Its time budget ran out and it was stopped | Read what it left; `resume_worker` after a per-run limit, `followup_of` with new `limits` after the total one |
 | `git add` fails with `index.lock: Operation not permitted` | The sandbox makes `.git` read-only. That is the intended boundary | Let `land_worker` commit with `commit_message` |
 | `owned_paths overlap with active worker(s)` | Two workers claimed the same paths | Split the work differently, or cancel the one holding them |
 | The board is empty | The board and the MCP server use different `SUPERVISOR_HOME` | Point both at the same directory |

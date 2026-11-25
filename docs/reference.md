@@ -156,6 +156,7 @@ node "$AGENT_SUPERVISOR_STAGE_CLI" "gate:s3" --detail "integration queue"
 | `failed` | 非零退出码、`turn.failed`、spawn 失败 |
 | `cancelled` | 被 `cancel_worker` 中断 |
 | `lost` | worker 被外部信号杀掉、运行进程失踪、或者行写了但进程从没起来。`resume_worker` 接回 |
+| `timed_out` | `limits.max_run_ms` 或 `limits.max_total_ms` 用完，supervisor 主动停掉。不会自动重试。单轮超时可以 `resume_worker`（每轮重新计时）；总预算用完只能用 `create_worker` 的 `followup_of` 带新 `limits` 接续 |
 
 终态分两步落盘：`turn.completed` 先把 status 置成 completed，进程退出后才写 `exit_code`；`wait_workers` 等到 `exit_code` 落了才返回。Windows 没有信号，外部 kill 只报 `failed` 加退出码。Codex 原生 goal 的 `paused` / `blocked` 算 `running` 并进 `needs_attention`，`usageLimited` / `budgetLimited` 算 `failed`。
 

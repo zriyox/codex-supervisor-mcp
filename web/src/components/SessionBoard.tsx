@@ -54,6 +54,7 @@ export function SessionBoard({ pages, hasMore, loadingMore, loadMore, selectedWo
           <Stat label="运行中" value={c.running ?? 0} tone={live ? "text-orange" : "text-label-3"} />
           <Stat label="完成" value={c.completed ?? 0} tone="text-green" />
           <Stat label="失败" value={c.failed ?? 0} tone={(c.failed ?? 0) > 0 ? "text-red" : "text-label-3"} />
+          <Stat label="超时" value={c.timed_out ?? 0} tone={(c.timed_out ?? 0) > 0 ? "text-purple" : "text-label-3"} />
           <Stat label="丢失" value={c.lost ?? 0} tone={(c.lost ?? 0) > 0 ? "text-indigo" : "text-label-3"} />
           <div className="w-40"><StatusBar counts={session.counts} total={session.worker_count} /></div>
         </div>

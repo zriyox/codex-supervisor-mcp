@@ -117,7 +117,7 @@ export function readPreflightResult(task) {
       passed: Boolean(result) && !commandFailed(result)
     };
   });
-  const terminal = ["completed", "failed", "cancelled", "lost"].includes(task.status);
+  const terminal = ["completed", "failed", "cancelled", "lost", "timed_out"].includes(task.status);
   const failedCommands = commands.filter(commandFailed);
   const probesPassed = probes.every((probe) => probe.passed);
   const exitConfirmed = task.status === "completed" && task.exit_code === 0;

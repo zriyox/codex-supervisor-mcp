@@ -168,6 +168,7 @@ rm -rf ~/.claude/skills/codex-supervisor ~/.agents/skills/codex-supervisor ~/.co
 | `codex only resolved to a shell shim` | Windows 只找到 `.cmd`，包入口没了 | 重装 `@openai/codex`，或 `CODEX_BIN` 指到 `codex.js` |
 | `Cannot find module 'node:sqlite'` | Node 低于 22.13.0 | 升 Node |
 | worker `lost` | worker 或它的运行进程被杀了 | 查事件，`resume_worker` 接回 |
+| worker `timed_out` | 时间预算用完被停掉 | 看已有改动；单轮超时 `resume_worker`，总预算用完用 `followup_of` 带新 `limits` 接续 |
 | `git add` 报 `index.lock: Operation not permitted` | 沙箱把 `.git` 设成只读，这是正常边界 | 让 `land_worker` 带 `commit_message` 代提交 |
 | `owned_paths overlap with active worker(s)` | 两路认领了同一片路径 | 改拆法，或取消占着的那路 |
 | 看板是空的 | 看板和 MCP 的 `SUPERVISOR_HOME` 不一样 | 两边指同一个目录 |
