@@ -78,7 +78,7 @@ test("a read-only worker is told it cannot write and gets no command allowlist",
 });
 
 test("the guard preamble states each worker's write boundary", async () => {
-  const { buildGuardPreamble } = await import("../../src/prompt.js");
+  const { buildGuardPreamble } = await import("../../src/domain/prompt.js");
   const readOnly = buildGuardPreamble({ sandbox: "read-only", ownedPaths: [], forbid: ["rm -rf"] });
   assert.match(readOnly, /read-only task/);
   assert.match(readOnly, /denies every file write/);

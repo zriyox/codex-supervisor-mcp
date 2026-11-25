@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { writeFile, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tempHome } from "./helpers.js";
-import { captureExternalOutputs, compareExternalOutputs } from "../../src/external-output.js";
+import { captureExternalOutputs, compareExternalOutputs } from "../../src/infra/external-output.js";
 
 test("shared output records actual baseline and changes without modifying the user's existing file", async () => {
   const home = await tempHome("supervisor-external-");const path=join(home,"dirty-user.md");

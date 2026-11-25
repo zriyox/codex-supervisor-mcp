@@ -4,7 +4,7 @@ import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { dispatchArgs, makeRepo, tempHome, waitFor, withMcp } from "./helpers.js";
-import { commandsEquivalent, normalizeObservedCommand } from "../../src/worker-preflight.js";
+import { commandsEquivalent, normalizeObservedCommand } from "../../src/domain/worker-preflight.js";
 
 test("preflight matches the shell wrapper Codex emits around a command", () => {
   assert.equal(normalizeObservedCommand("/bin/zsh -lc 'git status --short'"), "git status --short");
@@ -200,4 +200,16 @@ test("a workspaceKind change invalidates a non-Git worker preflight", async () =
     });
     assert.equal(refused.error, "preflight_mismatch");
   });
+});
+
+test("a preflight with unusable probe commands is refused before any worktree or branch exists", async () => {
+  const home = await tempHome("supervisor-preflight-invalid-");
+  const { dir: repo } = await makeRepo(join(home, "repo"));
+  await withMcp({ SUPERVISOR_HOME: home }, async ({ call }) => {
+    const refused = await call("preflight_codex_worker", { title: "bad probe", cwd: repo, sandbox: "workspace-write", ownedPaths: ["result.txt"], probeCommands: ["   "] });
+    assert.match(JSON.stringify(refused), /probeCommands must be a nonempty list/);
+  });
+  const { execFileSync } = await import("node:child_process");
+  assert.equal(execFileSync("git", ["-C", repo, "branch", "--list", "codex/*"], { encoding: "utf8" }).trim(), "", "no worker branch may be left behind");
+  assert.equal(execFileSync("git", ["-C", repo, "worktree", "list", "--porcelain"], { encoding: "utf8" }).split("\n").filter((line) => line.startsWith("worktree ")).length, 1);
 });

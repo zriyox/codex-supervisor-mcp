@@ -15,7 +15,7 @@ Node 22.13.0 以上。看板改动另跑 `npm run web:dev`。目录结构和每�
 ## 改代码的规矩
 
 - 一个改动一个提交，提交信息写为什么改，不写改了什么（diff 自己会说）。
-- 改了行为就加用例。worker 侧的行为用 `src/test-fixtures/fake-codex.js` 加一个场景回放，别依赖真 Codex。
+- 改了行为就加用例。worker 侧的行为用 `test/fixtures/fake-codex.js` 加一个场景回放，别依赖真 Codex。
 - 用例不能依赖本机：git 身份、`PATH`、网络、`/tmp` 可写都不能当前提。CI 的 Linux 和 Windows runner 没有 git 身份，0.7.0 就是这么挂的。
 - 三个平台都要过。Windows 的坑集中在 `.cmd` shim、路径分隔符、没有信号，见 README「Windows」。
 - 加工具或改入参，一起改：`skills/codex-supervisor/SKILL.md`、两份 README 的工具表和工具数。skill 随包发，改了 skill 也得发版才到用户手里。

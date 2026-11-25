@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { handoffTokenThreshold, threadHealth } from "../../src/thread-health.js";
+import { handoffTokenThreshold, threadHealth } from "../../src/domain/thread-health.js";
 
 test("thread health warns before and at the handoff threshold", () => {
   assert.equal(threadHealth({ goal_tokens_used: 1000 }, { threshold: 300000 }).state, "ok");

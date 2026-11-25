@@ -14,9 +14,9 @@ const home = await tempHome("supervisor-autoupdate-");
 process.env.SUPERVISOR_HOME = home;
 delete process.env.CODEX_SUPERVISOR_NO_AUTO_UPDATE;
 delete process.env.CI;
-const { autoUpdateBlocker, maybeAutoUpdate, readAutoUpdateState, statePath, lockPath } = await import("../../src/auto-update.js");
-const { installSource, isNpxPath, updateNotice } = await import("../../src/update-check.js");
-const workerEntry = join(repoRoot, "src", "auto-update-worker.js");
+const { autoUpdateBlocker, maybeAutoUpdate, readAutoUpdateState, statePath, lockPath } = await import("../../src/infra/update/auto-update.js");
+const { installSource, isNpxPath, updateNotice } = await import("../../src/infra/update/update-check.js");
+const workerEntry = join(repoRoot, "src", "infra", "update", "auto-update-worker.js");
 
 const check = (over = {}) => ({
   update_available: true,

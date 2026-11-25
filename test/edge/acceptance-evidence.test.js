@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { runAcceptance, normalizeAcceptance } from "../../src/acceptance.js";
+import { runAcceptance, normalizeAcceptance } from "../../src/app/acceptance.js";
 import { tempHome, makeRepo, withMcp, dispatchArgs, waitFor, git } from "./helpers.js";
 
 const baseline = { identity: { base_commit: "base" }, failures: [], required: ["must-run"] };

@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { buildAcceptanceBlock, buildGoalPreamble, buildGuardPreamble } from "../../src/prompt.js";
+import { buildAcceptanceBlock, buildGoalPreamble, buildGuardPreamble } from "../../src/domain/prompt.js";
 
 test("a worker may not invent a goal token budget", () => {
   const withoutBudget = buildGoalPreamble({ objective: "finish the gate" });

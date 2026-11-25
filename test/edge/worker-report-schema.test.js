@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { parseWorkerReport, workerReportSchemaPath } from "../../src/worker-report.js";
+import { parseWorkerReport, workerReportSchemaPath } from "../../src/domain/worker-report.js";
 import { readFile } from "node:fs/promises";
 
 test("structured report validation refuses prose, missing fields and fabricated shapes", async () => {

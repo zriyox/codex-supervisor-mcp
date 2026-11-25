@@ -2,10 +2,10 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { join } from "node:path";
 import { repoRoot } from "./helpers.js";
-import { CodexRunnerAdapter } from "../../src/runner-adapter.js";
+import { CodexRunnerAdapter } from "../../src/runners/codex/adapter.js";
 
 test("CodexRunnerAdapter exposes the worker lifecycle contract", () => {
-  const adapter = new CodexRunnerAdapter({ env: { ...process.env, CODEX_BIN: join(repoRoot, "src", "test-fixtures", "fake-codex.js") } });
+  const adapter = new CodexRunnerAdapter({ env: { ...process.env, CODEX_BIN: join(repoRoot, "test", "fixtures", "fake-codex.js") } });
   const capability = adapter.capabilityPreflight();
   assert.equal(capability.ok, true, capability.error);
   assert.equal(adapter.name, "codex");

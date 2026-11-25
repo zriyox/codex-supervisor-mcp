@@ -11,7 +11,7 @@ const home = await tempHome("supervisor-update-");
 process.env.SUPERVISOR_HOME = home;
 process.env.CODEX_SUPERVISOR_UPDATE_TIMEOUT_MS = "400";
 delete process.env.CODEX_SUPERVISOR_NO_UPDATE_CHECK;
-const { checkForUpdate, compareVersions, evaluateUpdate, parseVersion, updateNotice, INSTALL_COMMAND } = await import("../../src/update-check.js");
+const { checkForUpdate, compareVersions, evaluateUpdate, parseVersion, updateNotice, INSTALL_COMMAND } = await import("../../src/infra/update/update-check.js");
 
 let registry;
 before(async () => {

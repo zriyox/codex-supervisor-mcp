@@ -17,7 +17,7 @@ test("the worker acceptance CLI uses the stored supervisor contract", async () =
       acceptance: ['node -e "console.log(\'acceptance-cli-ok\')"']
     }));
     const final = await waitFor(call, created.id, (task) => task.exit_code === 0 && task.acceptance === "passed");
-    const { stdout } = await exec(process.execPath, [join(repoRoot, "src", "acceptance-cli.js")], {
+    const { stdout } = await exec(process.execPath, [join(repoRoot, "src", "interface", "bin", "acceptance-cli.js")], {
       env: { ...process.env, SUPERVISOR_HOME: home, CODEX_SUPERVISOR_TASK_ID: created.id,
         CODEX_SUPERVISOR_BASE_COMMIT: final.base_commit, CODEX_SUPERVISOR_RUN: String(final.run_count) },
       cwd: final.worktree_path
@@ -55,7 +55,7 @@ test("the worker acceptance CLI reads a readonly supervisor store without writin
   chmodSync(database, 0o444);
   chmodSync(dataDir, 0o555);
   try {
-    const { stdout } = await exec(process.execPath, [join(repoRoot, "src", "acceptance-cli.js")], {
+    const { stdout } = await exec(process.execPath, [join(repoRoot, "src", "interface", "bin", "acceptance-cli.js")], {
       env: { ...process.env, SUPERVISOR_HOME: home, CODEX_SUPERVISOR_TASK_ID: created.id,
         CODEX_SUPERVISOR_BASE_COMMIT: final.base_commit, CODEX_SUPERVISOR_RUN: String(final.run_count) },
       cwd: final.worktree_path

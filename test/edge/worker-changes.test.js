@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { collectWorkerChanges } from "../../src/worker-changes.js";
+import { collectWorkerChanges } from "../../src/domain/worker-changes.js";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { dispatchArgs, tempHome, withMcp } from "./helpers.js";

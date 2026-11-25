@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { withWorkerToolPath } from "../../src/worker-env.js";
+import { withWorkerToolPath } from "../../src/domain/worker-env.js";
 
 test("the worker PATH always contains the running Node toolchain", () => {
   const env = withWorkerToolPath({ PATH: "/usr/bin:/bin" }, "/opt/homebrew/bin/node", ":");

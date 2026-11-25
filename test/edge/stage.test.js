@@ -9,7 +9,7 @@ test("a worker stage checkpoint is visible live and retained as the last stage",
   await withMcp({ SUPERVISOR_HOME: home, FAKE_CODEX_SCENARIO: "hang" }, async ({ call }) => {
     const worker = await call("create_codex_worker", dispatchArgs("stage", join(home, "workspace")));
     try {
-      execFileSync(process.execPath, [join(repoRoot, "src", "stage.js"), "gate:s2", "--detail", "integration queue"], {
+      execFileSync(process.execPath, [join(repoRoot, "src", "interface", "bin", "stage.js"), "gate:s2", "--detail", "integration queue"], {
         env: { ...process.env, SUPERVISOR_HOME: home, CODEX_SUPERVISOR_TASK_ID: worker.id },
         encoding: "utf8"
       });
@@ -28,7 +28,7 @@ test("a worker stage checkpoint is visible live and retained as the last stage",
 });
 
 test("stage CLI refuses a missing task or stage", () => {
-  assert.throws(() => execFileSync(process.execPath, [join(repoRoot, "src", "stage.js")], {
+  assert.throws(() => execFileSync(process.execPath, [join(repoRoot, "src", "interface", "bin", "stage.js")], {
     env: { ...process.env, CODEX_SUPERVISOR_TASK_ID: "" }, stdio: "pipe"
   }));
 });

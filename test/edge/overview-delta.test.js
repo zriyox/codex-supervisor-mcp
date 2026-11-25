@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { buildOverviewDelta } from "../../src/overview-delta.js";
+import { buildOverviewDelta } from "../../src/domain/overview-delta.js";
 
 const task = (extra = {}) => ({
   id: "t1", title: "task", status: "running", exit_code: null, run_count: 1,

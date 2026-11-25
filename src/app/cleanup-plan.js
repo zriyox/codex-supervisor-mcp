@@ -1,0 +1,157 @@
+import { runGit } from "../infra/git.js";
+import { runSync } from "../infra/process.js";
+import "./compose.js";
+import { createHash, randomUUID } from "node:crypto";
+import { lstat, realpath } from "node:fs/promises";
+import { resolve } from "node:path";
+import { ACTIVE_STATUSES } from "../domain/status.js";
+import { worktreesDir } from "../infra/paths.js";
+import { appendTaskEvent } from "../infra/store/events.js";
+import { getTask, isPidAlive, readTasks } from "../infra/store/tasks.js";
+import { markCleanupPlanItemApplied, updateWorkItemDelivery } from "../infra/store/records.js";
+import { runIdFor } from "../infra/store/db.js";
+
+export const CLEANUP_PLAN_TTL_MS = 15 * 60 * 1000;
+
+const git = (cwd, args) => runGit(cwd, args, { timeout: 15000, noOptionalLocks: true });
+
+function hash(value) {
+  return createHash("sha256").update(value).digest("hex");
+}
+
+async function directoryBytes(path) {
+  try {
+    const output = runSync("du", ["-sk", path], { encoding: "utf8", timeout: 30000, stdio: ["ignore", "pipe", "ignore"] }).trim();
+    const kib = Number(output.split(/\s+/)[0]);
+    return Number.isFinite(kib) ? kib * 1024 : 0;
+  } catch {
+    return 0;
+  }
+}
+
+function remoteProof(task, { fetch = false } = {}) {
+  if (!task.push_remote || !task.push_branch || !task.push_remote_head) {
+    return { error: "remote delivery proof is incomplete; rerun verify_delivery_push" };
+  }
+  let remoteHead = task.push_remote_head;
+  if (fetch) {
+    try {
+      git(task.project_root, ["remote", "get-url", task.push_remote]);
+      git(task.project_root, ["fetch", "--no-tags", task.push_remote, `refs/heads/${task.push_branch}`]);
+      remoteHead = git(task.project_root, ["rev-parse", "FETCH_HEAD"]);
+    } catch (error) {
+      return { error: `remote delivery proof could not be refreshed: ${error.message.split("\n")[0]}` };
+    }
+  }
+  try {
+    git(task.project_root, ["merge-base", "--is-ancestor", task.landed_head, remoteHead]);
+  } catch {
+    return { error: "landed head is no longer reachable from the remote branch" };
+  }
+  return { remoteHead };
+}
+
+async function taskVerdict(task, tasks, { revalidateRemote = false } = {}) {
+  if (task.status !== "completed") return { verdict: "blocked", reasons: ["worker is unfinished, failed, cancelled or lost"] };
+  if (task.acceptance_results?.passed !== true) return { verdict: "blocked", reasons: ["acceptance is not explicitly passed"] };
+  if (task.pid && isPidAlive(task.pid)) return { verdict: "blocked", reasons: ["worker process is still active"] };
+  if (task.run_host_pid && isPidAlive(task.run_host_pid)) return { verdict: "blocked", reasons: ["run host process is still active"] };
+  if (task.acceptance_results?.status === "running" || (task.acceptance_results?.supervisor_pid && isPidAlive(task.acceptance_results.supervisor_pid))) return { verdict: "blocked", reasons: ["acceptance process is still active"] };
+  if (tasks.some((other) => ACTIVE_STATUSES.has(other.status) && (other.depends_on ?? []).includes(task.id))) return { verdict: "blocked", reasons: ["an active dependent still needs this work"] };
+  if (!task.worktree_path || !task.project_root) return { verdict: "review", reasons: ["no registered isolated worktree"] };
+  if (!task.landed_at || !task.landed_head) return { verdict: "blocked", reasons: ["work has not been landed"] };
+  if (!task.push_verified_at) return { verdict: "blocked", reasons: ["remote delivery has not been verified"] };
+  const delivery = remoteProof(task, { fetch: revalidateRemote });
+  if (delivery.error) return { verdict: "blocked", reasons: [delivery.error] };
+  try {
+    const path = resolve(task.worktree_path);
+    if (path !== resolve(worktreesDir, task.id)) return { verdict: "review", reasons: ["worktree is outside its managed task directory"] };
+    const info = await lstat(path);
+    if (info.isSymbolicLink()) return { verdict: "review", reasons: ["worktree is a symlink"] };
+    if (await realpath(path) !== await realpath(resolve(worktreesDir, task.id))) return { verdict: "review", reasons: ["worktree realpath is unexpected"] };
+    const branch = git(path, ["symbolic-ref", "--short", "HEAD"]);
+    if (branch !== `codex/${task.id}`) return { verdict: "review", reasons: ["worktree branch ownership is unexpected"] };
+    const registrations = git(task.project_root, ["worktree", "list", "--porcelain", "-z"]).split("\0").filter((line) => line.startsWith("worktree "));
+    let registered = false;
+    for (const line of registrations) if (await realpath(line.slice(9)) === await realpath(path)) registered = true;
+    if (!registered) return { verdict: "review", reasons: ["git worktree registration is missing"] };
+    if (git(path, ["status", "--porcelain", "--untracked-files=all"])) return { verdict: "blocked", reasons: ["worktree has uncommitted or untracked files"] };
+    if (git(path, ["ls-files", "--others", "--ignored", "--exclude-standard"])) return { verdict: "blocked", reasons: ["worktree has ignored artifacts"] };
+    if (task.attention_reason) return { verdict: "blocked", reasons: [`unresolved attention: ${task.attention_reason}`] };
+    if (task.run_evidence?.external_outputs?.length) return { verdict: "blocked", reasons: ["shared output evidence is retained"] };
+    return {
+      verdict: "safe",
+      reasons: ["acceptance passed", "landed", "remote delivery verified", "worktree clean", "no active dependent"],
+      fingerprint: hash(JSON.stringify({ path, branch, head: git(path, ["rev-parse", "HEAD"]), landed: task.landed_head, push: { remote: task.push_remote, branch: task.push_branch, head: delivery.remoteHead } }))
+    };
+  } catch (error) {
+    return { verdict: "review", reasons: [`cleanup proof failed: ${error.message.split("\n")[0]}`] };
+  }
+}
+
+export async function createCleanupPlan({ taskIds = null, projectRoot = null, now = Date.now(), revalidateRemote = true } = {}) {
+  const tasks = await readTasks();
+  const selected = tasks.filter((task) => (!taskIds || taskIds.includes(task.id)) && (!projectRoot || resolve(task.project_root) === resolve(projectRoot)));
+  const items = [];
+  for (const task of selected) {
+    const result = await taskVerdict(task, tasks, { revalidateRemote });
+    const bytes = result.verdict === "safe" ? await directoryBytes(task.worktree_path) : 0;
+    items.push({ task_id: task.id, verdict: result.verdict, reasons: result.reasons, fingerprint: result.fingerprint ?? null, reclaimable_bytes: bytes, eligible_after: result.verdict === "safe" ? new Date(now).toISOString() : null });
+  }
+  const summary = {
+    safe: items.filter((item) => item.verdict === "safe").length,
+    review: items.filter((item) => item.verdict === "review").length,
+    blocked: items.filter((item) => item.verdict === "blocked").length,
+    reclaimable_bytes: items.reduce((sum, item) => sum + item.reclaimable_bytes, 0)
+  };
+  return {
+    id: randomUUID(),
+    project_root: projectRoot ? resolve(projectRoot) : null,
+    generated_at: new Date(now).toISOString(),
+    expires_at: new Date(now + CLEANUP_PLAN_TTL_MS).toISOString(),
+    policy: "explicit_apply_keep_evidence_and_branch",
+    summary,
+    items
+  };
+}
+
+export async function removePlannedWorktree(task, fingerprint) {
+  const result = await taskVerdict(task, await readTasks(), { revalidateRemote: true });
+  if (result.verdict !== "safe") throw new Error(`worktree is no longer safe: ${result.reasons.join("; ")}`);
+  if (result.fingerprint !== fingerprint) throw new Error("worktree changed since cleanup plan; create a new plan");
+  git(task.project_root, ["worktree", "remove", task.worktree_path]);
+  try { git(task.project_root, ["worktree", "prune"]); } catch { /* best effort */ }
+}
+
+export async function applyCleanupPlan({ plan, itemIds, actor = "main_thread" }) {
+  if (Date.parse(plan.expires_at) <= Date.now()) {
+    return { error: "cleanup_plan_expired", plan_id: plan.id, expires_at: plan.expires_at };
+  }
+  const selected = plan.items.filter((item) => itemIds.includes(item.id));
+  if (selected.length !== itemIds.length) return { error: "cleanup_plan_item_not_found", plan_id: plan.id };
+  const applied = [];
+  const skipped = [];
+  for (const item of selected) {
+    if (item.verdict !== "safe") {
+      skipped.push({ item_id: item.id, task_id: item.task_id, reason: "only SAFE plan items may be applied" });
+      continue;
+    }
+    const task = await getTask(item.task_id);
+    if (!task) {
+      skipped.push({ item_id: item.id, task_id: item.task_id, reason: "task no longer exists" });
+      continue;
+    }
+    try {
+      await removePlannedWorktree(task, item.fingerprint);
+      const now = await markCleanupPlanItemApplied(item.id, actor);
+      await updateWorkItemDelivery(task.id, "cleanup_removed");
+      await appendTaskEvent(task.id, { type: "supervisor.cleanup_removed", plan_id: plan.id, item_id: item.id, removed_at: now, retained: ["branch", "task", "events", "jsonl", "artifacts"] }, {
+        runId: runIdFor(task.id, task.run_count ?? 1), actor
+      });
+      applied.push({ item_id: item.id, task_id: task.id, worktree_path: task.worktree_path, removed_at: now });
+    } catch (error) {
+      skipped.push({ item_id: item.id, task_id: item.task_id, reason: error.message.split("\n")[0] });
+    }
+  }
+  return { plan_id: plan.id, applied, skipped, retained: ["branch", "task", "events", "jsonl", "artifacts"] };
+}

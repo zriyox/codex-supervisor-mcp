@@ -8,7 +8,7 @@ import { git, makeRepo, tempHome } from "./helpers.js";
 
 const home = await tempHome("supervisor-changes-");
 process.env.SUPERVISOR_HOME = home;
-const { readWorktreeChanges, resolveWorktreeBase, readTaskChanges } = await import("../../src/worktree.js");
+const { readWorktreeChanges, resolveWorktreeBase, readTaskChanges } = await import("../../src/infra/worktree.js");
 
 async function worktreeFrom(repo, name) {
   const wt = join(home, "wt", name);

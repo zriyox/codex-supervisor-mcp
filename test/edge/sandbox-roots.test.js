@@ -4,7 +4,7 @@ import { mkdir, mkdtemp, readFile, symlink } from "node:fs/promises";
 import { realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, posix, win32 } from "node:path";
-import { EXPLICIT_ONLY_DIRS, cacheRoots, resolveWritableRoot, symlinkComponents } from "../../src/sandbox-roots.js";
+import { EXPLICIT_ONLY_DIRS, cacheRoots, resolveWritableRoot, symlinkComponents } from "../../src/infra/sandbox-roots.js";
 import { dispatchArgs, makeRepo, tempHome, waitFor, withMcp } from "./helpers.js";
 
 // Creating a symlink needs privileges on Windows; the platform still exercises

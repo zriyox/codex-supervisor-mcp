@@ -7,7 +7,7 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, posix } from "node:path";
 import { fileURLToPath } from "node:url";
-import { resolveCommand } from "../../src/bin-resolver.js";
+import { resolveCommand } from "../../src/infra/bin-resolver.js";
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 
@@ -39,7 +39,7 @@ test("the npm tarball includes every local import reachable from its CLI entries
     visited.add(file);
     const source = await readFile(join(repoRoot, file), "utf8");
     // Cover static imports/re-exports, side-effect imports and literal dynamic
-    // imports (web-server.js loads web-app.js only after resolving the store).
+    // imports (web-server.js loads web/app.js only after resolving the store).
     const localImports = /\bfrom\s*["'](\.[^"']+)["']|\bimport\s*(?:\(\s*)?["'](\.[^"']+)["']/g;
     for (const match of source.matchAll(localImports)) {
       const dependency = posix.normalize(posix.join(posix.dirname(file), match[1] ?? match[2]));

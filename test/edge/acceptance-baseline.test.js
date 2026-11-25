@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { compareFailureBaseline } from "../../src/acceptance-baseline.js";
+import { compareFailureBaseline } from "../../src/domain/acceptance-baseline.js";
 
 const failure = (test_id = "old", kind = "failure", signature = "old assertion") => ({ test_id, kind, signature });
 const expected = (failures = [], required = []) => ({ identity: { base_commit: "base" }, failures, required });

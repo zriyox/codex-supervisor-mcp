@@ -15,7 +15,7 @@ if(args[1]==='get'){if(!fs.existsSync(state)){console.error('No MCP server found
 else if(args[1]==='remove'){if(fs.existsSync(state))fs.unlinkSync(state);}
 else if(args[1]==='add'){const i=args.indexOf('--');if(process.env.REG_MODE==='fail'||(process.env.REG_MODE==='fail-new'&&args[i+1]!=='/old/node')){console.error('registration denied');process.exit(7);}if(process.env.REG_MODE!=='no-write')fs.writeFileSync(state,JSON.stringify({command:args[i+1],args:args.slice(i+2)}));}`);
   const env={...process.env,HOME:root,USERPROFILE:root,CODEX_HOME:"",CLAUDE_CONFIG_DIR:"",CODEX_BIN:"",CLAUDE_BIN:"",REG_STATE:state,REG_CLIENT:client,REG_MODE:mode,[client==='codex'?'CODEX_BIN':'CLAUDE_BIN']:entry};
-  const setup=async(args=[])=>run(process.execPath,[join(repoRoot,"src/setup.js"),"--mcp-only","--target",client,...args],{env});
+  const setup=async(args=[])=>run(process.execPath,[join(repoRoot,"src/interface/bin/setup.js"),"--mcp-only","--target",client,...args],{env});
   return {root,state,setup};
 }
 for(const client of ["claude","codex"]){
@@ -47,10 +47,10 @@ for(const client of ["claude","codex"]){
     const result=await h.setup(["--skill-only","--auto"]); // Non-global automatic runs remain inert.
     assert.equal(result.stderr,"");
     const env={...process.env,HOME:h.root,USERPROFILE:h.root,CODEX_HOME:"",CLAUDE_CONFIG_DIR:"",REG_STATE:h.state,REG_CLIENT:client,REG_MODE:"ok",[client==='codex'?'CODEX_BIN':'CLAUDE_BIN']:join(h.root,"client.cjs")};
-    await assert.rejects(run(process.execPath,[join(repoRoot,"src/setup.js"),"--target",client],{env}),error=>error.code===1&&/MCP registration will still be attempted/.test(error.stderr));
+    await assert.rejects(run(process.execPath,[join(repoRoot,"src/interface/bin/setup.js"),"--target",client],{env}),error=>error.code===1&&/MCP registration will still be attempted/.test(error.stderr));
     const state=JSON.parse(await readFile(h.state,"utf8"));assert.equal(state.command,process.execPath);
     await rm(h.state);
-    const automatic=await run(process.execPath,[join(repoRoot,"src/setup.js"),"--target",client,"--auto"],{env:{...env,npm_config_global:"true",CODEX_SUPERVISOR_SKIP_SETUP:""}});
+    const automatic=await run(process.execPath,[join(repoRoot,"src/interface/bin/setup.js"),"--target",client,"--auto"],{env:{...env,npm_config_global:"true",CODEX_SUPERVISOR_SKIP_SETUP:""}});
     assert.match(automatic.stderr,/MCP registration will still be attempted/);
     assert.deepEqual(JSON.parse(await readFile(h.state,"utf8")),state);
   });

@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
-import { cleanupHint, cleanupThreshold } from "../../src/cleanup-hint.js";
+import { cleanupHint, cleanupThreshold } from "../../src/infra/cleanup-hint.js";
 import { tempHome, withMcp } from "./helpers.js";
 
 test("the hint appears only once the store holds enough worktrees", async () => {

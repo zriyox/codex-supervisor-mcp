@@ -8,7 +8,7 @@ import { DatabaseSync } from "node:sqlite";
 import { dispatchArgs, git, makeRepo, repoRoot, tempHome, waitFor, waitForRunHostExit, withMcp } from "./helpers.js";
 
 function runCleanup(home, args) {
-  return JSON.parse(execFileSync(process.execPath, [join(repoRoot, "src", "cleanup.js"), ...args], {
+  return JSON.parse(execFileSync(process.execPath, [join(repoRoot, "src", "interface", "bin", "cleanup.js"), ...args], {
     encoding: "utf8",
     env: { ...process.env, SUPERVISOR_HOME: home, CODEX_HOME: join(home, "codex") },
     timeout: 30000

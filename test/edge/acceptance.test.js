@@ -6,7 +6,7 @@ import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { dispatchArgs, git, makeRepo, tempHome, waitFor, withMcp } from "./helpers.js";
-import { runAcceptance } from "../../src/acceptance.js";
+import { runAcceptance } from "../../src/app/acceptance.js";
 
 // Bash shell lines also accepted by the original sh/cmd runner, so RED does
 // not depend on a syntax change in the reproducer.
