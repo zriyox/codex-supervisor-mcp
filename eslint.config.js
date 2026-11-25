@@ -5,7 +5,7 @@ export default [
   { ignores: ["web/**", "node_modules/**", "data/**", "assets/**"] },
   js.configs.recommended,
   {
-    files: ["src/**/*.js", "src/**/*.jsx", "test/**/*.js", "eslint.config.js"],
+    files: ["src/**/*.js", "src/**/*.jsx", "test/**/*.js", "test/**/*.mjs", "eslint.config.js"],
     languageOptions: {
       ecmaVersion: "latest",
       sourceType: "module",
