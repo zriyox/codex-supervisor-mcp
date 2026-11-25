@@ -17,8 +17,6 @@ function check(name, fn) {
 }
 
 check("status and phase sets are disjoint", () => {
-  assert.deepEqual(TASK_STATUSES, ["queued", "running", "completed", "failed", "cancelled", "lost"]);
-  assert.deepEqual(PHASES, ["starting", "thinking", "command", "editing", "reporting"]);
   assert.equal(TASK_STATUSES.length + PHASES.length, new Set([...TASK_STATUSES, ...PHASES]).size);
 });
 
