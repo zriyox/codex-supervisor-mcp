@@ -9,7 +9,7 @@ import { codexRunner } from "../runners/codex/adapter.js";
 import { readNativeGoalState } from "../runners/codex/goal-store.js";
 import { DEFAULT_ACCEPTANCE_TIMEOUT_MS, normalizeAcceptance } from "./acceptance.js";
 import { isPidAlive } from "./cancel.js";
-import { rebaseWorktree } from "./landing.js";
+import { rebaseWorktree } from "./rebase.js";
 import { processes } from "./run-state.js";
 import { startTrackedRun } from "./start-run.js";
 import { exists, resolveCommit } from "./worktree-setup.js";

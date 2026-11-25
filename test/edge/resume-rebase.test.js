@@ -268,7 +268,7 @@ test("base_commit is recorded before the worker starts, so a launch failure cann
 test("rebase after landing skips integrated patches that main has since edited", async () => {
   const home = await tempHome("supervisor-rebase-landed-");
   const { dir } = await makeRepo(join(home, "repo"));
-  const { rebaseWorktree } = await import("../../src/app/landing.js");
+  const { rebaseWorktree } = await import("../../src/app/rebase.js");
   await withMcp({ SUPERVISOR_HOME: home }, async ({ call }) => {
     const created = await call("create_codex_worker", dispatchArgs("landed then extended", dir, { ownedPaths: ["first.txt", "new.txt"] }));
     await waitFor(call, created.id, settled);
