@@ -427,7 +427,7 @@ export function rebaseWorktree(task, ontoCommit) {
   // stash's third parent; they are removed before the pop that restores
   // them for good.
   const removeStashedUntracked = () => {
-    let paths = [];
+    let paths;
     try {
       paths = lines(git(cwd, ["ls-tree", "-r", "--name-only", "refs/stash^3"]));
     } catch {

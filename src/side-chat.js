@@ -22,7 +22,6 @@
 //   turn failed / timed out / stopped  error on the turn, session still usable
 //   board restarted mid-turn ........ turn marked interrupted
 //   session ended ................... fork deleted, history cleared
-import { execFileSync, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { codexConfigText, disableMcpServerArgs } from "./mcp-config.js";
 import { codexRunner } from "./runner-adapter.js";

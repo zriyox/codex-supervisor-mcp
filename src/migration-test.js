@@ -4,11 +4,9 @@
 import assert from "node:assert/strict";
 import { mkdtemp, mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, dirname } from "node:path";
-import { fileURLToPath } from "node:url";
+import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
-const here = dirname(fileURLToPath(import.meta.url));
 const home = await mkdtemp(join(tmpdir(), "supervisor-migration-"));
 await mkdir(join(home, "data"), { recursive: true });
 const dbFile = join(home, "data", "supervisor.sqlite");

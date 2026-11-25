@@ -132,7 +132,7 @@ function versionManagerBinDirs() {
   const dirs = [];
   for (const [root, suffix] of VERSION_MANAGER_ROOTS) {
     if (!existsSync(root)) continue;
-    let entries = [];
+    let entries;
     try {
       entries = readdirSync(root);
     } catch {
@@ -188,7 +188,7 @@ async function registeredMcp(target, client) {
   } catch (error) {
     const message = `${error.stdout ?? ""}${error.stderr ?? ""}${error.message}`;
     if (/not found|no mcp server|could not find|does not exist/i.test(message)) return null;
-    throw new Error(`cannot read ${client.label} MCP registration: ${error.message.split("\n")[0]}`);
+    throw new Error(`cannot read ${client.label} MCP registration: ${error.message.split("\n")[0]}`, { cause: error });
   }
 }
 

@@ -184,7 +184,7 @@ export function readWorktreeDiff(worktreePath, { baseCommit = null, branch = nul
       truncatedFiles += 1;
       continue;
     }
-    let patch = "";
+    let patch;
     try {
       if (file.status === "untracked") {
         const text = readFileSync(join(worktreePath, file.path), "utf8");
@@ -295,7 +295,7 @@ export function snapshotTaskOutput(task) {
 // base is not in; every git error is reported as null, never as 0.
 export function baseBehind(projectRoot, baseCommit) {
   if (!projectRoot || !baseCommit || !existsSync(projectRoot)) return { behind: null, contains_base: null, ref: null };
-  let ref = null;
+  let ref;
   try {
     ref = git(projectRoot, ["symbolic-ref", "--short", "-q", "HEAD"]).trim() || "HEAD";
   } catch {

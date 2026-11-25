@@ -263,7 +263,7 @@ async function withWorktreeCreationLock(cwd, work) {
       await mkdir(lockPath);
       break;
     } catch (error) {
-      if (error.code !== "EEXIST" || Date.now() >= deadline) throw new Error(`worktree creation lock timed out for ${cwd}`);
+      if (error.code !== "EEXIST" || Date.now() >= deadline) throw new Error(`worktree creation lock timed out for ${cwd}`, { cause: error });
       await sleep(100);
     }
   }

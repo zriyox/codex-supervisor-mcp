@@ -18,7 +18,6 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { dataDir } from "./paths.js";
 
-const PACKAGE_NAME = "codex-supervisor-mcp";
 export const statePath = join(dataDir, "auto-update.json");
 export const lockPath = join(dataDir, "auto-update.lock");
 export const logPath = join(dataDir, "auto-update.log");
