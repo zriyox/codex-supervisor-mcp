@@ -1,13 +1,21 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { repoRoot } from "./helpers.js";
+import { repoRoot, withMcp } from "./helpers.js";
 
 const read = (path) => readFile(join(repoRoot, path), "utf8");
 
-function registeredTools(source) {
-  return [...source.matchAll(/register(?:Tool|\()\s*\(?\s*"([a-z][a-z0-9_]+)"/g)].map((match) => match[1]);
+// Ask the running server instead of reading its source: the answer does not
+// depend on how the tools are laid out in files.
+async function registeredTools() {
+  const home = await mkdtemp(join(tmpdir(), "supervisor-docs-"));
+  try {
+    return await withMcp({ SUPERVISOR_HOME: home, CODEX_SUPERVISOR_SKIP_SKILL_SYNC: "1" }, async ({ client }) => (await client.listTools()).tools.map((tool) => tool.name));
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
 }
 
 function documentedTools(markdown, heading, end) {
@@ -26,14 +34,13 @@ function mentionedTools(markdown, heading, end, registered) {
 }
 
 test("both READMEs and both references document every registered MCP tool", async () => {
-  const [source, zh, en, zhRef, enRef] = await Promise.all([
-    read("src/interface/mcp/server.js"),
+  const [zh, en, zhRef, enRef] = await Promise.all([
     read("README.md"),
     read("README.en.md"),
     read("docs/reference.md"),
     read("docs/reference.en.md")
   ]);
-  const registered = registeredTools(source).sort();
+  const registered = (await registeredTools()).sort();
   assert.equal(registered.length, 39);
   // The READMEs group tools by stage, several to a row; the references keep one row per tool with its arguments.
   assert.deepEqual(mentionedTools(zh, "## 工具", "## 和 Claude Code", registered), registered);
