@@ -1,7 +1,8 @@
 import { askWorker, endSideSession, latestSideTurn } from "../../../app/side-chat.js";
 import { isGoalNeedingAttention, TERMINAL_STATUSES } from "../../../domain/status.js";
 import { truncateMiddleChars, truncateReport } from "../../../domain/truncate.js";
-import { getTask, readAgentMessages, recordTerminalChangedFiles } from "../../../infra/store/task-store.js";
+import { getTask, recordTerminalChangedFiles } from "../../../infra/store/tasks.js";
+import { readAgentMessages } from "../../../infra/store/events.js";
 import { baseBehind, readTaskChanges, readWorktreeDiff, splitPatchHunks, workspaceSetupIgnorePaths, worktreeRef } from "../../../infra/worktree.js";
 import { summarizeVerification } from "../../../runners/codex/event-parser.js";
 import { readNativeGoal, readNativeGoalState } from "../../../runners/codex/goal-store.js";

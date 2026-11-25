@@ -2,7 +2,8 @@ import { gitSucceeds } from "../infra/git.js";
 import "./compose.js";
 import { buildHandoff } from "../infra/handoff.js";
 import { approxTokenCount } from "../domain/truncate.js";
-import { createContextSnapshot, listContextFacts, runIdFor } from "../infra/store/task-store.js";
+import { createContextSnapshot, listContextFacts } from "../infra/store/facts.js";
+import { runIdFor } from "../infra/store/db.js";
 
 const MAX_CONTEXT_TOKENS = 1500;
 

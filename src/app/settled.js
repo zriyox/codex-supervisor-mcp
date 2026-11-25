@@ -1,6 +1,6 @@
 import { readPreflightResult } from "../domain/worker-preflight.js";
 import { TERMINAL_STATUSES } from "../domain/status.js";
-import { isPidAlive } from "../infra/store/task-store.js";
+import { isPidAlive } from "../infra/store/tasks.js";
 
 // A terminal status is written in two steps. Codex's turn.completed event
 // flips status to completed while the process is still alive and exit_code is

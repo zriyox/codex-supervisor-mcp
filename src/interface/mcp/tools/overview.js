@@ -1,7 +1,10 @@
 import { buildHostGoalSync } from "../../../domain/prompt.js";
 import { ACTIVE_STATUSES, TASK_STATUSES } from "../../../domain/status.js";
 import { truncateEventStrings } from "../../../domain/truncate.js";
-import { getSession, getTask, listTaskEventKinds, readTaskEvents, readTasks, readTasksBySession, reconcileDetachedActiveTasks, searchTasks, upsertSession } from "../../../infra/store/task-store.js";
+import { getSession, upsertSession } from "../../../infra/store/sessions.js";
+import { getTask, readTasks, readTasksBySession, searchTasks } from "../../../infra/store/tasks.js";
+import { listTaskEventKinds, readTaskEvents } from "../../../infra/store/events.js";
+import { reconcileDetachedActiveTasks } from "../../../infra/store/reconcile.js";
 import { packageVersion } from "../meta.js";
 import { errorResult, textResult } from "../result.js";
 import { acceptanceCheck } from "../schemas.js";

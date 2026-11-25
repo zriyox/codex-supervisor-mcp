@@ -9,15 +9,10 @@ import { createServer } from "node:http";
 import { createReadStream, existsSync, statSync } from "node:fs";
 import { extname, join, normalize, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import {
-  getTask,
-  listTaskEventKinds,
-  readAgentMessages,
-  readSessions,
-  readTaskEvents,
-  readTasks,
-  reconcileDetachedActiveTasks
-} from "../../infra/store/task-store.js";
+import { getTask, readTasks } from "../../infra/store/tasks.js";
+import { listTaskEventKinds, readAgentMessages, readTaskEvents } from "../../infra/store/events.js";
+import { readSessions } from "../../infra/store/sessions.js";
+import { reconcileDetachedActiveTasks } from "../../infra/store/reconcile.js";
 import { readNativeGoal } from "../../runners/codex/goal-store.js";
 import { readTaskChanges } from "../../infra/worktree.js";
 import { ACTIVE_STATUSES } from "../../domain/status.js";

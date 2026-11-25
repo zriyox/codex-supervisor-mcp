@@ -6,7 +6,10 @@ import { lstat, realpath } from "node:fs/promises";
 import { resolve } from "node:path";
 import { ACTIVE_STATUSES } from "../domain/status.js";
 import { worktreesDir } from "../infra/paths.js";
-import { appendTaskEvent, getTask, isPidAlive, markCleanupPlanItemApplied, readTasks, updateWorkItemDelivery, runIdFor } from "../infra/store/task-store.js";
+import { appendTaskEvent } from "../infra/store/events.js";
+import { getTask, isPidAlive, readTasks } from "../infra/store/tasks.js";
+import { markCleanupPlanItemApplied, updateWorkItemDelivery } from "../infra/store/records.js";
+import { runIdFor } from "../infra/store/db.js";
 
 export const CLEANUP_PLAN_TTL_MS = 15 * 60 * 1000;
 

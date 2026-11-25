@@ -1,7 +1,9 @@
 import { acceptanceVerdict } from "../../../app/acceptance.js";
 import { ACTIVE_STATUSES } from "../../../domain/status.js";
 import { truncateEventStrings } from "../../../domain/truncate.js";
-import { getTasks, readTaskEvents, reconcileDetachedActiveTasks } from "../../../infra/store/task-store.js";
+import { getTasks } from "../../../infra/store/tasks.js";
+import { readTaskEvents } from "../../../infra/store/events.js";
+import { reconcileDetachedActiveTasks } from "../../../infra/store/reconcile.js";
 import { readTaskChanges } from "../../../infra/worktree.js";
 import { clip, sleep, textResult } from "../result.js";
 import { withUpdate } from "../update-state.js";

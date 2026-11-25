@@ -2,7 +2,9 @@
 import "../../app/compose.js";
 import React, { useEffect, useMemo, useState } from "react";
 import { Box, Newline, render, Text, useApp, useInput, useStdout } from "ink";
-import { readTaskEvents, readTasks, reconcileDetachedActiveTasks } from "../../infra/store/task-store.js";
+import { readTaskEvents } from "../../infra/store/events.js";
+import { readTasks } from "../../infra/store/tasks.js";
+import { reconcileDetachedActiveTasks } from "../../infra/store/reconcile.js";
 
 const REFRESH_MS = 1000;
 const STATUS_LABELS = {

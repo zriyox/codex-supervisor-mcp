@@ -62,7 +62,9 @@ seed.close();
 
 process.env.SUPERVISOR_HOME = home;
 await import("../../src/app/compose.js");
-const { readTasks, readTaskEvents, readTaskEventRecords, reconcileDetachedActiveTasks } = await import("../../src/infra/store/task-store.js");
+const { readTasks } = await import("../../src/infra/store/tasks.js");
+const { readTaskEvents, readTaskEventRecords } = await import("../../src/infra/store/events.js");
+const { reconcileDetachedActiveTasks } = await import("../../src/infra/store/reconcile.js");
 
 let failures = 0;
 async function test(name, fn) {

@@ -1,5 +1,6 @@
 import { createCodexWorker } from "../../src/app/runner.js";
-import { getTask, readTaskEvents, taskEventCount } from "../../src/infra/store/task-store.js";
+import { getTask, taskEventCount } from "../../src/infra/store/tasks.js";
+import { readTaskEvents } from "../../src/infra/store/events.js";
 
 const cwd = process.argv[2] ?? process.cwd();
 const task = "Reply with one short sentence. Do not modify files.";

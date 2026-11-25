@@ -1,5 +1,8 @@
 import { createCodexWorker } from "../../../app/runner.js";
-import { appendTaskEvent, createReviewAssignment, getReviewByVerifierTask, getTask, recordJsonArtifact, recordReviewFinding, resolveReviewFinding, runIdFor } from "../../../infra/store/task-store.js";
+import { appendTaskEvent } from "../../../infra/store/events.js";
+import { createReviewAssignment, getReviewByVerifierTask, recordJsonArtifact, recordReviewFinding, resolveReviewFinding } from "../../../infra/store/records.js";
+import { getTask } from "../../../infra/store/tasks.js";
+import { runIdFor } from "../../../infra/store/db.js";
 import { errorResult, textResult } from "../result.js";
 import { isSettled } from "../../../app/settled.js";
 import { receipt } from "../views/task.js";

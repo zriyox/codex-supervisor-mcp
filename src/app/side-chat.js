@@ -26,16 +26,7 @@ import "./compose.js";
 import { randomUUID } from "node:crypto";
 import { codexConfigText, disableMcpServerArgs } from "../runners/codex/mcp-config.js";
 import { codexRunner } from "../runners/codex/adapter.js";
-import {
-  closeSideSession,
-  getSideSession,
-  insertSideTurn,
-  interruptRunningSideTurns,
-  openSideSession,
-  readSideTurns,
-  setSideSessionFork,
-  updateSideTurn
-} from "../infra/store/task-store.js";
+import { closeSideSession, getSideSession, insertSideTurn, interruptRunningSideTurns, openSideSession, readSideTurns, setSideSessionFork, updateSideTurn } from "../infra/store/sessions.js";
 
 const TURN_TIMEOUT_MS = 10 * 60 * 1000;
 

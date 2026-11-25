@@ -6,27 +6,12 @@ import { lstat, mkdir, realpath, rm, stat, symlink } from "node:fs/promises";
 import { createHash, randomUUID } from "node:crypto";
 import { basename, join, resolve, relative, sep, dirname, isAbsolute } from "node:path";
 import { fileURLToPath } from "node:url";
-import {
-  appendTaskEvent,
-  appendTaskEvents,
-  getTask,
-  getSession,
-  readActiveTasks,
-  readTasks,
-  readTaskEvents,
-  taskRunPath,
-  upsertSession,
-  upsertTask,
-  ensureRunRecord,
-  completeRunRecord,
-  getWorkItemForTask,
-  recordFact,
-  runIdFor,
-  updateWorkItemDelivery,
-  claimTaskRun,
-  releaseTaskRun,
-  reserveTaskOwnership
-} from "../infra/store/task-store.js";
+import { appendTaskEvent, appendTaskEvents, readTaskEvents, ensureRunRecord, completeRunRecord } from "../infra/store/events.js";
+import { getTask, readActiveTasks, readTasks, taskRunPath, upsertTask, claimTaskRun, releaseTaskRun, reserveTaskOwnership } from "../infra/store/tasks.js";
+import { getSession, upsertSession } from "../infra/store/sessions.js";
+import { getWorkItemForTask, recordFact } from "../infra/store/facts.js";
+import { runIdFor } from "../infra/store/db.js";
+import { updateWorkItemDelivery } from "../infra/store/records.js";
 import { ACTIVE_STATUSES, TERMINAL_STATUSES } from "../domain/status.js";
 import { worktreesDir } from "../infra/paths.js";
 import { clearStage } from "../infra/stage-store.js";

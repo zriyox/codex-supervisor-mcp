@@ -2,7 +2,7 @@ import { runAcceptance } from "../../../app/acceptance.js";
 import { createCodexWorker, createFollowupWorker, resumeCodexWorker } from "../../../app/runner.js";
 import { readPreflightResult } from "../../../domain/worker-preflight.js";
 import { runGit } from "../../../infra/git.js";
-import { getTask } from "../../../infra/store/task-store.js";
+import { getTask } from "../../../infra/store/tasks.js";
 import { baseBehind } from "../../../infra/worktree.js";
 import { errorResult, textResult } from "../result.js";
 import { acceptanceInput, workspaceSetupInput } from "../schemas.js";
