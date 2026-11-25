@@ -14,9 +14,14 @@ import { resolve } from "node:path";
 const git = (cwd, args) => runGitAsync(cwd, args, { timeout: 15000, noOptionalLocks: true, rawPaths: true, trim: false });
 const lines = (text) => text.split("\n").filter(Boolean);
 
+// The exit code is the last thing a run host writes, after acceptance. Once it
+// is on a finished row nothing of that run touches the worktree again, and the
+// pids on the row are history: the system hands them to other processes, on
+// Windows within seconds, and a live stranger must not read as a live worker.
 function activeReason(task) {
-  if (task.pid && isPidAlive(task.pid)) return "worker process is still active";
-  if (task.run_host_pid && isPidAlive(task.run_host_pid)) return "run host process is still active";
+  const settled = TERMINAL_STATUSES.has(task.status) && task.exit_code != null;
+  if (!settled && task.pid && isPidAlive(task.pid)) return "worker process is still active";
+  if (!settled && task.run_host_pid && isPidAlive(task.run_host_pid)) return "run host process is still active";
   const acceptance = task.acceptance_results;
   if (acceptance?.status === "running" || (acceptance?.supervisor_pid && isPidAlive(acceptance.supervisor_pid))) return "acceptance process is still active";
   return null;
