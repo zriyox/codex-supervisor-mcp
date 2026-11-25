@@ -7,7 +7,7 @@ import { upsertTask } from "../infra/store/tasks.js";
 import { installCrashGuard } from "../infra/crash-guard.js";
 import { trackRunInHost } from "./track.js";
 
-installCrashGuard("run-host");
+installCrashGuard("run-host", { exitOnRejection: true });
 
 process.once("message", async (job) => {
   const keepAlive = setInterval(() => {}, 1000);

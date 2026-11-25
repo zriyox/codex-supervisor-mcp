@@ -16,17 +16,21 @@ const lastLine = (text) => text.split(/\r?\n/).map((line) => line.trim()).filter
 function processExitFailure(stderr) {
   const detail = lastLine(stderr);
   const withDetail = (failure) => (detail ? { ...failure, detail } : failure);
-  if (/\b401\b|unauthori[sz]ed|not logged in|login required|invalid api key|missing api key|\b403\b|forbidden/i.test(stderr)) {
+  // A bare 401 is also a line number or a millisecond; it counts only next to a word that makes it a status.
+  if (/(?:http|status|code|error)\D{0,8}(?:401|403)\b|unauthori[sz]ed|not logged in|login required|invalid api key|missing api key|forbidden/i.test(stderr)) {
     return withDetail({ source: "auth", code: "auth_failed", retryable: false });
   }
   // A process of an earlier run still holds the session; it clears when that process ends.
   if (/already has an active writer|thread-store conflict/i.test(stderr)) return withDetail({ source: "runner_session", code: "session_busy", retryable: true });
-  const provider = providerFailure(stderr);
-  if (provider) return withDetail(provider);
-  if (/\b429\b|rate.?limit|too many requests/i.test(stderr)) return withDetail({ source: "provider", code: "provider_rate_limited", retryable: true });
+  // The specific causes first: the general provider match answers to the word "provider" alone.
+  if (/(?:http|status|code|error)\D{0,8}429\b|rate.?limit|too many requests/i.test(stderr)) {
+    return withDetail({ source: "provider", code: "provider_rate_limited", retryable: true });
+  }
   if (/ECONNREFUSED|ECONNRESET|ENOTFOUND|ETIMEDOUT|error sending request|connection (refused|reset|closed)|stream disconnected|dns error/i.test(stderr)) {
     return withDetail({ source: "provider", code: "provider_unreachable", retryable: true });
   }
+  const provider = providerFailure(stderr);
+  if (provider) return withDetail(provider);
   if (/config\.toml|unknown model|model .{0,80}(not found|does not exist|not supported)|unexpected argument|invalid value/i.test(stderr)) {
     return withDetail({ source: "runner_config", code: "config_invalid", retryable: false });
   }

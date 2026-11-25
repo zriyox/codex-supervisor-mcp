@@ -163,7 +163,14 @@ function sleep(ms) {
 const LOCK_UNCLAIMED_MS = 10000;
 
 async function lockIsAbandoned(lockPath) {
-  const owner = Number(await readFile(join(lockPath, "owner"), "utf8").catch(() => ""));
+  let owner;
+  try {
+    owner = Number(await readFile(join(lockPath, "owner"), "utf8"));
+  } catch (error) {
+    // Only a missing file means "not written yet"; anything else is a lock we cannot judge.
+    if (error.code !== "ENOENT") return false;
+    owner = 0;
+  }
   if (owner) return !isPidAlive(owner);
   // No owner yet: either the holder is between mkdir and its write, or it
   // died there. Age tells them apart.
@@ -177,6 +184,12 @@ async function breakAbandonedLock(lockPath) {
     await rename(lockPath, aside);
   } catch {
     return; // someone else broke it, or the holder released it
+  }
+  // Between the check and the rename another waiter may have broken the lock
+  // and taken a fresh one, which is then what was moved. It goes back.
+  if (!await lockIsAbandoned(aside)) {
+    await rename(aside, lockPath).catch(() => {});
+    return;
   }
   await rm(aside, { recursive: true, force: true }).catch(() => {});
 }

@@ -28,8 +28,15 @@ function record(role, kind, error) {
 }
 
 // role names the process in the log: "mcp-server", "run-host", "web".
-export function installCrashGuard(role) {
-  process.on("unhandledRejection", (reason) => record(role, "unhandled_rejection", reason));
+//
+// exitOnRejection is for the run host, whose state is in memory: the live run,
+// the child, the write chains. Kept alive after a rejection it would hold its
+// row at "running" for good, where a dead one is found and recovered by pid.
+export function installCrashGuard(role, { exitOnRejection = false } = {}) {
+  process.on("unhandledRejection", (reason) => {
+    record(role, "unhandled_rejection", reason);
+    if (exitOnRejection) process.exit(1);
+  });
   process.on("uncaughtException", (error) => {
     record(role, "uncaught_exception", error);
     process.exit(1);

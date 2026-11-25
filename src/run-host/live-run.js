@@ -21,6 +21,8 @@ export function startingRow(record, child, outputSchema, now) {
     exit_code: null,
     signal: null,
     error: null,
+    // What an earlier run wrote to stderr says nothing about how this one ends.
+    stderr_tail: null,
     cancel_requested_at: null,
     acceptance_results: null,
     attention_reason: null,

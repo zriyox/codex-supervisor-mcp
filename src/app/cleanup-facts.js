@@ -4,7 +4,7 @@ import "./compose.js";
 import { ACTIVE_STATUSES, TERMINAL_STATUSES } from "../domain/status.js";
 import { gitSucceedsAsync, runGitAsync } from "../infra/git.js";
 import { worktreesDir } from "../infra/paths.js";
-import { isPidAlive } from "../infra/store/tasks.js";
+import { isGroupAlive, isPidAlive } from "../infra/store/tasks.js";
 import { parsePorcelainLine, resolveWorktreeBase, workspaceSetupIgnorePaths, worktreeRef } from "../infra/worktree.js";
 import { lstat, realpath } from "node:fs/promises";
 import { resolve } from "node:path";
@@ -22,6 +22,7 @@ function activeReason(task) {
   const settled = TERMINAL_STATUSES.has(task.status) && task.exit_code != null;
   if (!settled && task.pid && isPidAlive(task.pid)) return "worker process is still active";
   if (!settled && task.run_host_pid && isPidAlive(task.run_host_pid)) return "run host process is still active";
+  if (!settled && isGroupAlive(task.run_host_pid)) return "a process of the worker's run is still active";
   const acceptance = task.acceptance_results;
   if (acceptance?.status === "running" || (acceptance?.supervisor_pid && isPidAlive(acceptance.supervisor_pid))) return "acceptance process is still active";
   return null;

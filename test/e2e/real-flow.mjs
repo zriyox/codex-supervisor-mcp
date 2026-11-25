@@ -69,7 +69,9 @@ async function settle(taskId, timeoutMs = 600000) {
   let last = null;
   while (Date.now() < deadline) {
     last = await call("get_worker", { task_id: taskId, include: ["status"] });
-    if (TERMINAL.includes(last.status) && last.exit_code !== null && last.exit_code !== undefined) return last;
+    // completed and failed are written before the exit code; the others end by a signal and may have none.
+    const exited = last.exit_code !== null && last.exit_code !== undefined;
+    if (TERMINAL.includes(last.status) && (exited || !["completed", "failed"].includes(last.status))) return last;
     await sleep(3000);
   }
   throw new Error(`timed out waiting for ${taskId}: ${JSON.stringify(last)?.slice(0, 500)}`);
@@ -221,7 +223,9 @@ try {
     running = await call("get_worker", { task_id: victim.id, include: ["status"] });
   }
   assert.ok(running?.pid && running.thread_id, `the worker never started: ${JSON.stringify(running).slice(0, 600)}`);
-  const hosts = execFileSync("pgrep", ["-f", "run-host/entry.js"], { encoding: "utf8" }).trim().split("\n").map(Number).filter(Boolean);
+  // The run host is the worker's parent; only this run's host is killed.
+  const hosts = [Number(execFileSync("ps", ["-o", "ppid=", "-p", String(running.pid)], { encoding: "utf8" }).trim())].filter((pid) => pid > 1);
+  assert.equal(hosts.length, 1, "the worker's run host was not found");
   for (const pid of [...hosts, running.pid]) {
     try { process.kill(pid, "SIGKILL"); } catch { /* already gone */ }
   }
@@ -241,6 +245,8 @@ try {
   const victimSettled = await settle(victim.id);
   assert.equal(victimSettled.status, "completed", JSON.stringify(victimSettled).slice(0, 600));
   assert.equal(victimSettled.run_count, 2);
+  const victimResult = await call("get_worker", { task_id: victim.id, include: ["result"] });
+  assert.equal(victimResult.acceptance?.passed, true, `the recovered run did not finish the work: ${JSON.stringify(victimResult.acceptance).slice(0, 400)}`);
   step("killed run host", { killed: hosts.length + 1, recovered, polls, status: victimSettled.status, runs: victimSettled.run_count });
 } catch (error) {
   failure = error;

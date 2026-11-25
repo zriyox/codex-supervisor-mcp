@@ -29,6 +29,8 @@ test("a non-zero exit is attributed from what the worker wrote to stderr", () =>
   });
   assert.equal(exit("stream disconnected before completion: error sending request").code, "provider_unreachable");
   assert.equal(exit("unexpected status 429 Too Many Requests").code, "provider_rate_limited");
+  assert.equal(exit("provider error: error sending request: connection refused").code, "provider_unreachable");
+  assert.equal(exit("thread panicked at src/main.rs:403:9").code, "process_exit_nonzero", "a line number is not a status");
   assert.equal(exit("error loading config.toml: unknown field").source, "runner_config");
   assert.equal(exit("Error: thread/resume failed: thread 01a2 already has an active writer (code -32600)").code, "session_busy");
   assert.deepEqual(exit("thread panicked at main.rs"), {
