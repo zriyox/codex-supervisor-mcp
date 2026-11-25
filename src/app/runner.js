@@ -1,3 +1,4 @@
+import "./compose.js";
 import { closeSync, createWriteStream, existsSync, openSync } from "node:fs";
 import { lstat, mkdir, realpath, rm, stat, symlink } from "node:fs/promises";
 import { createHash, randomUUID } from "node:crypto";

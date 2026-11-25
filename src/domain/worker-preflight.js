@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { resolve } from "node:path";
-import { commandFailed } from "../runners/codex/event-parser.js";
+import { commandFailed } from "./command-outcome.js";
 
 export const PREFLIGHT_VERSION = 1;
 

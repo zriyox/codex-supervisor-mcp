@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import "../../app/compose.js";
 import React, { useEffect, useMemo, useState } from "react";
 import { Box, Newline, render, Text, useApp, useInput, useStdout } from "ink";
 import { readTaskEvents, readTasks, reconcileDetachedActiveTasks } from "../../infra/store/task-store.js";

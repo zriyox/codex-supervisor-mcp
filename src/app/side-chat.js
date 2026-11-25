@@ -22,6 +22,7 @@
 //   turn failed / timed out / stopped  error on the turn, session still usable
 //   board restarted mid-turn ........ turn marked interrupted
 //   session ended ................... fork deleted, history cleared
+import "./compose.js";
 import { randomUUID } from "node:crypto";
 import { codexConfigText, disableMcpServerArgs } from "../runners/codex/mcp-config.js";
 import { codexRunner } from "../runners/codex/adapter.js";

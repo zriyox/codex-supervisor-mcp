@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import "../../app/compose.js";
 import { existsSync, readFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";

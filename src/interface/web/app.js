@@ -4,6 +4,7 @@
 // server writes and never writes to it, apart from the same orphan
 // reconcile every read does. web-server.js is the entry that decides which
 // store to open and then calls startWebServer().
+import "../../app/compose.js";
 import { createServer } from "node:http";
 import { createReadStream, existsSync, statSync } from "node:fs";
 import { extname, join, normalize, resolve } from "node:path";

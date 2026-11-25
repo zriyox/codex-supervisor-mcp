@@ -18,9 +18,11 @@ import { randomUUID } from "node:crypto";
 import { dirname, join, isAbsolute, relative, resolve } from "node:path";
 import { findBinaryPath } from "../infra/bin-resolver.js";
 import { compareFailureBaseline } from "../domain/acceptance-baseline.js";
+import { MAX_ACCEPTANCE_COMMANDS, normalizeAcceptance } from "../domain/acceptance-spec.js";
+
+export { MAX_ACCEPTANCE_COMMANDS, normalizeAcceptance };
 
 export const DEFAULT_ACCEPTANCE_TIMEOUT_MS = 10 * 60 * 1000;
-export const MAX_ACCEPTANCE_COMMANDS = 10;
 const OUTPUT_TAIL_BYTES = 2000;
 const KILL_GRACE_MS = 3000;
 const ARTIFACT_ONLY = /^(?:test\s+-[efsd]\s+[^;&|]+|\[\[?\s+-[efsd]\s+[^\]]+\]\]?)$/;
@@ -34,32 +36,6 @@ export function isArtifactOnlyAcceptance(check) {
 
 export function isTestCommand(command) {
   return typeof command === "string" && TEST_COMMAND.test(command);
-}
-
-// One string or a list; blanks dropped; an empty list is "not configured".
-export function normalizeAcceptance(value) {
-  const list = Array.isArray(value) ? value : typeof value === "string" ? [value] : [];
-  const commands = list.filter((entry) => entry != null && entry !== "").map((entry) => {
-    if (typeof entry === "string") return entry.trim();
-    if (!entry || typeof entry !== "object" || Array.isArray(entry) || typeof entry.command !== "string" || !entry.command.trim()) throw new Error("acceptance requires a command string or structured check");
-    if (typeof entry.reportPath !== "string" || !entry.reportPath || isAbsolute(entry.reportPath) || /^[A-Za-z]:|^\\\\/.test(entry.reportPath) || entry.reportPath.split(/[\\/]/).includes("..")) throw new Error("reportPath must stay inside the worktree");
-    const validation = compareFailureBaseline(entry.baseline, {
-      complete: true, identity: entry.baseline?.identity,
-      executed: [...new Set([...(entry.baseline?.required ?? []), ...(entry.baseline?.failures ?? []).map((item) => item?.test_id)])],
-      skipped: [], failures: entry.baseline?.failures
-    });
-    // Validation errors concern the contract; diff results concern actual
-    // failures, which do not exist at normalization time.
-    if (validation.errors.length) throw new Error(`invalid acceptance baseline: ${validation.errors.join("; ")}`);
-    return { command: entry.command.trim(), reportPath: entry.reportPath, baseline: structuredClone(entry.baseline) };
-  }).filter(Boolean);
-  if (commands.length === 0) return null;
-  if (commands.length > MAX_ACCEPTANCE_COMMANDS) {
-    const error = new Error(`acceptance lists ${commands.length} commands; at most ${MAX_ACCEPTANCE_COMMANDS} are run`);
-    error.code = "too_many_acceptance_commands";
-    throw error;
-  }
-  return commands;
 }
 
 async function readCheckEvidence(check, cwd, checkId, baseCommit) {

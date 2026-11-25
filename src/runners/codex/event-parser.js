@@ -3,6 +3,7 @@
 // Invariant: status is the lifecycle and is only ever assigned queued /
 // running / completed / failed / cancelled / lost. Progress details go to
 // phase, which is only meaningful while the work is running.
+import { commandFailed } from "../../domain/command-outcome.js";
 import { parseWorkerReport } from "../../domain/worker-report.js";
 
 function getEventType(event) {
@@ -224,12 +225,6 @@ function outputTail(output) {
 
 // A sandbox-refused command can come back with no exit code at all, only a
 // failed status, so both are failure.
-export function commandFailed(entry) {
-  if (!entry) return false;
-  if (entry.status === "failed") return true;
-  return entry.exit_code !== null && entry.exit_code !== undefined && entry.exit_code !== 0;
-}
-
 function clipText(value, max) {
   const text = String(value ?? "");
   return text.length > max ? `${text.slice(0, max)}…` : text;

@@ -25,6 +25,7 @@ test("worker context excludes session peers and includes only scoped verified fa
   });
 
   process.env.SUPERVISOR_HOME = home;
+  await import("../../src/app/compose.js");
   const { getWorkItemForTask, latestContextSnapshotForTask, recordFact } = await import("../../src/infra/store/task-store.js");
   const ownWork = await getWorkItemForTask(target.id);
   const peerWork = await getWorkItemForTask(peer.id);

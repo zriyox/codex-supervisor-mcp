@@ -1,3 +1,4 @@
+import "./compose.js";
 import { buildHandoff } from "../infra/handoff.js";
 import { execFileSync } from "node:child_process";
 import { approxTokenCount } from "../domain/truncate.js";

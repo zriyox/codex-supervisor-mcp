@@ -61,6 +61,7 @@ seed.prepare("INSERT INTO task_events (task_id, seq, created_at, event_type, pay
 seed.close();
 
 process.env.SUPERVISOR_HOME = home;
+await import("../../src/app/compose.js");
 const { readTasks, readTaskEvents, readTaskEventRecords, reconcileDetachedActiveTasks } = await import("../../src/infra/store/task-store.js");
 
 let failures = 0;

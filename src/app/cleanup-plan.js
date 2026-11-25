@@ -1,3 +1,4 @@
+import "./compose.js";
 import { createHash, randomUUID } from "node:crypto";
 import { lstat, realpath } from "node:fs/promises";
 import { execFileSync } from "node:child_process";

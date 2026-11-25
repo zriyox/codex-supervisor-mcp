@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import "../../app/compose.js";
 import { applyCleanupPlan, createCleanupPlan } from "../../app/cleanup-plan.js";
 import { getCleanupPlan, saveCleanupPlan } from "../../infra/store/task-store.js";
 
