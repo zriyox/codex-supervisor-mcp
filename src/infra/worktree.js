@@ -113,6 +113,95 @@ export function filterWorkspaceSetupChanges(task, changes) {
   });
 }
 
+// Tracked changes against the base, or null when git cannot diff at all.
+function trackedChanges(worktreePath, base, scope, isIgnored) {
+  const files = [];
+  try {
+    for (const line of nonEmptyLines(git(worktreePath, ["diff", "--name-status", "-M", base, ...scope]))) {
+      const [code, ...rest] = line.split("\t");
+      const path = rest.at(-1);
+      if (!path || isIgnored(path)) continue;
+      files.push({ path, status: statusWord(code), from: code.startsWith("R") && rest.length > 1 ? rest[0] : null });
+    }
+  } catch {
+    return null;
+  }
+  return files;
+}
+
+function diffCounts(worktreePath, base, scope, isIgnored) {
+  const counts = new Map();
+  try {
+    for (const line of nonEmptyLines(git(worktreePath, ["diff", "--numstat", "-M", base, ...scope]))) {
+      const [added, deleted, ...rest] = line.split("\t");
+      const path = rest.at(-1);
+      if (!isIgnored(path)) counts.set(path, { additions: added === "-" ? null : Number(added), deletions: deleted === "-" ? null : Number(deleted) });
+    }
+  } catch {
+    // counts are decoration
+  }
+  return counts;
+}
+
+// Untracked files never show in `git diff`; the worker may have created
+// them with a shell command and not added them.
+function appendUntracked(files, worktreePath, scope, isIgnored) {
+  const known = new Set(files.map((file) => file.path));
+  try {
+    for (const line of git(worktreePath, ["status", "--porcelain", "--untracked-files=all", ...scope]).split("\n")) {
+      if (!line.startsWith("??")) continue;
+      const path = parsePorcelainLine(line);
+      if (!path || isIgnored(path) || known.has(path)) continue;
+      known.add(path);
+      files.push({ path, status: "untracked", from: null });
+    }
+  } catch {
+    // status failing leaves the tracked part
+  }
+}
+
+// The patch text of one file; an untracked file is shown as all additions.
+function filePatch(worktreePath, base, file) {
+  try {
+    if (file.status !== "untracked") return git(worktreePath, ["diff", "-M", base, "--", file.path]);
+    const text = readFileSync(join(worktreePath, file.path), "utf8");
+    const patch = text.split("\n").map((l, i, all) => (i === all.length - 1 && l === "" ? null : `+${l}`)).filter((l) => l !== null).join("\n");
+    if (file.additions === null) file.additions = patch === "" ? 0 : patch.split("\n").length;
+    return patch;
+  } catch {
+    return "";
+  }
+}
+
+// Fills each file's counts and patch within one shared character budget.
+function attachPatches(files, counts, worktreePath, base, maxChars) {
+  let remaining = maxChars;
+  let truncatedFiles = 0;
+  for (const file of files) {
+    const stat = counts.get(file.path);
+    file.additions = stat?.additions ?? null;
+    file.deletions = stat?.deletions ?? null;
+    file.patch = null;
+    file.truncated = false;
+    if (remaining <= 0) {
+      file.truncated = true;
+      truncatedFiles += 1;
+      continue;
+    }
+    const patch = filePatch(worktreePath, base, file);
+    if (patch.length > remaining) {
+      file.patch = truncateMiddleChars(patch, remaining);
+      file.truncated = true;
+      truncatedFiles += 1;
+      remaining = 0;
+    } else {
+      file.patch = patch;
+      remaining -= patch.length;
+    }
+  }
+  return truncatedFiles;
+}
+
 export function readWorktreeDiff(worktreePath, { baseCommit = null, branch = null } = {}, { maxChars = 60000, paths = [], ignorePaths = [] } = {}) {
   if (!worktreePath || !existsSync(worktreePath)) return { error: "no_worktree", files: [] };
   const base = resolveWorktreeBase(worktreePath, { baseCommit, branch });
@@ -127,78 +216,11 @@ export function readWorktreeDiff(worktreePath, { baseCommit = null, branch = nul
   const ignored = ignorePaths.map(normalizedPath);
   const isIgnored = (path) => ignored.some((entry) => underPath(path, entry));
 
-  const files = [];
-  const known = new Set();
-  try {
-    for (const line of nonEmptyLines(git(worktreePath, ["diff", "--name-status", "-M", base, ...scope]))) {
-      const [code, ...rest] = line.split("\t");
-      const path = rest.at(-1);
-      if (!path || isIgnored(path)) continue;
-      known.add(path);
-      files.push({ path, status: statusWord(code), from: code.startsWith("R") && rest.length > 1 ? rest[0] : null });
-    }
-  } catch {
-    return { error: "diff_failed", base_commit: base, head, files: [] };
-  }
-  const counts = new Map();
-  try {
-    for (const line of nonEmptyLines(git(worktreePath, ["diff", "--numstat", "-M", base, ...scope]))) {
-      const [added, deleted, ...rest] = line.split("\t");
-      const path = rest.at(-1);
-      if (!isIgnored(path)) counts.set(path, { additions: added === "-" ? null : Number(added), deletions: deleted === "-" ? null : Number(deleted) });
-    }
-  } catch {
-    // counts are decoration
-  }
-  // Untracked files never show in `git diff`; the worker may have created
-  // them with a shell command and not added them.
-  try {
-    for (const line of git(worktreePath, ["status", "--porcelain", "--untracked-files=all", ...scope]).split("\n")) {
-      if (!line.startsWith("??")) continue;
-      const path = parsePorcelainLine(line);
-      if (!path || isIgnored(path) || known.has(path)) continue;
-      known.add(path);
-      files.push({ path, status: "untracked", from: null });
-    }
-  } catch {
-    // status failing leaves the tracked part
-  }
-
-  let remaining = maxChars;
-  let truncatedFiles = 0;
-  for (const file of files) {
-    const stat = counts.get(file.path);
-    file.additions = stat?.additions ?? null;
-    file.deletions = stat?.deletions ?? null;
-    file.patch = null;
-    file.truncated = false;
-    if (remaining <= 0) {
-      file.truncated = true;
-      truncatedFiles += 1;
-      continue;
-    }
-    let patch;
-    try {
-      if (file.status === "untracked") {
-        const text = readFileSync(join(worktreePath, file.path), "utf8");
-        patch = text.split("\n").map((l, i, all) => (i === all.length - 1 && l === "" ? null : `+${l}`)).filter((l) => l !== null).join("\n");
-        if (file.additions === null) file.additions = patch === "" ? 0 : patch.split("\n").length;
-      } else {
-        patch = git(worktreePath, ["diff", "-M", base, "--", file.path]);
-      }
-    } catch {
-      patch = "";
-    }
-    if (patch.length > remaining) {
-      file.patch = truncateMiddleChars(patch, remaining);
-      file.truncated = true;
-      truncatedFiles += 1;
-      remaining = 0;
-    } else {
-      file.patch = patch;
-      remaining -= patch.length;
-    }
-  }
+  const files = trackedChanges(worktreePath, base, scope, isIgnored);
+  if (!files) return { error: "diff_failed", base_commit: base, head, files: [] };
+  const counts = diffCounts(worktreePath, base, scope, isIgnored);
+  appendUntracked(files, worktreePath, scope, isIgnored);
+  const truncatedFiles = attachPatches(files, counts, worktreePath, base, maxChars);
   return { base_commit: base, head, files, total_files: files.length, truncated_files: truncatedFiles };
 }
 
