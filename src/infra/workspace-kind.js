@@ -129,7 +129,9 @@ export async function captureWorkspaceManifest(sourceRoot, paths) {
   };
 }
 
-export async function prepareWorkspace({ cwd, workspaceKind = null, sandbox, ownedPaths, networkAccess, acceptance, externalOutputs = [], inPlaceAuthorization = null, taskId, isPreflight = false }) {
+export async function prepareWorkspace(options) {
+  const { cwd, workspaceKind = null, sandbox, ownedPaths, networkAccess, acceptance } = options;
+  const { externalOutputs = [], inPlaceAuthorization = null, taskId, isPreflight = false } = options;
   const sourceRoot = resolve(cwd);
   if (!existsSync(sourceRoot)) throw workspaceError("workspace_source_missing", `workspace source directory does not exist: ${sourceRoot}`);
   const kind = selectedKind({ sourceRoot, workspaceKind, sandbox });

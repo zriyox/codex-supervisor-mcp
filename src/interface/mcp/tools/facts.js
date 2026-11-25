@@ -139,8 +139,14 @@ export const getWorkerEvidenceTool = [
     const artifacts = await listArtifactsForTask(task_id, limit);
     return textResult({
       task_id,
-      events: events.map((event) => ({ id: event.id, run_id: event.run_id, type: event.event_type, actor: event.actor, payload_sha256: event.payload_sha256, created_at: event.created_at })),
-      artifacts: artifacts.map((artifact) => ({ id: artifact.id, run_id: artifact.run_id, type: artifact.type, sha256: artifact.sha256, security_class: artifact.security_class, retention: artifact.retention, created_at: artifact.created_at }))
+      events: events.map((event) => ({
+        id: event.id, run_id: event.run_id, type: event.event_type, actor: event.actor,
+        payload_sha256: event.payload_sha256, created_at: event.created_at
+      })),
+      artifacts: artifacts.map((artifact) => ({
+        id: artifact.id, run_id: artifact.run_id, type: artifact.type, sha256: artifact.sha256,
+        security_class: artifact.security_class, retention: artifact.retention, created_at: artifact.created_at
+      }))
     });
   }
 ];

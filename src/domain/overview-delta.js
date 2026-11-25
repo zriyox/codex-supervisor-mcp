@@ -41,7 +41,11 @@ export function buildOverviewDelta(tasks, cursor = {}, { readyToCleanTaskIds = n
     const reason = attentionReason(task);
     const failure = classifyFailure(task);
     const health = threadHealth(task);
-    const fingerprint = JSON.stringify([task.run_count ?? 0, task.status, task.exit_code ?? null, task.attention_reason ?? null, task.landed_head ?? null, task.push_verified_at ?? null, task.delivery_state ?? null, isReadyToClean, reason, task.goal_tokens_used ?? null, health.state, task.updated_at]);
+    const fingerprint = JSON.stringify([
+      task.run_count ?? 0, task.status, task.exit_code ?? null, task.attention_reason ?? null, task.landed_head ?? null,
+      task.push_verified_at ?? null, task.delivery_state ?? null, isReadyToClean, reason, task.goal_tokens_used ?? null,
+      health.state, task.updated_at
+    ]);
     nextCursor[task.id] = fingerprint;
     if (cursor[task.id] !== fingerprint) {
       changes.push({

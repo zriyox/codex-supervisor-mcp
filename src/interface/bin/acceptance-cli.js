@@ -16,7 +16,11 @@ function readTask(taskId) {
     `).get(taskId);
     if (!row) return null;
     let acceptance = null;
-    try { acceptance = row.acceptance ? JSON.parse(row.acceptance) : null; } catch {}
+    try {
+      acceptance = row.acceptance ? JSON.parse(row.acceptance) : null;
+    } catch {
+      // A contract that does not parse is treated as absent.
+    }
     return { ...row, acceptance };
   } finally {
     db?.close();

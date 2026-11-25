@@ -179,7 +179,8 @@ async function registeredMcp(target, client) {
     if (client.id === "codex") {
       const value = JSON.parse(stdout);
       const transport = value.transport ?? value;
-      return { command: transport.command, args: transport.args ?? [], env: transport.env ?? {}, cwd: transport.cwd, enabled: value.enabled !== false, userScope: true };
+      const { command, args = [], env = {}, cwd } = transport;
+      return { command, args: args ?? [], env: env ?? {}, cwd, enabled: value.enabled !== false, userScope: true };
     }
     const command = stdout.match(/^\s*Command: (.+)$/m)?.[1]?.trim();
     const args = stdout.match(/^\s*Args: (.*)$/m)?.[1]?.trim();

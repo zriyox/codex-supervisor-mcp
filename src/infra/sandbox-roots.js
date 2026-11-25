@@ -87,7 +87,8 @@ function goBuildCacheCandidate({ env, platform, home }) {
   return pathJoin(platform, env.XDG_CACHE_HOME?.trim() || pathJoin(platform, home, ".cache"), "go-build");
 }
 
-export function cacheRoots({ env = process.env, platform = process.platform, home = homedir(), resolveRoot = resolveWritableRoot, includeToolchain = true } = {}) {
+export function cacheRoots(options = {}) {
+  const { env = process.env, platform = process.platform, home = homedir(), resolveRoot = resolveWritableRoot, includeToolchain = true } = options;
   if (/^(1|true|yes)$/i.test((env.SUPERVISOR_NO_AUTO_CACHE_ROOTS ?? "").trim())) return [];
   const candidates = [
     ...osCacheCandidates({ env, platform, home }),

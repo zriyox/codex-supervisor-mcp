@@ -56,7 +56,8 @@ async function recordWorkerLanded(task, { head, branch, target, source = "git_la
   return { landed, event };
 }
 
-export async function landOneWorkerTask(taskId, { onto = null, commitMessage = null, ignoreAcceptance = false, allowOutsideOwned = false, skipAlreadyLanded = false } = {}) {
+export async function landOneWorkerTask(taskId, options = {}) {
+  const { onto = null, commitMessage = null, ignoreAcceptance = false, allowOutsideOwned = false, skipAlreadyLanded = false } = options;
   const task = await getTask(taskId);
   if (!task) return { error: "task_not_found", task_id: taskId };
   if (task.workspace_kind && task.workspace_kind !== "legacy" && task.workspace_kind !== "git_worktree") {

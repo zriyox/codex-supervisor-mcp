@@ -323,7 +323,8 @@ export async function runSideTurn({ task, text, res = null, fresh = false }) {
 
   const turnId = `turn-${Date.now()}-${randomUUID().slice(0, 8)}`;
   const startedAt = new Date().toISOString();
-  const live = { turnId, child, chunks: [], watchers: new Set(), startedAt, question: text, state: { toolsSeen: new Set(), completed: false, failed: false, usage: null } };
+  const state = { toolsSeen: new Set(), completed: false, failed: false, usage: null };
+  const live = { turnId, child, chunks: [], watchers: new Set(), startedAt, question: text, state };
   running.set(task.id, live);
   await insertSideTurn({ id: turnId, task_id: task.id, question: text, status: "running", chunks: [], started_at: startedAt });
 

@@ -125,7 +125,10 @@ export const describeSessionTool = [
   },
   async ({ session_id, title, note, objective, default_acceptance, approval_state, expected_revision }) => {
     try {
-      const row = await upsertSession({ id: session_id, title: title ?? null, note: note ?? null, objective, defaultAcceptance: default_acceptance, approvalState: approval_state, expectedRevision: expected_revision });
+      const row = await upsertSession({
+        id: session_id, title: title ?? null, note: note ?? null, objective,
+        defaultAcceptance: default_acceptance, approvalState: approval_state, expectedRevision: expected_revision
+      });
       return textResult({ ...row, session_id, host_goal_sync: buildHostGoalSync(row) });
     } catch (error) { return errorResult(error); }
   }

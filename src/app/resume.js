@@ -49,7 +49,8 @@ export async function resumeCodexWorker({ taskId, prompt, rebaseOnto = null, acc
     error.code = "session_waiting_user";
     throw error;
   }
-  const localAcceptance = acceptance === undefined ? (task.session_policy_revision == null ? task.acceptance : task.acceptance_local) : normalizeAcceptance(acceptance);
+  const inheritedAcceptance = task.session_policy_revision == null ? task.acceptance : task.acceptance_local;
+  const localAcceptance = acceptance === undefined ? inheritedAcceptance : normalizeAcceptance(acceptance);
   // `acceptance` replaces the stored commands when given; an empty list
   // clears them. Left out, the stored commands stay.
   if (acceptance !== undefined || session) {

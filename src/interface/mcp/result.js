@@ -19,12 +19,16 @@ export function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function errorDetails(details) {
+  return { files: details.files ?? [], git: details.git ?? null, base_commit: details.base_commit ?? null, head: details.head ?? null };
+}
+
 export function errorResult(error) {
   return textResult({
     error: error.code ?? "error",
     message: error.message,
     ...(error.conflicts ? { conflicts: error.conflicts } : {}),
     ...(error.details?.preflight ? { preflight: error.details.preflight } : {}),
-    ...(error.details ? { files: error.details.files ?? [], git: error.details.git ?? null, base_commit: error.details.base_commit ?? null, head: error.details.head ?? null } : {})
+    ...(error.details ? errorDetails(error.details) : {})
   });
 }

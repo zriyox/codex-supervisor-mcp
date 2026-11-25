@@ -200,7 +200,8 @@ function runOne(command, { cwd, env, timeoutMs, onSpawn }) {
 // Runs every command in order and returns the verdict. `control.kill` is
 // filled in so a cancel can stop the command that is running; `control.isCancelled`
 // is consulted between commands.
-export async function runAcceptance(commands, { cwd, env = process.env, timeoutMs = DEFAULT_ACCEPTANCE_TIMEOUT_MS, run = null, taskId = null, baseCommit = null, control = {} } = {}) {
+export async function runAcceptance(commands, options = {}) {
+  const { cwd, env = process.env, timeoutMs = DEFAULT_ACCEPTANCE_TIMEOUT_MS, run = null, taskId = null, baseCommit = null, control = {} } = options;
   const startedAt = new Date().toISOString();
   if (!cwd || !existsSync(cwd)) {
     return { status: "failed", passed: false, run, started_at: startedAt, finished_at: new Date().toISOString(), error: "cwd_missing", cwd, checks: [] };

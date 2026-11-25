@@ -80,13 +80,18 @@ export const recordIndependentFindingTool = [
       const artifact = await recordJsonArtifact({
         runId: runIdFor(verifier.id, verifier.run_count ?? 1),
         type: "independent_review_finding",
-        value: { review_id: review.id, subject_task_id: subject.id, verifier_task_id, verdict, reason, verifier_run: verifier.run_count ?? 1, recorded_at: new Date().toISOString() },
+        value: {
+          review_id: review.id, subject_task_id: subject.id, verifier_task_id, verdict, reason,
+          verifier_run: verifier.run_count ?? 1, recorded_at: new Date().toISOString()
+        },
         securityClass: "internal"
       });
       const event = await appendTaskEvent(subject.id, { type: "supervisor.independent_finding", review_id: review.id, verifier_task_id, verdict, reason, artifact_id: artifact.id }, {
         runId: review.subject_run_id ?? runIdFor(subject.id, subject.run_count ?? 1), actor: "main_thread"
       });
-      const recorded = await recordReviewFinding({ verifierTaskId: verifier_task_id, verdict, reason, evidenceArtifactId: artifact.id, findingEventId: event.id });
+      const recorded = await recordReviewFinding({
+        verifierTaskId: verifier_task_id, verdict, reason, evidenceArtifactId: artifact.id, findingEventId: event.id
+      });
       return textResult({ review: recorded, artifact_id: artifact.id });
     } catch (error) {
       return errorResult(error);

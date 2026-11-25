@@ -165,11 +165,13 @@ export const getWorkerDiffTool = [
         external_outputs: externalOutputView(task, maxChars)
       });
     }
-    const diff = readWorktreeDiff(task.worktree_path, worktreeRef(task), { maxChars: 10_000_000, paths: paths ?? [], ignorePaths: workspaceSetupIgnorePaths(task) });
+    const diffOptions = { maxChars: 10_000_000, paths: paths ?? [], ignorePaths: workspaceSetupIgnorePaths(task) };
+    const diff = readWorktreeDiff(task.worktree_path, worktreeRef(task), diffOptions);
     if (diff.error) return textResult({ ...diff, task_id });
     const files = diff.files.map((entry) => {
       const parsed = splitPatchHunks(entry);
-      return { path: entry.path, status: entry.status, from: entry.from, additions: entry.additions, deletions: entry.deletions, hunk_count: parsed.hunks.length };
+      const { path, status, from, additions, deletions } = entry;
+      return { path, status, from, additions, deletions, hunk_count: parsed.hunks.length };
     });
     const base = {
       task_id,
@@ -212,7 +214,10 @@ export const getWorkerDiffTool = [
       : null;
     return textResult({
       ...base,
-      file: { path: selected.path, status: selected.status, from: selected.from, additions: selected.additions, deletions: selected.deletions, hunk_count: parsed.hunks.length },
+      file: {
+        path: selected.path, status: selected.status, from: selected.from,
+        additions: selected.additions, deletions: selected.deletions, hunk_count: parsed.hunks.length
+      },
       hunks,
       next_cursor: nextCursor,
       summary_only: false

@@ -59,6 +59,7 @@ export function compareFailureBaseline(expected, actual) {
   }
   for (const [id, item] of baseline) if (!observed.has(id)) result.removed.push(item);
   for (const key of ["added", "removed", "changed"]) result[key].sort((a, b) => a.test_id.localeCompare(b.test_id));
-  result.passed = errors.length === 0 && result.added.length === 0 && result.removed.length === 0 && result.changed.length === 0 && result.missing_required.length === 0;
+  const unchanged = result.added.length === 0 && result.removed.length === 0 && result.changed.length === 0;
+  result.passed = errors.length === 0 && unchanged && result.missing_required.length === 0;
   return result;
 }
