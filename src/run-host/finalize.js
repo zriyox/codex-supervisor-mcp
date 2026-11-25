@@ -119,8 +119,13 @@ async function attachEvidence(run, next) {
   })).digest("hex");
 }
 
-function flagAttention(run, next, status, code) {
+// "The evidence could not be read" outranks what the evidence would have
+// said: no_work and invalid_report are both conclusions drawn from it.
+const UNVERIFIED = new Set(["external_output_unverified", "workspace_manifest_unverified"]);
+
+export function flagAttention(run, next, status, code) {
   const { live } = run;
+  if (UNVERIFIED.has(next.attention_reason)) return;
   if (status === "completed" && code === 0 && live.sandbox !== "read-only"
     && !next.run_evidence.output_changed && next.run_evidence.output_changed !== null
     && live.commands.length === 0 && !run.reportOnlyRecovery) {
