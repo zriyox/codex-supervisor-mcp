@@ -167,6 +167,7 @@ node "$AGENT_SUPERVISOR_STAGE_CLI" "gate:s3" --detail "integration queue"
 | 文件 | 内容 |
 |---|---|
 | `data/supervisor.sqlite` | `tasks`（一行一个 work）、`task_events`、`sessions`、`side_sessions` / `side_turns`（旁问） |
+| `data/crash.log` | MCP 进程、run host、看板的未捕获异常，一行一条 JSON。工具突然全部 `Connection closed` 时先看这里 |
 | `data/runs/<taskId>.jsonl` | Codex `--json` 的原始输出 |
 | `data/update-check.json`、`auto-update.json` | 更新检查和后台更新的记录 |
 | `worktrees/<taskId>/` | 该 worker 的 Git worktree |

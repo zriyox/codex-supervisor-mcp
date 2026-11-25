@@ -155,6 +155,7 @@ A terminal state lands in two steps: `turn.completed` sets `completed`, the proc
 | File | Content |
 |---|---|
 | `data/supervisor.sqlite` | `tasks` (one row per work), `task_events`, `sessions`, `side_sessions` / `side_turns` (side chat) |
+| `data/crash.log` | Uncaught errors of the MCP server, a run host or the board, one JSON line each. Read it first when every tool call suddenly answers `Connection closed` |
 | `data/runs/<taskId>.jsonl` | Raw `codex --json` output |
 | `data/update-check.json`, `auto-update.json` | Update check and background update records |
 | `worktrees/<taskId>/` | The worker's Git worktree |
