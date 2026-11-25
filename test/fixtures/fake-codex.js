@@ -17,7 +17,7 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 // model that ignores --output-schema does. Used to exercise the invalid_report
 // path and its automatic retry end to end.
 const badReportRuns = (process.env.FAKE_CODEX_BAD_REPORT_ON_RUN ?? "").split(",").filter(Boolean);
-const skipReportWrapping = badReportRuns.includes(process.env.CODEX_SUPERVISOR_RUN ?? "");
+const skipReportWrapping = badReportRuns.includes(process.env.AGENT_SUPERVISOR_RUN ?? "");
 const emit = (event) => {
   if (args.includes("--output-schema") && event.item?.type === "agent_message" && !skipReportWrapping) {
     event = { ...event, item: { ...event.item, text: JSON.stringify({ result: event.item.text, verification: [], not_done: [] }) } };
@@ -77,7 +77,7 @@ async function main() {
     const { appendFileSync } = await import("node:fs");
     let guard = null;
     try {
-      const policy = JSON.parse(process.env.CODEX_SUPERVISOR_GUARD_POLICY ?? "null");
+      const policy = JSON.parse(process.env.AGENT_SUPERVISOR_GUARD_POLICY ?? "null");
       if (policy) guard = { sandbox: policy.sandbox ?? null, ownedPaths: policy.ownedPaths ?? [], worktree: policy.worktree ?? null };
     } catch { guard = null; }
     appendFileSync(process.env.FAKE_CODEX_ARGS_LOG, `${JSON.stringify({ args, guard })}\n`);
@@ -85,9 +85,9 @@ async function main() {
   if (process.env.FAKE_CODEX_ENV_LOG) {
     const { appendFileSync } = await import("node:fs");
     appendFileSync(process.env.FAKE_CODEX_ENV_LOG, `${JSON.stringify({
-      task_id: process.env.CODEX_SUPERVISOR_TASK_ID ?? null,
-      base_commit: process.env.CODEX_SUPERVISOR_BASE_COMMIT ?? null,
-      run: process.env.CODEX_SUPERVISOR_RUN ?? null
+      task_id: process.env.AGENT_SUPERVISOR_TASK_ID ?? null,
+      base_commit: process.env.AGENT_SUPERVISOR_BASE_COMMIT ?? null,
+      run: process.env.AGENT_SUPERVISOR_RUN ?? null
     })}\n`);
   }
   if (process.env.FAKE_CODEX_CWD_LOG) {

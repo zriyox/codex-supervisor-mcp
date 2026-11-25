@@ -17,18 +17,18 @@ try {
   const tools = await client.listTools();
   const toolNames = tools.tools.map((tool) => tool.name).sort();
   const required = [
-    "cancel_codex_worker",
-    "create_codex_followup_worker",
-    "create_codex_worker",
-    "get_codex_worker_events",
-    "get_codex_worker_status",
-    "get_orchestration_overview",
-    "get_worker_goal",
-    "get_worker_result",
-    "get_worker_summary",
-    "list_codex_workers",
-    "resume_codex_worker",
-    "wait_codex_workers"
+    "cancel_worker",
+    "create_worker with followup_of",
+    "create_worker",
+    "get_worker (include events)",
+    "get_worker",
+    "poll_workers",
+    "get_worker (include goal)",
+    "get_worker (include result)",
+    "get_worker",
+    "poll_workers",
+    "resume_worker",
+    "wait_workers"
   ];
   const missing = required.filter((name) => !toolNames.includes(name));
   if (missing.length > 0) {
@@ -36,7 +36,7 @@ try {
   }
 
   const result = await client.callTool({
-    name: "list_codex_workers",
+    name: "poll_workers",
     arguments: {}
   });
 

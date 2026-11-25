@@ -12,7 +12,7 @@ const read = (path) => readFile(join(repoRoot, path), "utf8");
 async function registeredTools() {
   const home = await mkdtemp(join(tmpdir(), "supervisor-docs-"));
   try {
-    return await withMcp({ SUPERVISOR_HOME: home, CODEX_SUPERVISOR_SKIP_SKILL_SYNC: "1" }, async ({ client }) => (await client.listTools()).tools.map((tool) => tool.name));
+    return await withMcp({ SUPERVISOR_HOME: home, AGENT_SUPERVISOR_SKIP_SKILL_SYNC: "1" }, async ({ client }) => (await client.listTools()).tools.map((tool) => tool.name));
   } finally {
     await rm(home, { recursive: true, force: true });
   }
@@ -22,7 +22,7 @@ function documentedTools(markdown, heading, end) {
   const start = markdown.indexOf(heading);
   const stop = markdown.indexOf(end, start);
   assert.ok(start >= 0 && stop > start, `missing documentation section ${heading}`);
-  return [...markdown.slice(start, stop).matchAll(/^\| `([^`]+)`/gm)].map((match) => match[1]);
+  return [...markdown.slice(start, stop).matchAll(/^\| `([a-z_]+)`/gm)].map((match) => match[1]);
 }
 
 function mentionedTools(markdown, heading, end, registered) {
@@ -33,6 +33,20 @@ function mentionedTools(markdown, heading, end, registered) {
   return registered.filter((name) => section.includes(`\`${name}\``));
 }
 
+test("the default tool set is exactly fourteen and the optional three stay off unless asked for", async () => {
+  const home = await mkdtemp(join(tmpdir(), "supervisor-tools-"));
+  try {
+    const names = async (env) => withMcp({ SUPERVISOR_HOME: home, AGENT_SUPERVISOR_SKIP_SKILL_SYNC: "1", ...env }, async ({ client }) => (await client.listTools()).tools.map((tool) => tool.name));
+    const byDefault = await names({ AGENT_SUPERVISOR_TOOLS: "" });
+    assert.equal(byDefault.length, 14);
+    const all = await names({ AGENT_SUPERVISOR_TOOLS: "all" });
+    assert.deepEqual(all.slice(0, 14), byDefault, "the optional tools come after the default ones");
+    assert.deepEqual(all.slice(14).sort(), ["facts", "get_artifact", "review"]);
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
 test("both READMEs and both references document every registered MCP tool", async () => {
   const [zh, en, zhRef, enRef] = await Promise.all([
     read("README.md"),
@@ -41,45 +55,32 @@ test("both READMEs and both references document every registered MCP tool", asyn
     read("docs/reference.en.md")
   ]);
   const registered = (await registeredTools()).sort();
-  assert.equal(registered.length, 39);
-  // The READMEs group tools by stage, several to a row; the references keep one row per tool with its arguments.
+  assert.equal(registered.length, 17);
+  // The READMEs group tools by stage; the references keep one row per tool with its arguments.
   assert.deepEqual(mentionedTools(zh, "## 工具", "## 和 Claude Code", registered), registered);
   assert.deepEqual(mentionedTools(en, "## Tools", "## How this differs", registered), registered);
-  assert.deepEqual(documentedTools(zhRef, "## 工具", "## 看板里有什么").sort(), registered);
-  assert.deepEqual(documentedTools(enRef, "## Tools", "## What the board shows").sort(), registered);
-  assert.match(zh.slice(zh.indexOf("## 工具"), zh.indexOf("## 和 Claude Code")), /39 个/);
-  assert.match(en.slice(en.indexOf("## Tools"), en.indexOf("## How this differs")), /39 of them/);
+  assert.deepEqual(documentedTools(zhRef, "## 工具", "分组参数：").sort(), registered);
+  assert.deepEqual(documentedTools(enRef, "## Tools", "The grouped arguments:").sort(), registered);
 });
 
-test("the core dispatch and recovery contract stays visible in the skill", async () => {
+test("the skill names every default tool and the rules a main thread must not miss", async () => {
   const skill = await read("skills/codex-supervisor/SKILL.md");
-  for (const required of [
-    "workspace_setup_required",
-    "CODEX_SUPERVISOR_ACCEPTANCE_CLI",
-    "preflight_id",
-    "invalid_report",
-    "commitMessage",
-    "includeFollowupParents",
-    "ActiveTurnOutputSchemaMismatch",
-    "allowLongWait",
-    "check_workers",
-    "worker 不 push",
-    "danger-full-access"
-  ]) assert.match(skill, new RegExp(required.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")), required);
-  assert.doesNotMatch(skill, /git commit --amend|amend 进原来那个提交|三者都要各自 push/);
+  const home = await mkdtemp(join(tmpdir(), "supervisor-skill-"));
+  try {
+    const byDefault = await withMcp({ SUPERVISOR_HOME: home, AGENT_SUPERVISOR_TOOLS: "", AGENT_SUPERVISOR_SKIP_SKILL_SYNC: "1" }, async ({ client }) => (await client.listTools()).tools.map((tool) => tool.name));
+    for (const name of byDefault) assert.ok(skill.includes(`\`${name}\``), `the skill never mentions ${name}`);
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
+  for (const required of ["workspace_setup_required", "AGENT_SUPERVISOR_ACCEPTANCE_CLI", "preflight_id", "invalid_report", "commit_message", "include_followup_parents", "allow_long_wait", "worker 不 push", "danger-full-access"]) {
+    assert.ok(skill.includes(required), required);
+  }
 });
 
-test("the references keep the 0.13 contract and the docs drop the stale commit workflow", async () => {
-  const [zh, en, zhReadme, enReadme] = await Promise.all([read("docs/reference.md"), read("docs/reference.en.md"), read("README.md"), read("README.en.md")]);
-  for (const text of [zh, en]) {
-    for (const required of ["workspaceSetup", "preflight_id", "invalid_report", "token_budget", "commitMessage", "includeFollowupParents", "commitMessages", "ActiveTurnOutputSchemaMismatch", "allowLongWait", "timeout_capped"]) {
-      assert.match(text, new RegExp(required), required);
-    }
-  }
-  for (const text of [zh, en, zhReadme, enReadme]) {
-    assert.doesNotMatch(text, /one worker per step|一个 worker 只做一步|amend(?:ed)? (?:it )?into the same commit|改完 `--amend`/i);
-  }
-  for (const required of ["emitProgress", "file`, `hunk", "CODEX_SUPERVISOR_HANDOFF_TOKEN_THRESHOLD"]) {
-    assert.match(en, new RegExp(required.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")), required);
+test("no document still names a tool or argument that was removed", async () => {
+  const removed = /create_codex_worker|land_codex_worker|check_workers|overview_delta|get_worker_result|verify_delivery_push|cleanup_plan|ownedPaths|commitMessage|allowLongWait|CODEX_SUPERVISOR_/;
+  for (const path of ["README.md", "README.en.md", "docs/reference.md", "docs/reference.en.md", "skills/codex-supervisor/SKILL.md"]) {
+    const hit = (await read(path)).match(removed);
+    assert.equal(hit, null, `${path} still says ${hit?.[0]}`);
   }
 });

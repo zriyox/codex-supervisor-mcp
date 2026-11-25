@@ -33,12 +33,12 @@ test("preflight reverses zsh history-expansion quotes around ! and quoted litera
 });
 
 async function runPreflight(call, cwd, options = {}) {
-  const created = await call("preflight_codex_worker", {
+  const created = await call("preflight_worker", {
     title: "target worker",
     cwd,
-    sandbox: "workspace-write",
-    ownedPaths: ["result.txt"],
-    probeCommands: ["ls -la"],
+    sandbox: { mode: "workspace-write" },
+    owned_paths: ["result.txt"],
+    probe_commands: ["ls -la"],
     ...options
   });
   assert.ok(created.id, JSON.stringify(created));
@@ -51,13 +51,13 @@ test("a real worker preflight records command evidence and gates a matching disp
   const { dir } = await makeRepo(join(home, "repo"));
   await withMcp({ SUPERVISOR_HOME: home }, async ({ call }) => {
     const preflight = await runPreflight(call, dir);
-    const verdict = await call("get_worker_preflight", { task_id: preflight.id });
+    const verdict = await call("get_worker", { task_id: preflight.id, include: ["preflight"] });
     assert.equal(verdict.status, "passed", JSON.stringify(verdict));
     assert.deepEqual(verdict.probes, [{ command: "ls -la", executed: true, exit_code: 0, status: "completed", passed: true }]);
     assert.match(verdict.contract_hash, /^[a-f0-9]{64}$/);
 
-    const worker = await call("create_codex_worker", {
-      ...dispatchArgs("gated target", dir, { sandbox: "workspace-write", ownedPaths: ["result.txt"] }),
+    const worker = await call("create_worker", {
+      ...dispatchArgs("gated target", dir, { sandbox: { mode: "workspace-write" }, owned_paths: ["result.txt"] }),
       preflight_id: preflight.id
     });
     assert.ok(worker.id, JSON.stringify(worker));
@@ -69,18 +69,17 @@ test("a preflight fails closed when required commands were not observed", async 
   const { dir } = await makeRepo(join(home, "repo"));
   await withMcp({ SUPERVISOR_HOME: home }, async ({ call }) => {
     const preflight = await runPreflight(call, dir, {
-      allowedCommands: ["go test ./..."],
-      probeCommands: ["go test ./..."]
+      sandbox: { allowed_commands: ["go test ./..."] },
+      probe_commands: ["go test ./..."]
     });
-    const verdict = await call("get_worker_preflight", { task_id: preflight.id });
+    const verdict = await call("get_worker", { task_id: preflight.id, include: ["preflight"] });
     assert.equal(verdict.status, "failed");
     assert.equal(verdict.probes[0].executed, false);
 
-    const refused = await call("create_codex_worker", {
+    const refused = await call("create_worker", {
       ...dispatchArgs("failed preflight target", dir, {
-        sandbox: "workspace-write",
-        ownedPaths: ["result.txt"],
-        allowedCommands: ["go test ./..."]
+        sandbox: { mode: "workspace-write", allowed_commands: ["go test ./..."] },
+        owned_paths: ["result.txt"]
       }),
       preflight_id: preflight.id
     });
@@ -93,10 +92,10 @@ test("a valid probe survives an invalid final report and is not auto-resumed", a
   const { dir } = await makeRepo(join(home, "repo"));
   await withMcp({ SUPERVISOR_HOME: home, FAKE_CODEX_BAD_REPORT_ON_RUN: "1" }, async ({ call }) => {
     const preflight = await runPreflight(call, dir);
-    const verdict = await call("get_worker_preflight", { task_id: preflight.id });
+    const verdict = await call("get_worker", { task_id: preflight.id, include: ["preflight"] });
     assert.equal(verdict.status, "passed", JSON.stringify(verdict));
     assert.equal(verdict.worker_outcome.report_ignored, false, "preflight no longer fails the run for a report, so this stays diagnostic only");
-    const checked = await call("check_workers", {});
+    const checked = await call("poll_workers", { cursor: "observer" });
     assert.deepEqual(checked.recoveries, []);
   });
 });
@@ -106,30 +105,30 @@ test("a valid probe survives a missing process exit and is not auto-resumed", as
   const { dir } = await makeRepo(join(home, "repo"));
   await withMcp({ SUPERVISOR_HOME: home, FAKE_CODEX_SCENARIO: "command-then-no-terminal" }, async ({ call }) => {
     const preflight = await runPreflight(call, dir);
-    const verdict = await call("get_worker_preflight", { task_id: preflight.id });
+    const verdict = await call("get_worker", { task_id: preflight.id, include: ["preflight"] });
     assert.equal(verdict.status, "passed", JSON.stringify(verdict));
     assert.equal(verdict.worker_outcome.missing_exit_tolerated, true);
     const db = openStore(home);
     db.prepare("UPDATE tasks SET status = 'completed', exit_code = NULL WHERE id = ?").run(preflight.id);
-    let recovered = await call("get_worker_preflight", { task_id: preflight.id });
+    let recovered = await call("get_worker", { task_id: preflight.id, include: ["preflight"] });
     assert.equal(recovered.status, "passed", JSON.stringify(recovered));
     assert.equal(recovered.worker_outcome.missing_exit_tolerated, true);
     db.prepare("UPDATE tasks SET status = 'lost', exit_code = NULL WHERE id = ?").run(preflight.id);
     db.close();
-    recovered = await call("get_worker_preflight", { task_id: preflight.id });
+    recovered = await call("get_worker", { task_id: preflight.id, include: ["preflight"] });
     assert.equal(recovered.status, "passed", JSON.stringify(recovered));
     assert.equal(recovered.worker_outcome.missing_exit_tolerated, true);
-    const target = await call("create_codex_worker", {
+    const target = await call("create_worker", {
       ...dispatchArgs("passed preflight target", dir, {
-        sandbox: "workspace-write",
-        ownedPaths: ["result.txt"]
+        sandbox: { mode: "workspace-write" },
+        owned_paths: ["result.txt"]
       }),
       preflight_id: preflight.id
     });
     assert.ok(target.id, JSON.stringify(target));
     assert.notEqual(target.error, "ownership_conflict");
-    await call("cancel_codex_worker", { task_id: target.id });
-    const checked = await call("check_workers", {});
+    await call("cancel_worker", { task_id: target.id });
+    const checked = await call("poll_workers", { cursor: "observer" });
     assert.deepEqual(checked.recoveries, []);
   });
 });
@@ -139,11 +138,10 @@ test("a preflight cannot be reused after its worker contract changes", async () 
   const { dir } = await makeRepo(join(home, "repo"));
   await withMcp({ SUPERVISOR_HOME: home }, async ({ call }) => {
     const preflight = await runPreflight(call, dir);
-    const refused = await call("create_codex_worker", {
+    const refused = await call("create_worker", {
       ...dispatchArgs("changed contract", dir, {
-        sandbox: "workspace-write",
-        ownedPaths: ["result.txt"],
-        allowedCommands: ["npm test"]
+        sandbox: { mode: "workspace-write", allowed_commands: ["npm test"] },
+        owned_paths: ["result.txt"]
       }),
       preflight_id: preflight.id
     });
@@ -156,8 +154,8 @@ test("probe commands are allowed for the probe run without entering the worker c
   const { dir } = await makeRepo(join(home, "repo"));
   await withMcp({ SUPERVISOR_HOME: home }, async ({ call }) => {
     const preflight = await runPreflight(call, dir, {
-      allowedCommands: ["npm test"],
-      probeCommands: ["ssh test-host true", "head -5 /Volumes/盘/千谲/提示词.json"]
+      sandbox: { allowed_commands: ["npm test"] },
+      probe_commands: ["ssh test-host true", "head -5 /Volumes/盘/千谲/提示词.json"]
     });
     const db = openStore(home);
     const row = db.prepare("SELECT guard_policy FROM tasks WHERE id = ?").get(preflight.id);
@@ -168,32 +166,30 @@ test("probe commands are allowed for the probe run without entering the worker c
   });
 });
 
-test("a workspaceKind change invalidates a non-Git worker preflight", async () => {
+test("a workspace.kind change invalidates a non-Git worker preflight", async () => {
   const home = await tempHome("supervisor-worker-preflight-workspace-");
   const source = join(home, "source");
   await mkdir(source, { recursive: true });
   await withMcp({ SUPERVISOR_HOME: home }, async ({ call }) => {
-    const preflight = await call("preflight_codex_worker", {
+    const preflight = await call("preflight_worker", {
       title: "scratch target",
       cwd: source,
-      workspaceKind: "scratch",
-      sandbox: "workspace-write",
-      ownedPaths: [],
-      networkAccess: true,
-      probeCommands: ["ls -la"]
+      workspace: { kind: "scratch" },
+      sandbox: { mode: "workspace-write", network_access: true },
+      owned_paths: [],
+      probe_commands: ["ls -la"]
     });
     assert.ok(preflight.id, JSON.stringify(preflight));
     await waitFor(call, preflight.id, (task) => task.status === "completed" && task.exit_code !== null);
-    const verdict = await call("get_worker_preflight", { task_id: preflight.id });
+    const verdict = await call("get_worker", { task_id: preflight.id, include: ["preflight"] });
     assert.equal(verdict.status, "passed", JSON.stringify(verdict));
 
-    const refused = await call("create_codex_worker", {
+    const refused = await call("create_worker", {
       ...dispatchArgs("in-place target", source, {
-        sandbox: "workspace-write",
-        workspaceKind: "in_place_write",
-        inPlaceAuthorization: "User explicitly authorized this isolated non-Git fixture edit.",
-        ownedPaths: ["result.txt"],
-        acceptance: ["node -e \"process.exit(0)\""]
+        sandbox: { mode: "workspace-write" },
+        workspace: { kind: "in_place_write", in_place_authorization: "User explicitly authorized this isolated non-Git fixture edit." },
+        owned_paths: ["result.txt"],
+        acceptance: { commands: ["node -e \"process.exit(0)\""] }
       }),
       preflight_id: preflight.id
     });
@@ -205,10 +201,10 @@ test("a preflight with unusable probe commands is refused before any worktree or
   const home = await tempHome("supervisor-preflight-invalid-");
   const { dir: repo } = await makeRepo(join(home, "repo"));
   await withMcp({ SUPERVISOR_HOME: home }, async ({ call }) => {
-    const refused = await call("preflight_codex_worker", { title: "bad probe", cwd: repo, sandbox: "workspace-write", ownedPaths: ["result.txt"], probeCommands: ["   "] });
-    assert.match(JSON.stringify(refused), /probeCommands must be a nonempty list/);
+    const refused = await call("preflight_worker", { title: "bad probe", cwd: repo, sandbox: { mode: "workspace-write" }, owned_paths: ["result.txt"], probe_commands: ["   "] });
+    assert.match(JSON.stringify(refused), /probe_commands must be a nonempty list/);
   });
   const { execFileSync } = await import("node:child_process");
-  assert.equal(execFileSync("git", ["-C", repo, "branch", "--list", "codex/*"], { encoding: "utf8" }).trim(), "", "no worker branch may be left behind");
+  assert.equal(execFileSync("git", ["-C", repo, "branch", "--list", "worker/*"], { encoding: "utf8" }).trim(), "", "no worker branch may be left behind");
   assert.equal(execFileSync("git", ["-C", repo, "worktree", "list", "--porcelain"], { encoding: "utf8" }).split("\n").filter((line) => line.startsWith("worktree ")).length, 1);
 });

@@ -8,15 +8,15 @@ test("uncommitted input references are pinned and resume rejects drift until a n
   const home = await tempHome("supervisor-context-");
   const input = join(home, "uncommitted.md");await writeFile(input,"current input");
   await withMcp({ SUPERVISOR_HOME: home, FAKE_CODEX_SCENARIO: "echo-prompt" }, async ({ call }) => {
-    const worker = await call("create_codex_worker", dispatchArgs("read input", join(home,"workspace"), { ownedPaths: [], context: [{ path: input }], contracts: ["Do not modify the input"] }));
+    const worker = await call("create_worker", dispatchArgs("read input", join(home,"workspace"), { owned_paths: [], context: { files: [{ path: input }], contracts: ["Do not modify the input"] } }));
     await waitFor(call,worker.id,row=>row.exit_code===0);
-    const result = await call("get_worker_result",{task_id:worker.id,maxChars:0});
+    const result = await call("get_worker", { task_id: worker.id, max_chars: 0, include: ["result"] });
     assert.match(result.reports[0],/Handoff/);assert.ok(result.reports[0].includes(input));
     assert.match(result.input_context.source_refs[0].sha256,/^[a-f0-9]{64}$/);
     await writeFile(input,"changed input");
-    const refused = await call("resume_codex_worker",{task_id:worker.id,prompt:"same input"});
+    const refused = await call("resume_worker", { task_id: worker.id, prompt: "same input" });
     assert.match(refused.message ?? refused.reason ?? "",/context source changed/);
-    const resumed = await call("resume_codex_worker",{task_id:worker.id,prompt:"new input authorized",context:[{path:input}]});
+    const resumed = await call("resume_worker", { task_id: worker.id, prompt: "new input authorized", context_files: [{path:input}] });
     assert.equal(resumed.run_count,2);
     await waitFor(call,worker.id,row=>row.exit_code===0&&row.run_count===2);
   });

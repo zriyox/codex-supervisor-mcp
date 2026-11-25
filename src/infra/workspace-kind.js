@@ -29,38 +29,38 @@ export function isGitCheckout(cwd) {
 
 function selectedKind({ sourceRoot, workspaceKind, sandbox }) {
   if (workspaceKind != null && !WORKSPACE_KINDS.includes(workspaceKind)) {
-    throw workspaceError("invalid_workspace_kind", `workspaceKind must be one of ${WORKSPACE_KINDS.join(", ")}`);
+    throw workspaceError("invalid_workspace_kind", `workspace.kind must be one of ${WORKSPACE_KINDS.join(", ")}`);
   }
   if (workspaceKind) return workspaceKind;
   if (isGitCheckout(sourceRoot)) return "git_worktree";
   if (sandbox === "read-only") return "read_only_in_place";
-  throw workspaceError("workspace_kind_required", "a non-Git worker that can write must declare workspaceKind: scratch or in_place_write; the supervisor never writes a user directory by default");
+  throw workspaceError("workspace_kind_required", "a non-Git worker that can write must declare workspace.kind: scratch or in_place_write; the supervisor never writes a user directory by default");
 }
 
 function validateKind({ kind, sourceRoot, sandbox, ownedPaths, networkAccess, acceptance, externalOutputs, inPlaceAuthorization, isPreflight }) {
   if (kind === "git_worktree") {
-    if (!isGitCheckout(sourceRoot)) throw workspaceError("git_worktree_requires_git", "workspaceKind git_worktree requires a Git checkout with a resolvable commit; use read_only_in_place, scratch or explicitly authorized in_place_write for a non-Git directory");
+    if (!isGitCheckout(sourceRoot)) throw workspaceError("git_worktree_requires_git", "workspace.kind git_worktree requires a Git checkout with a resolvable commit; use read_only_in_place, scratch or explicitly authorized in_place_write for a non-Git directory");
     return;
   }
   if (kind === "read_only_in_place") {
     if (sandbox !== "read-only" || ownedPaths.length !== 0 || networkAccess) {
-      throw workspaceError("invalid_read_only_workspace", "read_only_in_place requires sandbox read-only, ownedPaths: [] and networkAccess: false");
+      throw workspaceError("invalid_read_only_workspace", "read_only_in_place requires sandbox read-only, owned_paths: [] and sandbox.network_access: false");
     }
-    if (externalOutputs.length) throw workspaceError("invalid_read_only_workspace", "read_only_in_place cannot declare externalOutputs");
+    if (externalOutputs.length) throw workspaceError("invalid_read_only_workspace", "read_only_in_place cannot declare workspace.external_outputs");
     return;
   }
   if (kind === "scratch") {
     if (sandbox !== "workspace-write" || ownedPaths.length !== 0) {
-      throw workspaceError("invalid_scratch_workspace", "scratch requires sandbox workspace-write and ownedPaths: []; it never lands project changes");
+      throw workspaceError("invalid_scratch_workspace", "scratch requires sandbox workspace-write and owned_paths: []; it never lands project changes");
     }
-    if (externalOutputs.length) throw workspaceError("invalid_scratch_workspace", "scratch cannot write externalOutputs; keep generated material inside the supervisor scratch directory");
+    if (externalOutputs.length) throw workspaceError("invalid_scratch_workspace", "scratch cannot write workspace.external_outputs; keep generated material inside the supervisor scratch directory");
     return;
   }
   if (isGitCheckout(sourceRoot)) {
     throw workspaceError("in_place_write_requires_non_git", "in_place_write is only for an explicitly authorized non-Git directory; use git_worktree for a Git checkout");
   }
   if (sandbox !== "workspace-write" || ownedPaths.length === 0 || !String(inPlaceAuthorization ?? "").trim()) {
-    throw workspaceError("invalid_in_place_workspace", "in_place_write requires sandbox workspace-write, nonempty ownedPaths and an explicit inPlaceAuthorization");
+    throw workspaceError("invalid_in_place_workspace", "in_place_write requires sandbox workspace-write, nonempty owned_paths and an explicit workspace.in_place_authorization");
   }
   if (!isPreflight && (!Array.isArray(acceptance) || acceptance.length === 0)) {
     throw workspaceError("in_place_acceptance_required", "in_place_write requires explicit acceptance; file changes in a user directory cannot be accepted by worker exit status alone");

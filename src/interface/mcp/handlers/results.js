@@ -1,3 +1,4 @@
+import { branchOf } from "../../../domain/worker-branch.js";
 import { ensureTaskWorktree } from "../../../app/restore-worktree.js";
 import { askWorker, endSideSession, latestSideTurn } from "../../../app/side-chat.js";
 import { isGoalNeedingAttention, TERMINAL_STATUSES } from "../../../domain/status.js";
@@ -12,17 +13,11 @@ import { buildWorkerSummary, externalOutputView, reportView, runEvidenceView } f
 import { acceptanceView } from "../views/task.js";
 import { z } from "zod";
 
-export const getWorkerGoalTool = [
-  "get_worker_goal",
-  {
-    title: "Get worker goal",
-    description:
-      "Read the goal recorded for a worker, plus the native Codex thread goal when the thread has one (status, tokens used, time used).",
-    inputSchema: {
+export const getWorkerGoalOp = {
+  input: z.object({
       task_id: z.string().min(1)
-    }
-  },
-  async ({ task_id }) => {
+    }),
+  handler: async ({ task_id }) => {
     const task = await getTask(task_id);
     if (!task) return textResult({ error: "task_not_found", task_id });
     return textResult({
@@ -37,19 +32,13 @@ export const getWorkerGoalTool = [
       native_goal_read: readNativeGoalState(task.thread_id)
     });
   }
-];
+};
 
-export const getWorkerSummaryTool = [
-  "get_worker_summary",
-  {
-    title: "Get worker summary",
-    description:
-      "One compact summary per worker: goal, status, changed files, last command, last message. Cheap enough for a main thread to read every worker at the end of a run.",
-    inputSchema: {
+export const getWorkerSummaryOp = {
+  input: z.object({
       task_id: z.string().min(1)
-    }
-  },
-  async ({ task_id }) => {
+    }),
+  handler: async ({ task_id }) => {
     const task = await getTask(task_id);
     if (!task) return textResult({ error: "task_not_found", task_id });
     const summary = buildWorkerSummary(task, readNativeGoal(task.thread_id));
@@ -60,23 +49,17 @@ export const getWorkerSummaryTool = [
     }
     return textResult(summary);
   }
-];
+};
 
-export const getWorkerResultTool = [
-  "get_worker_result",
-  {
-    title: "Get worker result",
-    description:
-      "Read a worker's own final report. The overview and the wait response clip the last message; this is the door for the actual conclusion. Returns the last N agent messages (each clipped past maxChars, default 6000 bytes, with truncated: true and the full size so you can re-read it whole), the status fields that tell a real finish from a crash, verification (the commands the worker ran, their exit codes and the tail of any failing output, to hold its report against), acceptance (the supervisor's own run of the dispatch-time acceptance commands, independent of the report: configured, passed, and each check's exit code and output tail; passed: false means resume the worker with that output instead of reading its report, passed: true against a report that says blocked or not done means trust the checks and read the diff), changed_file_count, and base_behind (how many commits the project's HEAD is past the worktree's base; resume with rebaseOnto when it is not 0). includeFiles: true adds the changed_files list; get_worker_diff is the ground truth for what changed.",
-    inputSchema: {
+export const getWorkerResultOp = {
+  input: z.object({
       task_id: z.string().min(1),
       limit: z.number().int().min(1).max(20).default(1),
       // Per report, UTF-8 bytes. 0 means no clipping.
       maxChars: z.number().int().min(0).max(1000000).default(6000),
       includeFiles: z.boolean().default(false)
-    }
-  },
-  async ({ task_id, limit, maxChars, includeFiles }) => {
+    }),
+  handler: async ({ task_id, limit, maxChars, includeFiles }) => {
     const task = await getTask(task_id);
     if (!task) return textResult({ error: "task_not_found", task_id });
     let reports = await readAgentMessages(task_id, limit);
@@ -122,7 +105,7 @@ export const getWorkerResultTool = [
       report_bytes: reportBytes,
       truncated,
       next_step: truncated
-        ? `a report was clipped to ${maxChars} bytes; call again with maxChars: ${Math.max(...reportBytes)} (or 0) to read it whole`
+        ? `a report was clipped to ${maxChars} bytes; call again with max_chars: ${Math.max(...reportBytes)} (or 0) to read it whole`
         : null,
       reports: clipped,
       source,
@@ -130,7 +113,7 @@ export const getWorkerResultTool = [
       completed_at: task.completed_at ?? null
     });
   }
-];
+};
 
 // Cleanup keeps the branch; the diff is read from a worktree cut from it
 // again. Null when the worktree is there, a refusal when it cannot come back.
@@ -143,13 +126,8 @@ async function restoreRefusal(task) {
   }
 }
 
-export const getWorkerDiffTool = [
-  "get_worker_diff",
-  {
-    title: "Get worker diff",
-    description:
-      "The worker's actual changes. By default this is a complete file/hunk index; request one file to page through hunks with pageSize or cursor. Supplying maxChars without file preserves the legacy bounded full-diff response. This is the ground truth to check a worker's report against.",
-    inputSchema: {
+export const getWorkerDiffOp = {
+  input: z.object({
       task_id: z.string().min(1),
       maxChars: z.number().int().min(0).max(1000000).optional(),
       file: z.string().min(1).optional(),
@@ -157,13 +135,12 @@ export const getWorkerDiffTool = [
       pageSize: z.number().int().min(1).max(20).default(4),
       cursor: z.string().min(1).optional(),
       paths: z.array(z.string().min(1)).optional()
-    }
-  },
-  async ({ task_id, maxChars, file, hunk, pageSize, cursor, paths }) => {
+    }),
+  handler: async ({ task_id, maxChars, file, hunk, pageSize, cursor, paths }) => {
     const task = await getTask(task_id);
     if (!task) return textResult({ error: "task_not_found", task_id });
     if (!task.worktree_path) {
-      return textResult({ error: "no_worktree", task_id, external_outputs: externalOutputView(task, maxChars), reason: "this worker ran in place (its cwd is not a git repository or the worktree could not be created), so there is no isolated diff to read; call get_worker_result with includeFiles: true for the files it touched" });
+      return textResult({ error: "no_worktree", task_id, external_outputs: externalOutputView(task, maxChars), reason: "this worker ran in place (its cwd is not a git repository or the worktree could not be created), so there is no isolated diff to read; call get_worker with include result and include_files: true for the files it touched" });
     }
     const refusal = await restoreRefusal(task);
     if (refusal) return refusal;
@@ -174,7 +151,7 @@ export const getWorkerDiffTool = [
         title: task.title,
         status: task.status,
         worktree_path: task.worktree_path,
-        branch: `codex/${task.id}`,
+        branch: branchOf(task),
         ...diff,
         external_outputs: externalOutputView(task, maxChars)
       });
@@ -192,7 +169,7 @@ export const getWorkerDiffTool = [
       title: task.title,
       status: task.status,
       worktree_path: task.worktree_path,
-      branch: `codex/${task.id}`,
+      branch: branchOf(task),
       ...diff,
       files,
       external_outputs: externalOutputView(task, maxChars || 6000)
@@ -237,24 +214,18 @@ export const getWorkerDiffTool = [
       summary_only: false
     });
   }
-];
+};
 
-export const askCodexWorkerTool = [
-  "ask_codex_worker",
-  {
-    title: "Ask a worker on the side",
-    description:
-      "Ask a finished or running worker a question without touching its thread: the worker's Codex thread is forked once into a read-only side session (like Codex's own /btw), the question is asked there, and later questions resume that fork. The fork carries everything the worker saw and did, so 'why did you change X' or 'where is Y handled' costs one short answer instead of a read of the event stream. The fork has no network and no MCP tools and is told so; it answers from its context and the worktree. Once the worker has been resumed, the next question automatically takes a new fork from the updated thread (refreshed: \"worker_resumed\"); fresh: true forces a new fork. Changes still go through resume_codex_worker. Without a question it returns the latest side turn (for an answer that outran timeoutMs). end: true deletes the fork.",
-    inputSchema: {
+export const askCodexWorkerOp = {
+  input: z.object({
       task_id: z.string().min(1),
       question: z.string().min(1).optional(),
       timeoutMs: z.number().int().min(1000).max(600000).default(110000),
       maxChars: z.number().int().min(0).max(1000000).default(8000),
       fresh: z.boolean().default(false),
       end: z.boolean().default(false)
-    }
-  },
-  async ({ task_id, question, timeoutMs, maxChars, fresh, end }) => {
+    }),
+  handler: async ({ task_id, question, timeoutMs, maxChars, fresh, end }) => {
     const task = await getTask(task_id);
     if (!task) return textResult({ error: "task_not_found", task_id });
     const clipAnswer = (state) => {
@@ -271,7 +242,7 @@ export const askCodexWorkerTool = [
     try {
       const state = clipAnswer(await askWorker({ task, question, timeoutMs, fresh }));
       const next = state.timed_out
-        ? `The side turn is still running; call ask_codex_worker again with only task_id to read the answer when it lands.`
+        ? `The side turn is still running; call ask_worker again with only task_id to read the answer when it lands.`
         : null;
       return textResult({ task_id, ...state, next_step: next });
     } catch (error) {
@@ -281,4 +252,4 @@ export const askCodexWorkerTool = [
       return textResult({ task_id, error: error.code ?? "side_turn_failed", reason: error.message });
     }
   }
-];
+};

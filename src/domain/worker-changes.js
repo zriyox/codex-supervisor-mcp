@@ -20,7 +20,7 @@ export function collectWorkerChanges(tasks, cursor = {}) {
           id: task.id, title: task.title ?? task.id, run: task.run_count, status: task.status,
           reason: "handoff_recommended", tokens_used: health.tokens_used, threshold: health.threshold,
           next_step: {
-            tool: "get_codex_worker_status", arguments: { task_id: task.id },
+            tool: "get_worker", arguments: { task_id: task.id, include: ["status"] },
             instruction: "Inspect the live command and stage. Let this bounded step settle or explicitly cancel it before preparing a reviewed checkpoint and a fresh follow-up; do not launch a duplicate while it is active."
           }
         };
@@ -46,8 +46,8 @@ export function collectWorkerChanges(tasks, cursor = {}) {
     const receipt = {
       id: task.id, title: task.title ?? task.id, run: task.run_count, status: task.status,
       reason, next_step: {
-        tool: needsAttention ? "get_worker_result" : "get_worker_diff",
-        arguments: { task_id: task.id },
+        tool: needsAttention ? "get_worker" : "get_worker_diff",
+        arguments: needsAttention ? { task_id: task.id, include: ["result"] } : { task_id: task.id },
         instruction: needsAttention ? "Read the failure or goal evidence before deciding whether to resume; user approval waits must not auto-resume." : "Read the result and diff, then decide whether to land. Completion is not proof of correctness."
       }
     };

@@ -1,3 +1,4 @@
+import { branchOf } from "../domain/worker-branch.js";
 import { gitSucceeds } from "../infra/git.js";
 import "./compose.js";
 import { buildHandoff } from "../infra/handoff.js";
@@ -44,7 +45,7 @@ export async function compileWorkerContext(task, { attempt }) {
     `- run_id: ${runIdFor(task.id, attempt)}`,
     `- project_root: ${task.project_root}`,
     `- base_sha: ${task.base_commit ?? "unknown"}`,
-    `- branch: ${task.worktree_path ? `codex/${task.id}` : "not applicable (in-place workspace)"}`,
+    `- branch: ${task.worktree_path ? branchOf(task) : "not applicable (in-place workspace)"}`,
     `- worktree: ${task.worktree_path ?? task.cwd}`,
     `- owned_paths: ${JSON.stringify(task.owned_paths ?? [])}`,
     `- acceptance_source: ${Array.isArray(task.acceptance) && task.acceptance.length > 0 ? "dispatch or session policy; commands stay outside this capsule" : "no acceptance configured"}`,

@@ -12,14 +12,14 @@ const { dir: repo } = await makeRepo(join(home, "repo"));
 
 test("turn.failed with an object error lands as failed, with the message as text", async () => {
   await withMcp({ SUPERVISOR_HOME: home, FAKE_CODEX_SCENARIO: "turn-failed" }, async ({ call }) => {
-    const created = await call("create_codex_worker", dispatchArgs("gateway-down", repo));
+    const created = await call("create_worker", dispatchArgs("gateway-down", repo));
     const done = await waitFor(call, created.id, (t) => ["failed", "lost", "completed"].includes(t.status) && t.exit_code !== null);
     assert.equal(done.status, "failed", JSON.stringify(done).slice(0, 300));
     assert.equal(done.exit_code, 1);
     assert.equal(typeof done.error, "string");
     assert.match(done.error, /502 Bad Gateway/);
     assert.match(done.notices ?? "", /Reconnecting/, "the retry notice is kept as a notice");
-    const waited = await call("wait_codex_workers", { task_ids: [created.id], timeoutMs: 2000 });
+    const waited = await call("wait_workers", { task_ids: [created.id], timeout_ms: 2000 });
     assert.equal(waited.failed_count, 1);
     assert.equal(waited.lost_count, 0);
   });
@@ -27,7 +27,7 @@ test("turn.failed with an object error lands as failed, with the message as text
 
 test("the last JSONL event without a newline is drained before classifying the run", async () => {
   await withMcp({ SUPERVISOR_HOME: home, FAKE_CODEX_SCENARIO: "last-line-no-newline" }, async ({ call }) => {
-    const worker = await call("create_codex_worker", dispatchArgs("last-line", repo));
+    const worker = await call("create_worker", dispatchArgs("last-line", repo));
     const done = await waitFor(call, worker.id, (t) => t.exit_code !== null);
     assert.equal(done.status, "failed");
     assert.match(done.error, /last line failure/);
@@ -37,7 +37,7 @@ test("the last JSONL event without a newline is drained before classifying the r
 
 test("zero exit without a terminal event is lost, not successful completion", async () => {
   await withMcp({ SUPERVISOR_HOME: home, FAKE_CODEX_SCENARIO: "zero-without-terminal" }, async ({ call }) => {
-    const worker = await call("create_codex_worker", dispatchArgs("no-terminal", repo));
+    const worker = await call("create_worker", dispatchArgs("no-terminal", repo));
     const done = await waitFor(call, worker.id, (t) => t.exit_code !== null);
     assert.equal(done.status, "lost");
     assert.match(done.error, /terminal event/);

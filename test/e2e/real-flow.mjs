@@ -25,20 +25,6 @@ const { Client } = await sdk("client/index.js");
 const { StdioClientTransport } = await sdk("client/stdio.js");
 const installed = JSON.parse(await readFile(join(packageRoot, "package.json"), "utf8"));
 
-// One place to rename when the tool surface changes.
-const TOOL = {
-  preflight: "preflight_codex_worker",
-  preflightResult: "get_worker_preflight",
-  create: "create_codex_worker",
-  wait: "wait_codex_workers",
-  status: "get_codex_worker_status",
-  result: "get_worker_result",
-  diff: "get_worker_diff",
-  land: "land_codex_worker",
-  cleanupPlan: "cleanup_plan",
-  poll: "check_workers"
-};
-
 const home = await mkdtemp(join(tmpdir(), "supervisor-e2e-"));
 const repo = join(home, "repo");
 await mkdir(repo, { recursive: true });
@@ -64,9 +50,9 @@ const transport = new StdioClientTransport({
   args: [join(packageRoot, installed.bin[PACKAGE] ?? "src/mcp-server.js")],
   cwd: home,
   env: {
-    ...process.env, SUPERVISOR_HOME: home, CODEX_SUPERVISOR_NO_UPDATE_CHECK: "1", CODEX_SUPERVISOR_NO_AUTO_UPDATE: "1", CODEX_SUPERVISOR_SKIP_SKILL_SYNC: "1",
+    ...process.env, SUPERVISOR_HOME: home, AGENT_SUPERVISOR_NO_UPDATE_CHECK: "1", AGENT_SUPERVISOR_NO_AUTO_UPDATE: "1", AGENT_SUPERVISOR_SKIP_SKILL_SYNC: "1",
     // Sweep on every poll and treat unlanded work as past its hold period, so cleanup can be observed in one run.
-    CODEX_SUPERVISOR_CLEANUP_INTERVAL_MS: "0", CODEX_SUPERVISOR_CLEANUP_HOLD_DAYS: "0"
+    AGENT_SUPERVISOR_CLEANUP_INTERVAL_MS: "0", AGENT_SUPERVISOR_CLEANUP_HOLD_DAYS: "0", AGENT_SUPERVISOR_TOOLS: ""
   },
   stderr: "inherit"
 });
@@ -82,7 +68,7 @@ async function settle(taskId, timeoutMs = 600000) {
   const deadline = Date.now() + timeoutMs;
   let last = null;
   while (Date.now() < deadline) {
-    last = await call(TOOL.status, { task_id: taskId });
+    last = await call("get_worker", { task_id: taskId, include: ["status"] });
     if (TERMINAL.includes(last.status) && last.exit_code !== null && last.exit_code !== undefined) return last;
     await sleep(3000);
   }
@@ -98,28 +84,39 @@ let failure = null;
 
 try {
   const tools = (await client.listTools()).tools;
-  step("tools/list", { version: installed.version, count: tools.length });
+  const schemaChars = tools.reduce((sum, tool) => sum + JSON.stringify(tool).length, 0);
+  const largest = Math.max(...tools.map((tool) => JSON.stringify(tool).length));
+  assert.equal(tools.length, 14, `default tools: ${tools.map((tool) => tool.name).join(", ")}`);
+  assert.ok(schemaChars <= 16000, `tools/list is ${schemaChars} characters`);
+  assert.ok(largest <= 2500, `the largest tool is ${largest} characters`);
+  step("tools/list", { version: installed.version, count: tools.length, schema_chars: schemaChars, largest });
 
-  const contract = (work) => ({ cwd: repo, sandbox: "workspace-write", ownedPaths: [work.file] });
+  // A name from before 1.0 and a misspelled argument must both be refused, not ignored.
+  const oldName = await client.callTool({ name: "create_codex_worker", arguments: {} }).catch((error) => ({ isError: true, thrown: error.message }));
+  assert.ok(oldName.isError, "the old tool name still answers");
+  const oldArgument = await client.callTool({ name: "wait_workers", arguments: { task_ids: ["x"], timeoutMs: 1000 } }).catch((error) => ({ isError: true, thrown: error.message }));
+  assert.ok(oldArgument.isError, "an unknown argument was accepted");
+  step("old names refused", { tool: true, argument: true });
 
-  const probes = await Promise.all(WORK.map((work) => call(TOOL.preflight, { ...contract(work), title: `probe ${work.file}`, probeCommands: ["git status --short"] })));
+  const contract = (work) => ({ cwd: repo, sandbox: { mode: "workspace-write" }, owned_paths: [work.file] });
+
+  const probes = await Promise.all(WORK.map((work) => call("preflight_worker", { ...contract(work), title: `probe ${work.file}`, probe_commands: ["git status --short"] })));
   for (const probe of probes) assert.ok(probe.id, `preflight did not start: ${JSON.stringify(probe).slice(0, 400)}`);
   await Promise.all(probes.map((probe) => settle(probe.id)));
   for (const probe of probes) {
-    const verdict = await call(TOOL.preflightResult, { task_id: probe.id });
+    const verdict = await call("get_worker", { task_id: probe.id, include: ["preflight"] });
     assert.equal(verdict.status, "passed", `preflight ${probe.id}: ${JSON.stringify(verdict).slice(0, 600)}`);
   }
   step("preflight", { passed: probes.length });
 
-  const created = await Promise.all(WORK.map((work, index) => call(TOOL.create, {
+  const created = await Promise.all(WORK.map((work, index) => call("create_worker", {
     ...contract(work),
     title: `append to ${work.file}`,
     task: `Append exactly one new line containing ${work.line} to the end of ${work.file}. Change nothing else. Then run: grep -q ${work.line} ${work.file}`,
     goal: { objective: `${work.file} ends with a line ${work.line}` },
-    acceptance: [`grep -q ${work.line} ${work.file}`],
+    acceptance: { commands: [`grep -q ${work.line} ${work.file}`] },
     preflight_id: probes[index].id,
-    session_id: session,
-    session_title: "e2e real flow"
+    session: { id: session, title: "e2e real flow" }
   })));
   for (const worker of created) assert.ok(worker.id, `create failed: ${JSON.stringify(worker).slice(0, 600)}`);
   const ids = created.map((worker) => worker.id);
@@ -127,48 +124,51 @@ try {
   assert.ok(existsSync(join(home, "data", "supervisor.sqlite")), `SUPERVISOR_HOME=${home} was ignored`);
   step("create", { ids });
 
-  const waited = await call(TOOL.wait, { task_ids: ids, mode: "all" });
+  const waited = await call("wait_workers", { task_ids: ids, mode: "all" });
   step("wait", { termination_reason: waited.termination_reason ?? null });
   const settled = await Promise.all(ids.map((id) => settle(id)));
   for (const task of settled) assert.equal(task.status, "completed", `worker ${task.id} ended ${task.status}: ${JSON.stringify(task).slice(0, 600)}`);
   step("settled", { statuses: settled.map((task) => task.status) });
 
   for (const [index, id] of ids.entries()) {
-    const result = await call(TOOL.result, { task_id: id });
+    const result = await call("get_worker", { task_id: id, include: ["result"] });
     assert.equal(result.acceptance?.passed, true, `acceptance for ${id}: ${JSON.stringify(result.acceptance).slice(0, 600)}`);
-    const diff = await call(TOOL.diff, { task_id: id });
+    const diff = await call("get_worker_diff", { task_id: id });
     const files = (diff.files ?? []).map((file) => file.path);
     assert.deepEqual(files, [WORK[index].file], `diff for ${id} touched ${JSON.stringify(files)}`);
   }
   step("result+diff", { accepted: ids.length });
 
   for (const [index, id] of ids.entries()) {
-    const landed = await call(TOOL.land, { task_id: id, commitMessage: `Append ${WORK[index].line} to ${WORK[index].file}` });
+    const landed = await call("land_worker", { task_id: id, commit_message: `Append ${WORK[index].line} to ${WORK[index].file}` });
     assert.ok(landed.landed_head || landed.landed || landed.head, `land ${id}: ${JSON.stringify(landed).slice(0, 600)}`);
   }
   for (const work of WORK) assert.equal(await readFile(join(repo, work.file), "utf8"), `${work.seed}\n${work.line}\n`);
   assert.equal(git(["status", "--porcelain"]), "", "integration checkout is dirty after land");
   step("land", { commits: Number(git(["rev-list", "--count", "HEAD"])) });
 
-  const plan = await call(TOOL.cleanupPlan, { task_ids: ids });
+  const plan = await call("cleanup", { action: "plan", task_ids: ids });
   assert.deepEqual((plan.items ?? []).map((item) => item.verdict), ["safe", "safe"], `landed work must be safe: ${JSON.stringify(plan.items).slice(0, 600)}`);
-  step("cleanup_plan", { summary: plan.summary });
+  step("cleanup", { summary: plan.summary, action: "plan" });
 
   // A third worker leaves an uncommitted draft and is never landed.
-  const draft = await call(TOOL.create, {
-    cwd: repo, sandbox: "workspace-write", ownedPaths: ["notes.txt"],
+  const draft = await call("create_worker", {
+    cwd: repo, sandbox: { mode: "workspace-write" }, owned_paths: ["notes.txt"],
     title: "leave a draft",
     task: "Create a file notes.txt containing exactly one line: draft-kept. Do not run git add or git commit. Then run: grep -q draft-kept notes.txt",
     goal: { objective: "notes.txt exists with the line draft-kept" },
-    acceptance: ["grep -q draft-kept notes.txt"],
-    session_id: session
+    acceptance: { commands: ["grep -q draft-kept notes.txt"] },
+    session: { id: session }
   });
   assert.ok(draft.id, `create failed: ${JSON.stringify(draft).slice(0, 600)}`);
   const draftSettled = await settle(draft.id);
   assert.equal(draftSettled.status, "completed", JSON.stringify(draftSettled).slice(0, 600));
   step("draft worker", { id: draft.id, worktree: existsSync(draftSettled.worktree_path) });
 
-  const polled = await call(TOOL.poll, {});
+  // The table hands out the cursor; the loop poll with it does the cleanup.
+  const table = await call("poll_workers", {});
+  assert.ok(table.next_cursor, "the table gave no cursor");
+  const polled = await call("poll_workers", { cursor: table.next_cursor });
   const cleaned = polled.cleaned ?? [];
   // The preflight probes' worktrees go in the same sweep, so this is a subset check.
   const cleanedIds = new Set(cleaned.map((entry) => entry.task_id));
@@ -177,13 +177,13 @@ try {
   assert.ok(draftRemoval.checkpoint_commit, "the uncommitted draft must be committed to the branch before removal");
   for (const id of [...ids, draft.id]) {
     assert.equal(existsSync(join(home, "worktrees", id)), false, `worktree of ${id} is still there`);
-    assert.notEqual(git(["branch", "--list", `codex/${id}`]), "", `branch of ${id} was removed`);
+    assert.notEqual(git(["branch", "--list", `worker/${id}`]), "", `branch of ${id} was removed`);
   }
-  assert.equal(git(["show", `codex/${draft.id}:notes.txt`]).trim(), "draft-kept");
+  assert.equal(git(["show", `worker/${draft.id}:notes.txt`]).trim(), "draft-kept");
   step("auto cleanup", { removed: cleaned.length, checkpoint: draftRemoval.checkpoint_commit.slice(0, 12), branches_kept: true });
 
   // The cleaned-up draft can still be landed: its worktree comes back from the branch.
-  const landedDraft = await call(TOOL.land, { task_id: draft.id });
+  const landedDraft = await call("land_worker", { task_id: draft.id });
   assert.ok(landedDraft.landed_head || landedDraft.landed || landedDraft.head, `land after cleanup: ${JSON.stringify(landedDraft).slice(0, 600)}`);
   assert.equal((await readFile(join(repo, "notes.txt"), "utf8")).trim(), "draft-kept");
   step("land after cleanup", { commits: Number(git(["rev-list", "--count", "HEAD"])) });

@@ -26,17 +26,17 @@ test("the cleanup CLI removes landed worktrees, keeps unsaved edits through the 
   const home = await tempHome("supervisor-cleanup-");
   const { dir } = await makeRepo(join(home, "repo"));
   const workers = {};
-  await withMcp({ SUPERVISOR_HOME: home, CODEX_SUPERVISOR_NO_AUTO_CLEANUP: "1" }, async ({ call }) => {
+  await withMcp({ SUPERVISOR_HOME: home, AGENT_SUPERVISOR_NO_AUTO_CLEANUP: "1" }, async ({ call }) => {
     for (const title of ["landed", "edited"]) {
-      const worker = await call("create_codex_worker", dispatchArgs(title, dir, {
-        sandbox: "workspace-write",
-        ownedPaths: [`${title}.txt`]
+      const worker = await call("create_worker", dispatchArgs(title, dir, {
+        sandbox: { mode: "workspace-write" },
+        owned_paths: [`${title}.txt`]
       }));
       await waitFor(call, worker.id, (task) => task.status === "completed" && task.exit_code === 0);
       await writeFile(join(worker.worktree_path, `${title}.txt`), `${title}\n`);
       git(worker.worktree_path, ["add", "-A"]);
       git(worker.worktree_path, ["commit", "-q", "-m", `land ${title}`]);
-      const landed = await call("land_codex_worker", { task_id: worker.id });
+      const landed = await call("land_worker", { task_id: worker.id });
       assert.ok(!landed.error, JSON.stringify(landed));
       workers[title] = worker;
     }
@@ -56,7 +56,7 @@ test("the cleanup CLI removes landed worktrees, keeps unsaved edits through the 
   assert.equal(applied.applied.length, 1, JSON.stringify(applied));
   assert(!existsSync(workers.landed.worktree_path));
   assert(existsSync(workers.edited.worktree_path), "a review item is never removed");
-  assert.notEqual(git(dir, ["branch", "--list", `codex/${workers.landed.id}`]), "", "branch is retained");
+  assert.notEqual(git(dir, ["branch", "--list", `worker/${workers.landed.id}`]), "", "branch is retained");
   assert(existsSync(logPath), "JSONL is retained");
   const db = openStore(home);
   assert.equal(db.prepare("SELECT count(*) AS count FROM tasks WHERE id = ?").get(workers.landed.id).count, 1, "task row is retained");
@@ -65,12 +65,12 @@ test("the cleanup CLI removes landed worktrees, keeps unsaved edits through the 
   db.close();
 
   // Once the hold period is over the edits are committed to the branch, then the worktree goes.
-  const later = runCleanupWith(home, { CODEX_SUPERVISOR_CLEANUP_HOLD_DAYS: "0" }, ["--dry-run"]);
+  const later = runCleanupWith(home, { AGENT_SUPERVISOR_CLEANUP_HOLD_DAYS: "0" }, ["--dry-run"]);
   const due = later.items.find((item) => item.task_id === workers.edited.id);
   assert.equal(due.verdict, "safe");
-  const removed = runCleanupWith(home, { CODEX_SUPERVISOR_CLEANUP_HOLD_DAYS: "0" }, ["--apply", "--plan", later.plan_id, "--item", due.id]);
+  const removed = runCleanupWith(home, { AGENT_SUPERVISOR_CLEANUP_HOLD_DAYS: "0" }, ["--apply", "--plan", later.plan_id, "--item", due.id]);
   assert.equal(removed.applied.length, 1, JSON.stringify(removed));
   assert.ok(removed.applied[0].checkpoint_commit, "the unsaved edit was committed first");
   assert(!existsSync(workers.edited.worktree_path));
-  assert.equal(git(dir, ["show", `codex/${workers.edited.id}:precious.txt`]), "keep");
+  assert.equal(git(dir, ["show", `worker/${workers.edited.id}:precious.txt`]), "keep");
 });

@@ -139,7 +139,7 @@ function checkOwnership(taskId, incoming) {
     const matching=incoming.flatMap(path=>paths.filter(other=>overlaps(path,other)).map(other=>({incoming:path,existing:other})));
     if(matching.length)conflicts.push({task_id:row.id,title:row.title,status:row.status,overlapping_paths:matching});
   }
-  if(conflicts.length){const error=new Error("ownedPaths overlap with an active worker claimed by another dispatcher");error.code="ownership_conflict";error.conflicts=conflicts;throw error;}
+  if(conflicts.length){const error=new Error("owned_paths overlap with an active worker claimed by another dispatcher");error.code="ownership_conflict";error.conflicts=conflicts;throw error;}
 }
 
 export async function reserveTaskOwnership(task) {

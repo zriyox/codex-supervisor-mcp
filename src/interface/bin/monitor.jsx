@@ -173,12 +173,12 @@ function ClaudePlanPanel({ width }) {
       <Text>5. 完成后让 Claude 或 Codex review worker 审查。</Text>
       <Newline />
       <Text dimColor>Claude 可调用的 MCP 工具名:</Text>
-      <Text dimColor>create_codex_worker</Text>
-      <Text dimColor>create_codex_followup_worker</Text>
-      <Text dimColor>list_codex_workers</Text>
-      <Text dimColor>get_codex_worker_status</Text>
-      <Text dimColor>get_codex_worker_events</Text>
-      <Text dimColor>cancel_codex_worker</Text>
+      <Text dimColor>create_worker</Text>
+      <Text dimColor>create_worker with followup_of</Text>
+      <Text dimColor>poll_workers</Text>
+      <Text dimColor>get_worker</Text>
+      <Text dimColor>get_worker (include events)</Text>
+      <Text dimColor>cancel_worker</Text>
     </Box>
   );
 }

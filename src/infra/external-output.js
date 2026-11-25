@@ -3,10 +3,10 @@ import { isAbsolute, dirname } from "node:path";
 import { createHash } from "node:crypto";
 
 export async function captureExternalOutputs(declarations, { checkBaseline = false } = {}) {
-  if (!Array.isArray(declarations) || declarations.length > 20) throw new Error("externalOutputs must contain at most 20 files");
+  if (!Array.isArray(declarations) || declarations.length > 20) throw new Error("workspace.external_outputs must contain at most 20 files");
   const captured = [];
   for (const entry of declarations) {
-    if (!entry || !isAbsolute(entry.path)) throw new Error("externalOutputs must use absolute file paths");
+    if (!entry || !isAbsolute(entry.path)) throw new Error("workspace.external_outputs must use absolute file paths");
     let info;
     try { info = await lstat(entry.path); } catch (error) { if (error.code !== "ENOENT") throw error; }
     let snapshot = { path: entry.path, exists: false, sha256: null, content: null, truncated: false };

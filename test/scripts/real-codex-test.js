@@ -53,7 +53,7 @@ async function waitFor(client, taskId, predicate, timeoutMs = 300000) {
   const deadline = Date.now() + timeoutMs;
   let last = null;
   while (Date.now() < deadline) {
-    last = await call(client, "get_codex_worker_status", { task_id: taskId });
+    last = await call(client, "get_worker", { task_id: taskId, include: ["status"] });
     if (predicate(last)) return last;
     await sleep(1000);
   }
@@ -64,18 +64,18 @@ console.log("creating a worker with the real codex CLI ...");
 
 // Wait for the independent run owner's exit write, not only turn.completed.
 const first = await withServer(async (client) => {
-  const created = await call(client, "create_codex_worker", {
+  const created = await call(client, "create_worker", {
     title: "real codex pong",
     task: PROMPT,
     cwd: repo,
-    sandbox: "read-only",
-    reasoningEffort: "low",
-    ownedPaths: ["README.md"],
+    sandbox: { mode: "read-only" },
+    reasoning_effort: "low",
+    owned_paths: ["README.md"],
     goal: { objective: "Respond with PONG without touching files; the supervisor validates your response" }
   });
   assert.ok(["queued", "running"].includes(created.status), `unexpected dispatch status ${created.status}`);
   assert.ok(created.worktree_path, "a dispatch receipt must carry the worktree path");
-  assert.equal(created.branch, `codex/${created.id}`);
+  assert.equal(created.branch, `worker/${created.id}`);
   assert.equal(created.prompt, undefined, "a dispatch receipt must not echo the task text back");
   console.log(`  worker=${created.id} status=${created.status} worktree=${created.worktree_path}`);
 
@@ -87,7 +87,7 @@ const first = await withServer(async (client) => {
     seenStatuses.add(current.status);
     if (current.phase) seenPhases.add(current.phase);
     await sleep(700);
-    current = await call(client, "get_codex_worker_status", { task_id: created.id });
+    current = await call(client, "get_worker", { task_id: created.id, include: ["status"] });
   }
   seenStatuses.add(current.status);
   if (current.phase) seenPhases.add(current.phase);
@@ -98,7 +98,7 @@ const first = await withServer(async (client) => {
   console.log(`  statuses seen: ${[...seenStatuses].join(", ")}`);
   console.log(`  phases seen:   ${[...seenPhases].join(", ") || "(none observed)"}`);
 
-  const events = await call(client, "get_codex_worker_events", { task_id: created.id, limit: 200 });
+  const events = await call(client, "get_worker", { task_id: created.id, event_limit: 200, include: ["events"] });
   const kinds = new Set(events.events.map((event) => event.type));
   assert.ok(kinds.has("thread.started"), `missing thread.started in ${[...kinds]}`);
   assert.ok(kinds.has("turn.completed"), `missing turn.completed in ${[...kinds]}`);
@@ -108,23 +108,23 @@ const first = await withServer(async (client) => {
     "thread.started must match the stored thread id"
   );
 
-  const overview = await call(client, "get_orchestration_overview", {});
+  const overview = await call(client, "poll_workers", {});
   assert.equal(overview.workers.length, 1);
 
-  const summary = await call(client, "get_worker_summary", { task_id: created.id });
+  const summary = await call(client, "get_worker", { task_id: created.id });
   assert.equal(summary.thread_id, current.thread_id);
   console.log(`  summary: ${summary.summary.split("\n")[0]}`);
 
   // The overview and wait responses clip the last message, so the full report
   // has to come back through its own door.
-  const result = await call(client, "get_worker_result", { task_id: created.id });
+  const result = await call(client, "get_worker", { task_id: created.id, include: ["result"] });
   assert.equal(result.status, "completed");
   assert.equal(result.source, "event_stream");
   assert.ok(result.reports.length >= 1, "expected at least one report");
   assert.match(result.reports.at(-1), /PONG/, `unexpected report: ${result.reports.at(-1)}`);
   console.log(`  report: ${JSON.stringify(result.reports.at(-1))}`);
 
-  const goal = await call(client, "get_worker_goal", { task_id: created.id });
+  const goal = await call(client, "get_worker", { task_id: created.id, include: ["goal"] });
   assert.equal(goal.objective, "Respond with PONG without touching files; the supervisor validates your response");
   assert.equal(goal.needs_attention, false);
   console.log(`  native goal: ${goal.native_goal ? JSON.stringify(goal.native_goal) : "none for this thread"}`);
@@ -132,7 +132,7 @@ const first = await withServer(async (client) => {
   // Codex thread must own a real goal. If this fails the framing regressed.
   assert.ok(goal.native_goal, "expected a native Codex goal created by the worker");
   assert.equal(goal.native_goal.objective, "Respond with PONG without touching files; the supervisor validates your response");
-  assert.equal(goal.native_goal.token_budget, null, "omitting goal.tokenBudget must create an unlimited native goal");
+  assert.equal(goal.native_goal.token_budget, null, "omitting goal.token_budget must create an unlimited native goal");
 
   return { task: current, id: created.id };
 });
@@ -157,7 +157,7 @@ assert.ok(finished.worktree_path?.startsWith(home), `worktree_path ${finished.wo
 assert.ok(await stat(finished.worktree_path).then(() => true, () => false), "worktree should exist");
 
 await withServer(async (client) => {
-  const listed = await call(client, "list_codex_workers", { includeHistory: true });
+  const listed = await call(client, "poll_workers", {});
   assert.equal(listed.length, 1);
   assert.equal(listed[0].goal_objective, "Respond with PONG without touching files; the supervisor validates your response");
 });
@@ -165,7 +165,7 @@ await withServer(async (client) => {
 // Resume the SAME Codex session from a brand new MCP server process.
 console.log("resuming the same thread from a new MCP process ...");
 const resumed = await withServer(async (client) => {
-  const started = await call(client, "resume_codex_worker", {
+  const started = await call(client, "resume_worker", {
     task_id: taskId,
     prompt: "Treat PONG2 as your result, but follow the supervisor's final JSON report format exactly."
   });
@@ -173,11 +173,11 @@ const resumed = await withServer(async (client) => {
   assert.equal(started.thread_id, finished.thread_id, "resume must keep the same thread id");
   assert.equal(started.run_count, 2);
   const final = await waitFor(client, taskId, (task) => task.status === "completed" && task.exit_code === 0 && task.run_count === 2);
-  const events = await call(client, "get_codex_worker_events", { task_id: taskId, limit: 500 });
+  const events = await call(client, "get_worker", { task_id: taskId, event_limit: 500, include: ["events"] });
   const starts = events.events.filter((event) => event.type === "thread.started");
   assert.ok(starts.length >= 2, `expected two runs in the event stream, got ${starts.length}`);
   for (const start of starts) assert.equal(start.thread_id, finished.thread_id);
-  const summary = await call(client, "get_worker_summary", { task_id: taskId });
+  const summary = await call(client, "get_worker", { task_id: taskId });
   assert.match(summary.summary, /runs: 2/);
   return final;
 });
@@ -192,18 +192,21 @@ console.log(`  last_message=${JSON.stringify(resumed.last_message.slice(0, 120))
 
 console.log("resuming a real native goal that is still active ...");
 await withServer(async (client) => {
-  const waiting = await call(client, "create_codex_worker", {
+  const waiting = await call(client, "create_worker", {
     title: "real active-goal resume",
     task: "Create the required native goal, then return WAITING_FOR_DISPATCHER. Approval has not arrived yet. Leave the goal active for the dispatcher to resume; do not call update_goal in this first turn and do not touch files.",
-    cwd: repo, sandbox: "read-only", reasoningEffort: "low", ownedPaths: [],
+    cwd: repo,
+    sandbox: { mode: "read-only" },
+    reasoning_effort: "low",
+    owned_paths: [],
     goal: { objective: "Wait for a dispatcher follow-up explicitly approving release, then acknowledge RELEASE_APPROVED and complete this goal without editing files" }
   });
   assert.ok(waiting.id, JSON.stringify(waiting));
   const firstTurn = await waitFor(client, waiting.id, (task) => TERMINAL.includes(task.status) && task.exit_code != null);
   assert.equal(firstTurn.status, "completed", JSON.stringify(firstTurn));
-  const unfinished = await call(client, "get_worker_goal", { task_id: waiting.id });
+  const unfinished = await call(client, "get_worker", { task_id: waiting.id, include: ["goal"] });
   assert.equal(unfinished.native_goal?.storage_status, "active", JSON.stringify(unfinished));
-  const resumedWaiting = await call(client, "resume_codex_worker", {
+  const resumedWaiting = await call(client, "resume_worker", {
     task_id: waiting.id,
     prompt: "The dispatcher explicitly approves release now. Acknowledge RELEASE_APPROVED and mark the existing goal complete. Do not create a new goal or edit files."
   });
@@ -221,14 +224,14 @@ await withServer(async (client) => {
 // changed files must be reported, while the target repository stays untouched.
 console.log("running a real write worker ...");
 const writeWorker = await withServer(async (client, transport) => {
-  const created = await call(client, "create_codex_worker", {
+  const created = await call(client, "create_worker", {
     title: "real codex write",
     task: "Create a file named NOTES.md in the repository root containing exactly the line: hello from worker",
     cwd: repo,
-    sandbox: "workspace-write",
-    reasoningEffort: "low",
-    ownedPaths: ["NOTES.md"],
-    acceptance: ['node -e "const fs=require(\'fs\');if(fs.readFileSync(\'NOTES.md\',\'utf8\').trim()!==\'hello from worker\')process.exit(1);console.log(\'real output verified\')"'],
+    sandbox: { mode: "workspace-write" },
+    reasoning_effort: "low",
+    owned_paths: ["NOTES.md"],
+    acceptance: { commands: ['node -e "const fs=require(\'fs\');if(fs.readFileSync(\'NOTES.md\',\'utf8\').trim()!==\'hello from worker\')process.exit(1);console.log(\'real output verified\')"'] },
     goal: { objective: "Create NOTES.md with hello from worker using apply_patch; run the declared acceptance command" }
   });
   assert.ok(created.id, JSON.stringify(created));
@@ -246,12 +249,14 @@ const writeRun = await withServer(async (client) => {
     return TERMINAL.includes(task.status) && task.exit_code !== null && task.acceptance === "passed";
   });
   if (final.attention_reason === "invalid_report") {
-    await call(client, "resume_codex_worker", { task_id: created.id,
-      prompt: "Your final JSON was invalid. Preserve the already correct NOTES.md, rerun the declared acceptance, then return valid JSON with short result, verification and not_done fields. Close every array and object; do not include the quoted shell source." });
+    await call(client, "resume_worker", {
+                                                task_id: created.id,
+                                                prompt: "Your final JSON was invalid. Preserve the already correct NOTES.md, rerun the declared acceptance, then return valid JSON with short result, verification and not_done fields. Close every array and object; do not include the quoted shell source."
+                                              });
     final = await waitFor(client, created.id, (row) => row.run_count === 2 && row.exit_code !== null && row.acceptance === "passed");
   }
   assert.equal(final.status, "completed", JSON.stringify({ status: final.status, error: final.error }));
-  const result = await call(client, "get_worker_result", { task_id: created.id });
+  const result = await call(client, "get_worker", { task_id: created.id, include: ["result"] });
   assert.equal(result.acceptance.passed, true);
   assert.match(result.acceptance.checks[0].output_tail, /real output verified/);
   assert.equal(await readFile(join(repo, "README.md"), "utf8"), "# test repo\n");
@@ -259,9 +264,9 @@ const writeRun = await withServer(async (client) => {
   const diffIndex = await call(client, "get_worker_diff", { task_id: created.id });
   assert.equal(diffIndex.summary_only, true);
   assert.equal(diffIndex.files.length, 1);
-  const diff = await call(client, "get_worker_diff", { task_id: created.id, file: diffIndex.files[0].path, pageSize: 1 });
+  const diff = await call(client, "get_worker_diff", { task_id: created.id, file: diffIndex.files[0].path, page_size: 1 });
   assert.match(diff.hunks[0].patch, /hello from worker/);
-  const landed = await call(client, "land_codex_worker", { task_id: created.id, commitMessage: "Verify real model worker output" });
+  const landed = await call(client, "land_worker", { task_id: created.id, commit_message: "Verify real model worker output" });
   assert.ok(!landed.error, JSON.stringify(landed));
   assert.equal(landed.landed.length, 1);
   assert.equal((await readFile(join(repo, "NOTES.md"), "utf8")).trim(), "hello from worker");
@@ -289,14 +294,14 @@ console.log("  worktree output landed, target repo is clean");
 
 console.log("running a real continuation chain before landing its parent ...");
 await withServer(async (client) => {
-  const parent = await call(client, "create_codex_worker", {
+  const parent = await call(client, "create_worker", {
     title: "real chain parent",
     task: "Create chain-parent.cjs containing module.exports = (value) => value * 2; use apply_patch and touch no other file.",
     cwd: repo,
-    sandbox: "workspace-write",
-    reasoningEffort: "low",
-    ownedPaths: ["chain-parent.cjs"],
-    acceptance: ['node -e "require(\'node:assert/strict\').equal(require(\'./chain-parent.cjs\')(7),14)"'],
+    sandbox: { mode: "workspace-write" },
+    reasoning_effort: "low",
+    owned_paths: ["chain-parent.cjs"],
+    acceptance: { commands: ['node -e "require(\'node:assert/strict\').equal(require(\'./chain-parent.cjs\')(7),14)"'] },
     goal: { objective: "Implement and verify the doubling function in chain-parent.cjs" }
   });
   assert.ok(parent.id, JSON.stringify(parent));
@@ -306,11 +311,11 @@ await withServer(async (client) => {
   execFileSync("git", ["commit", "-q", "-m", "Checkpoint real continuation parent"], { cwd: parent.worktree_path });
   const parentHead = execFileSync("git", ["rev-parse", "HEAD"], { cwd: parent.worktree_path, encoding: "utf8" }).trim();
 
-  const child = await call(client, "create_codex_followup_worker", {
-    task_id: parent.id,
-    followup_prompt: "Create chain-child.cjs containing module.exports = (value) => require('./chain-parent.cjs')(value) + 1; use apply_patch, touch only chain-child.cjs and verify the inherited parent function.",
-    ownedPaths: ["chain-child.cjs"],
-    acceptance: ['node -e "require(\'node:assert/strict\').equal(require(\'./chain-child.cjs\')(7),15)"'],
+  const child = await call(client, "create_worker", {
+    followup_of: parent.id,
+    task: "Create chain-child.cjs containing module.exports = (value) => require('./chain-parent.cjs')(value) + 1; use apply_patch, touch only chain-child.cjs and verify the inherited parent function.",
+    owned_paths: ["chain-child.cjs"],
+    acceptance: { commands: ['node -e "require(\'node:assert/strict\').equal(require(\'./chain-child.cjs\')(7),15)"'] },
     goal: { objective: "Implement and verify the child function using the unlanded parent checkpoint" }
   });
   assert.ok(child.id, JSON.stringify(child));
@@ -319,10 +324,12 @@ await withServer(async (client) => {
   const childFinal = await waitFor(client, child.id, (task) => TERMINAL.includes(task.status) && task.exit_code != null && task.acceptance === "passed");
   assert.equal(childFinal.status, "completed");
   assert.notEqual(childFinal.thread_id, parentFinal.thread_id);
-  const partial = await call(client, "land_codex_worker", { task_id: child.id, commitMessage: "Land child alone" });
+  const partial = await call(client, "land_worker", { task_id: child.id, commit_message: "Land child alone" });
   assert.equal(partial.error, "followup_parents_not_landed");
-  const chain = await call(client, "land_codex_worker", {
-    task_id: child.id, includeFollowupParents: true, commitMessage: "Land real continuation child"
+  const chain = await call(client, "land_worker", {
+    task_id: child.id,
+    include_followup_parents: true,
+    commit_message: "Land real continuation child"
   });
   assert.ok(!chain.error, JSON.stringify(chain));
   assert.equal(chain.chain.length, 2);

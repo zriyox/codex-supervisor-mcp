@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { dispatchArgs, makeRepo, tempHome, waitFor, waitForRunHostExit, withMcp, openStore } from "./helpers.js";
+import { dispatchArgs, makeRepo, tempHome, waitFor, waitForRunHostExit, withMcp, openStore, listWorkers } from "./helpers.js";
 
 for (const goalStatus of ["active", "paused", "blocked", "usage_limited", "budget_limited", "complete", "missing_database"]) test(`native goal ${goalStatus} uses a compatible resume schema`, async () => {
   const home = await tempHome("supervisor-resume-schema-");
@@ -24,14 +24,16 @@ for (const goalStatus of ["active", "paused", "blocked", "usage_limited", "budge
   }
 
   await withMcp({ SUPERVISOR_HOME: home, CODEX_HOME: codexHome, FAKE_CODEX_ARGS_LOG: argsLog }, async ({ call }) => {
-    const worker = await call("create_codex_worker", dispatchArgs("schema resume", dir, {
-      sandbox: "read-only", ownedPaths: [], acceptance: ['node -e "process.exit(0)"']
+    const worker = await call("create_worker", dispatchArgs("schema resume", dir, {
+      sandbox: { mode: "read-only" },
+      owned_paths: [],
+      acceptance: { commands: ['node -e "process.exit(0)"'] }
     }));
     const first = await waitFor(call, worker.id, (task) => task.status === "completed" && task.exit_code === 0);
     await waitForRunHostExit(home, worker.id);
     assert.equal(first.goal_status, goalStatus === "missing_database" ? null : goalStatus);
 
-    const resumed = await call("resume_codex_worker", { task_id: worker.id, prompt: "continue without a schema mismatch" });
+    const resumed = await call("resume_worker", { task_id: worker.id, prompt: "continue without a schema mismatch" });
     assert.ok(!resumed.error, JSON.stringify(resumed));
     const second = await waitFor(call, worker.id, (task) => task.run_count === 2 && task.status === "completed" && task.exit_code === 0);
     await waitForRunHostExit(home, worker.id);
@@ -44,7 +46,7 @@ for (const goalStatus of ["active", "paused", "blocked", "usage_limited", "budge
     db.prepare("UPDATE tasks SET status='lost', exit_code=NULL, error=?, attention_reason=NULL, run_evidence=NULL WHERE id=?")
       .run("Worker ended but its supervisor did not record the process exit", worker.id);
     db.close();
-    const reconciled = (await call("list_codex_workers", { includeHistory: true })).find((task) => task.id === worker.id);
+    const reconciled = (await listWorkers(call)).find((task) => task.id === worker.id);
     assert.equal(reconciled.status, "completed", JSON.stringify(reconciled));
     assert.equal(reconciled.exit_code, 0);
     assert.equal(reconciled.attention_reason, null);

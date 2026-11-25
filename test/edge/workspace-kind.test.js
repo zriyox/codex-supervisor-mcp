@@ -16,9 +16,9 @@ test("a non-Git workspace-write worker must choose scratch or explicitly authori
   const home = await tempHome("supervisor-workspace-kind-refuse-");
   const source = await makeDirectory(home, "source");
   await withMcp({ SUPERVISOR_HOME: home }, async ({ call }) => {
-    const refused = await call("create_codex_worker", dispatchArgs("non-git-write", source, {
-      sandbox: "workspace-write",
-      ownedPaths: ["notes.txt"]
+    const refused = await call("create_worker", dispatchArgs("non-git-write", source, {
+      sandbox: { mode: "workspace-write" },
+      owned_paths: ["notes.txt"]
     }));
     assert.equal(refused.error, "workspace_kind_required");
     assert.match(refused.message, /never writes a user directory by default/);
@@ -29,10 +29,10 @@ test("read_only_in_place stays in the non-Git source directory without creating 
   const home = await tempHome("supervisor-workspace-read-only-");
   const source = await makeDirectory(home, "source");
   await withMcp({ SUPERVISOR_HOME: home }, async ({ call }) => {
-    const worker = await call("create_codex_worker", dispatchArgs("read-only-in-place", source, {
-      sandbox: "read-only",
-      ownedPaths: [],
-      workspaceKind: "read_only_in_place"
+    const worker = await call("create_worker", dispatchArgs("read-only-in-place", source, {
+      sandbox: { mode: "read-only" },
+      owned_paths: [],
+      workspace: { kind: "read_only_in_place" }
     }));
     const settled = await waitFor(call, worker.id, (task) => task.status === "completed" && task.exit_code === 0);
     assert.equal(settled.workspace_kind, "read_only_in_place");
@@ -45,11 +45,10 @@ test("scratch runs in supervisor storage and never writes the non-Git source dir
   const home = await tempHome("supervisor-workspace-scratch-");
   const source = await makeDirectory(home, "source");
   await withMcp({ SUPERVISOR_HOME: home, FAKE_CODEX_SCENARIO: "commit-in-worktree" }, async ({ call }) => {
-    const worker = await call("create_codex_worker", dispatchArgs("scratch", source, {
-      sandbox: "workspace-write",
-      ownedPaths: [],
-      networkAccess: true,
-      workspaceKind: "scratch"
+    const worker = await call("create_worker", dispatchArgs("scratch", source, {
+      sandbox: { mode: "workspace-write", network_access: true },
+      owned_paths: [],
+      workspace: { kind: "scratch" }
     }));
     const settled = await waitFor(call, worker.id, (task) => task.status === "completed" && task.exit_code === 0);
     assert.equal(settled.workspace_kind, "scratch");
@@ -64,16 +63,15 @@ test("resuming a scratch worker whose directory was removed stays in scratch and
   const home = await tempHome("supervisor-workspace-scratch-resume-");
   const source = await makeDirectory(home, "source");
   await withMcp({ SUPERVISOR_HOME: home, FAKE_CODEX_SCENARIO: "commit-in-worktree" }, async ({ call }) => {
-    const worker = await call("create_codex_worker", dispatchArgs("scratch", source, {
-      sandbox: "workspace-write",
-      ownedPaths: [],
-      networkAccess: true,
-      workspaceKind: "scratch"
+    const worker = await call("create_worker", dispatchArgs("scratch", source, {
+      sandbox: { mode: "workspace-write", network_access: true },
+      owned_paths: [],
+      workspace: { kind: "scratch" }
     }));
     const settled = await waitFor(call, worker.id, (task) => task.status === "completed" && task.exit_code === 0);
     await waitForRunHostExit(home, worker.id);
     await rm(settled.cwd, { recursive: true, force: true });
-    const resumed = await call("resume_codex_worker", { task_id: worker.id, prompt: "continue" });
+    const resumed = await call("resume_worker", { task_id: worker.id, prompt: "continue" });
     assert.ok(!resumed.error, JSON.stringify(resumed).slice(0, 400));
     const again = await waitFor(call, worker.id, (task) => task.run_count === 2 && task.exit_code !== null);
     assert.equal(again.cwd, join(home, "scratch", worker.id));
@@ -87,32 +85,32 @@ test("in_place_write requires authorization and acceptance, then records before 
   const source = await makeDirectory(home, "source");
   await withMcp({ SUPERVISOR_HOME: home, FAKE_CODEX_SCENARIO: "commit-in-worktree" }, async ({ call }) => {
     const base = dispatchArgs("in-place", source, {
-      sandbox: "workspace-write",
-      ownedPaths: ["committed.txt"],
-      workspaceKind: "in_place_write"
+      sandbox: { mode: "workspace-write" },
+      owned_paths: ["committed.txt"],
+      workspace: { kind: "in_place_write" }
     });
-    const withoutAuthorization = await call("create_codex_worker", base);
+    const withoutAuthorization = await call("create_worker", base);
     assert.equal(withoutAuthorization.error, "invalid_in_place_workspace");
 
-    const withoutAcceptance = await call("create_codex_worker", {
+    const withoutAcceptance = await call("create_worker", {
       ...base,
-      inPlaceAuthorization: "User explicitly authorized this isolated non-Git fixture edit."
+      workspace: { ...base.workspace, in_place_authorization: "User explicitly authorized this isolated non-Git fixture edit." }
     });
     assert.equal(withoutAcceptance.error, "in_place_acceptance_required");
 
-    const worker = await call("create_codex_worker", {
+    const worker = await call("create_worker", {
       ...base,
-      inPlaceAuthorization: "User explicitly authorized this isolated non-Git fixture edit.",
-      acceptance: ["node -e \"const fs=require('fs'); if (!fs.readFileSync('committed.txt','utf8').trim()) process.exit(1)\""]
+      workspace: { ...base.workspace, in_place_authorization: "User explicitly authorized this isolated non-Git fixture edit." },
+      acceptance: { commands: ["node -e \"const fs=require('fs'); if (!fs.readFileSync('committed.txt','utf8').trim()) process.exit(1)\""] }
     });
     await waitFor(call, worker.id, (task) => task.status === "completed" && task.exit_code === 0 && task.acceptance?.status !== "running");
     assert.match(await readFile(join(source, "committed.txt"), "utf8"), /hello/);
-    const result = await call("get_worker_result", { task_id: worker.id });
+    const result = await call("get_worker", { task_id: worker.id, include: ["result"] });
     assert.equal(result.workspace_kind, "in_place_write");
     assert.equal(result.acceptance.passed, true, JSON.stringify(result.acceptance));
     assert.equal(result.run_evidence.workspace.manifest_changed, true);
     assert.notEqual(result.run_evidence.workspace.before_manifest.sha256, result.run_evidence.workspace.after_manifest.sha256);
-    const landed = await call("land_codex_worker", { task_id: worker.id });
+    const landed = await call("land_worker", { task_id: worker.id });
     assert.equal(landed.error, "workspace_kind_not_landable");
   });
 });
@@ -122,18 +120,17 @@ test("an in_place_write fact expires after its source manifest drifts before res
   const source = await makeDirectory(home, "source");
   let worker;
   await withMcp({ SUPERVISOR_HOME: home, FAKE_CODEX_SCENARIO: "commit-in-worktree" }, async ({ call }) => {
-    worker = await call("create_codex_worker", dispatchArgs("manifest-expiry", source, {
-      sandbox: "workspace-write",
-      workspaceKind: "in_place_write",
-      inPlaceAuthorization: "User explicitly authorized this isolated non-Git fixture edit.",
-      ownedPaths: ["committed.txt", "uncommitted.txt"],
-      acceptance: ["node -e \"process.exit(0)\""]
+    worker = await call("create_worker", dispatchArgs("manifest-expiry", source, {
+      sandbox: { mode: "workspace-write" },
+      workspace: { kind: "in_place_write", in_place_authorization: "User explicitly authorized this isolated non-Git fixture edit." },
+      owned_paths: ["committed.txt", "uncommitted.txt"],
+      acceptance: { commands: ["node -e \"process.exit(0)\""] }
     }));
     await waitFor(call, worker.id, (task) => task.exit_code === 0);
   });
   await writeFile(join(source, "committed.txt"), "manual change after verification\n");
   await withMcp({ SUPERVISOR_HOME: home, FAKE_CODEX_SCENARIO: "echo-prompt" }, async ({ call }) => {
-    await call("resume_codex_worker", { task_id: worker.id, prompt: "recheck changed source" });
+    await call("resume_worker", { task_id: worker.id, prompt: "recheck changed source" });
     await waitFor(call, worker.id, (task) => task.run_count === 2 && task.exit_code === 0);
   });
   const db = openStore(home);
@@ -154,13 +151,12 @@ test("a content-pinned in-place fact expires when its declared input file change
   await writeFile(input, "first verified input\n");
   let worker;
   await withMcp({ SUPERVISOR_HOME: home, FAKE_CODEX_SCENARIO: "commit-in-worktree" }, async ({ call }) => {
-    worker = await call("create_codex_worker", dispatchArgs("content-expiry", source, {
-      sandbox: "workspace-write",
-      workspaceKind: "in_place_write",
-      inPlaceAuthorization: "User explicitly authorized this isolated non-Git fixture edit.",
-      ownedPaths: ["committed.txt"],
-      context: [{ path: input }],
-      acceptance: ["node -e \"process.exit(0)\""]
+    worker = await call("create_worker", dispatchArgs("content-expiry", source, {
+      sandbox: { mode: "workspace-write" },
+      workspace: { kind: "in_place_write", in_place_authorization: "User explicitly authorized this isolated non-Git fixture edit." },
+      owned_paths: ["committed.txt"],
+      context: { files: [{ path: input }] },
+      acceptance: { commands: ["node -e \"process.exit(0)\""] }
     }));
     await waitFor(call, worker.id, (task) => task.exit_code === 0 && task.acceptance?.status !== "running");
     const db = openStore(home);
@@ -177,7 +173,7 @@ test("a content-pinned in-place fact expires when its declared input file change
   });
   await writeFile(input, "changed after verification\n");
   await withMcp({ SUPERVISOR_HOME: home }, async ({ call }) => {
-    const found = await call("search_worker_facts", { task_id: worker.id });
+    const found = await call("facts", { task_id: worker.id, action: "search" });
     assert.equal(found.facts.some((fact) => fact.key === "accepted_outcome"), false);
   });
   const db = openStore(home);

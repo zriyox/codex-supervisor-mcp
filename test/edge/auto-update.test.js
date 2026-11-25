@@ -12,7 +12,7 @@ import { repoRoot, tempHome } from "./helpers.js";
 const run = promisify(execFile);
 const home = await tempHome("supervisor-autoupdate-");
 process.env.SUPERVISOR_HOME = home;
-delete process.env.CODEX_SUPERVISOR_NO_AUTO_UPDATE;
+delete process.env.AGENT_SUPERVISOR_NO_AUTO_UPDATE;
 delete process.env.CI;
 const { autoUpdateBlocker, maybeAutoUpdate, readAutoUpdateState, statePath, lockPath } = await import("../../src/infra/update/auto-update.js");
 const { installSource, isNpxPath, updateNotice } = await import("../../src/infra/update/update-check.js");
@@ -31,7 +31,7 @@ const check = (over = {}) => ({
 test("blocker: when an install must not start", () => {
   const env = {};
   assert.equal(autoUpdateBlocker(null, env), "no update check result yet");
-  assert.match(autoUpdateBlocker(check(), { CODEX_SUPERVISOR_NO_AUTO_UPDATE: "1" }), /disabled/);
+  assert.match(autoUpdateBlocker(check(), { AGENT_SUPERVISOR_NO_AUTO_UPDATE: "1" }), /disabled/);
   assert.equal(autoUpdateBlocker(check(), { CI: "true" }), "CI environment");
   assert.equal(autoUpdateBlocker(check({ update_available: false }), env), "already current");
   assert.equal(autoUpdateBlocker(check({ disabled: true, update_available: false }), env), "update check is disabled");
@@ -91,7 +91,7 @@ test("maybeAutoUpdate launches once per version and records it", async () => {
   assert.equal(launches.length, 2, "a newer version after a failure is attempted");
 
   await writeFile(statePath, JSON.stringify({ state: "done", version: "0.7.1", pid: 1 }));
-  const registry = await maybeAutoUpdate(check({ latest: { version: "0.7.2" } }), { env: { CODEX_SUPERVISOR_REGISTRY: "http://127.0.0.1:1/" }, launch });
+  const registry = await maybeAutoUpdate(check({ latest: { version: "0.7.2" } }), { env: { AGENT_SUPERVISOR_REGISTRY: "http://127.0.0.1:1/" }, launch });
   assert.equal(registry.state, "started");
   assert.equal(launches[2].registry, "http://127.0.0.1:1/", "a custom registry is handed to the worker");
 });
@@ -168,7 +168,7 @@ function runWorker(host, args, extraEnv = {}) {
     env: {
       ...process.env,
       SUPERVISOR_HOME: home,
-      CODEX_SUPERVISOR_NPM: host.npm,
+      AGENT_SUPERVISOR_NPM: host.npm,
       FAKE_GLOBAL_ROOT: host.globalRoot,
       FAKE_NPM_LOG: host.log,
       ...extraEnv

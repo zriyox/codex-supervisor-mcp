@@ -1,4 +1,5 @@
 // Reads what the cleanup policy needs to know about one worker's worktree.
+import { branchOf } from "../domain/worker-branch.js";
 import "./compose.js";
 import { ACTIVE_STATUSES, TERMINAL_STATUSES } from "../domain/status.js";
 import { gitSucceeds, runGit } from "../infra/git.js";
@@ -32,7 +33,7 @@ async function identityProblem(task) {
     if (info.isSymbolicLink()) return "worktree is a symlink";
     if (await realpath(path) !== await realpath(managed)) return "worktree realpath is unexpected";
     const branch = git(path, ["symbolic-ref", "--short", "HEAD"]).trim();
-    if (branch !== `codex/${task.id}`) return "worktree branch ownership is unexpected";
+    if (branch !== branchOf(task)) return "worktree branch ownership is unexpected";
     const registered = git(task.project_root, ["worktree", "list", "--porcelain", "-z"]).split("\0").filter((line) => line.startsWith("worktree "));
     const own = await realpath(path);
     for (const line of registered) {

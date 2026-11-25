@@ -1,3 +1,4 @@
+import { branchOf } from "../../../domain/worker-branch.js";
 import { acceptanceVerdict } from "../../../app/acceptance.js";
 import { classifyFailure } from "../../../domain/failure-class.js";
 import { ACTIVE_STATUSES, isGoalNeedingAttention } from "../../../domain/status.js";
@@ -11,14 +12,14 @@ import { clip } from "../result.js";
 // writes a whole file. Returning it whole put tens of thousands of characters
 // into every wait response, which then blew past the client's MCP output cap
 // and came back a second time as a notification. The full command stays in
-// current_command / commands and is readable through get_codex_worker_events.
+// current_command / commands and is readable through get_worker (include events).
 export const ACTION_PREVIEW_CHARS = 300;
 const COMMAND_PREVIEW_CHARS = 300;
 const COMMAND_TAIL = 20;
 const PROMPT_PREVIEW_CHARS = 300;
 // The single-worker status read is the drill-in for one worker, so its copy of
 // the last message stays much larger than the overview's 400. The full report
-// is still get_worker_result's job.
+// is still get_worker (include result)'s job.
 const STATUS_MESSAGE_CHARS = 4000;
 
 // Codex emits nothing while a command runs and nothing while the model
@@ -70,7 +71,7 @@ export function compactLiveness(task) {
   };
 }
 
-// The acceptance verdict as get_worker_result reports it, with the one
+// The acceptance verdict as get_worker (include result) reports it, with the one
 // contradiction a tool can see spelled out: checks passed, worker says
 // otherwise (the "it was never built" case, where it was).
 export function acceptanceView(task, behind) {
@@ -99,9 +100,9 @@ export function acceptanceView(task, behind) {
     const verification = summarizeVerification(task);
     const workerSaysNo = task.status === "failed" || isGoalNeedingAttention(task.goal_status) || verification.last_command_failed;
     if (workerSaysNo) view.next_step = "the checks passed but the worker reports otherwise; trust the checks and read the diff";
-    else if (view.stale) view.next_step = "the checks passed on the old base and the project has moved since; resume with rebaseOnto to re-run them on current code before landing";
+    else if (view.stale) view.next_step = "the checks passed on the old base and the project has moved since; resume with rebase_onto to re-run them on current code before landing";
   } else if (view.status === "running") {
-    view.next_step = "acceptance is still running in the supervisor; wait_codex_workers returns when it is done";
+    view.next_step = "acceptance is still running in the supervisor; wait_workers returns when it is done";
   } else if (view.status === "interrupted") {
     view.next_step = "the supervisor exited while running acceptance; resume the worker (or cancel and redispatch) to run it again";
   } else if (view.status === "cancelled") {
@@ -188,7 +189,7 @@ export function statusView(task, { includePrompt, promptMaxChars }) {
 // events - back to the caller on every call. Dispatching eleven workers made
 // the main thread pay for its own instructions eleven times, and pushed the
 // result into the client's MCP output cap. Read the rest per worker with
-// get_worker_summary / get_worker_result when you actually need it.
+// get_worker / get_worker (include result) when you actually need it.
 export function receipt(task) {
   return {
     id: task.id,
@@ -200,7 +201,7 @@ export function receipt(task) {
     project_root: task.project_root,
     workspace_kind: task.workspace_kind ?? "legacy",
     worktree_path: task.worktree_path,
-    branch: task.worktree_path ? `codex/${task.id}` : null,
+    branch: task.worktree_path ? branchOf(task) : null,
     base_commit: task.base_commit ?? null,
     sandbox: task.sandbox,
     model: task.model,

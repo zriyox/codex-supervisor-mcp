@@ -9,7 +9,7 @@ export function normalizeAcceptance(value) {
   const commands = list.filter((entry) => entry != null && entry !== "").map((entry) => {
     if (typeof entry === "string") return entry.trim();
     if (!entry || typeof entry !== "object" || Array.isArray(entry) || typeof entry.command !== "string" || !entry.command.trim()) throw new Error("acceptance requires a command string or structured check");
-    if (typeof entry.reportPath !== "string" || !entry.reportPath || isAbsolute(entry.reportPath) || /^[A-Za-z]:|^\\\\/.test(entry.reportPath) || entry.reportPath.split(/[\\/]/).includes("..")) throw new Error("reportPath must stay inside the worktree");
+    if (typeof entry.reportPath !== "string" || !entry.reportPath || isAbsolute(entry.reportPath) || /^[A-Za-z]:|^\\\\/.test(entry.reportPath) || entry.reportPath.split(/[\\/]/).includes("..")) throw new Error("report_path must stay inside the worktree");
     const validation = compareFailureBaseline(entry.baseline, {
       complete: true, identity: entry.baseline?.identity,
       executed: [...new Set([...(entry.baseline?.required ?? []), ...(entry.baseline?.failures ?? []).map((item) => item?.test_id)])],

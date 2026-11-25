@@ -8,7 +8,7 @@ import { tempHome, makeRepo, withMcp, dispatchArgs, waitFor, git } from "./helpe
 const baseline = { identity: { base_commit: "base" }, failures: [], required: ["must-run"] };
 function emit(overrides = {}) {
   const report = { complete: true, identity: { base_commit: "base" }, executed: ["must-run"], skipped: [], failures: [], ...overrides };
-  return `node -e "const r=${JSON.stringify(report).replaceAll('"', '\\"')};r.check_id=process.env.CODEX_SUPERVISOR_CHECK_ID;require('fs').writeFileSync('evidence.json',JSON.stringify(r))"`;
+  return `node -e "const r=${JSON.stringify(report).replaceAll('"', '\\"')};r.check_id=process.env.AGENT_SUPERVISOR_CHECK_ID;require('fs').writeFileSync('evidence.json',JSON.stringify(r))"`;
 }
 const check = (command = emit(), extra = {}) => ({ command, reportPath: "evidence.json", baseline, ...extra });
 
@@ -70,17 +70,17 @@ test("MCP accepts structured evidence checks and refuses skipped required tests 
     const evidence = check(emit({ identity: { base_commit: second }, executed: [], skipped: ["must-run"] }), {
       baseline: { ...baseline, identity: { base_commit: second } }
     });
-    const worker = await call("create_codex_worker", dispatchArgs("evidence-mcp", dir, { acceptance: [evidence] }));
+    const worker = await call("create_worker", dispatchArgs("evidence-mcp", dir, { acceptance: { commands: [evidence] } }));
     assert.ok(worker.id, JSON.stringify(worker));
     await waitFor(call, worker.id, (t) => t.status === "completed" && t.exit_code !== null);
-    const result = await call("get_worker_result", { task_id: worker.id });
+    const result = await call("get_worker", { task_id: worker.id, include: ["result"] });
     assert.equal(result.acceptance.passed, false);
     assert.equal(result.acceptance.checks[0].exit_code, 0);
     assert.equal(result.acceptance.checks[0].passed, false);
     assert.match(result.acceptance.next_step, /evidence|baseline/);
-    const summary = await call("get_worker_summary", { task_id: worker.id });
+    const summary = await call("get_worker", { task_id: worker.id });
     assert.match(summary.summary, /0\/1 passed/);
-    const land = await call("land_codex_worker", { task_id: worker.id });
+    const land = await call("land_worker", { task_id: worker.id });
     assert.equal(land.error, "acceptance_failed");
     assert.equal(git(dir, ["rev-list", "--count", "HEAD"]), "2");
   });

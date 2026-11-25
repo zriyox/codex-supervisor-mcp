@@ -11,7 +11,7 @@ test("failure classification separates provider, supervisor, model, acceptance a
   assert.equal(classifyFailure({ status: "failed", attention_reason: "invalid_report", error: "Invalid final worker report: bad JSON" }).source, "model_output");
   assert.equal(classifyFailure({ status: "completed", acceptance_results: { passed: false } }).code, "acceptance_failed");
   assert.equal(classifyFailure({ status: "completed", attention_reason: "two_stall" }).code, "two_stall");
-  assert.equal(classifyFailure({ status: "failed", error: "workspaceSetup command failed: nuxi prepare" }).source, "workspace_setup");
+  assert.equal(classifyFailure({ status: "failed", error: "workspace.setup command failed: nuxi prepare" }).source, "workspace_setup");
 });
 
 test("a healthy or merely blocked goal is not mislabeled as an execution failure", () => {

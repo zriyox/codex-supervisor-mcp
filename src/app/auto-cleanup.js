@@ -2,6 +2,7 @@
 // It rides on the polling tools, so a batch that is never cleaned up by hand
 // does not grow without bound. A sweep is throttled and bounded: it must never
 // make a poll slow.
+import { branchOf } from "../domain/worker-branch.js";
 import "./compose.js";
 import { holdMsFrom } from "../domain/cleanup-policy.js";
 import { TERMINAL_STATUSES } from "../domain/status.js";
@@ -19,8 +20,8 @@ const SWEEP_LIMIT = 20;
 let lastSweepAt = 0;
 
 function intervalMs() {
-  const raw = Number(process.env.CODEX_SUPERVISOR_CLEANUP_INTERVAL_MS);
-  return Number.isFinite(raw) && raw >= 0 && process.env.CODEX_SUPERVISOR_CLEANUP_INTERVAL_MS !== undefined ? raw : DEFAULT_INTERVAL_MS;
+  const raw = Number(process.env.AGENT_SUPERVISOR_CLEANUP_INTERVAL_MS);
+  return Number.isFinite(raw) && raw >= 0 && process.env.AGENT_SUPERVISOR_CLEANUP_INTERVAL_MS !== undefined ? raw : DEFAULT_INTERVAL_MS;
 }
 
 const finishedAt = (task) => Date.parse(task.completed_at ?? task.updated_at ?? "") || 0;
@@ -32,7 +33,7 @@ async function sweepWorktree(task, tasks, now) {
   // The worktree is gone whether or not the audit row can be written.
   await recordRemoval(task, { actor: "auto_cleanup", checkpoint, reasons: assessed.reasons })
     .catch((error) => process.stderr.write(`[codex-supervisor] removed ${task.id} but could not record it: ${error.message}\n`));
-  return { task_id: task.id, kind: "worktree", branch: `codex/${task.id}`, checkpoint_commit: checkpoint, reasons: assessed.reasons };
+  return { task_id: task.id, kind: "worktree", branch: branchOf(task), checkpoint_commit: checkpoint, reasons: assessed.reasons };
 }
 
 // A scratch directory holds a research worker's drafts; its report is in the
@@ -40,7 +41,7 @@ async function sweepWorktree(task, tasks, now) {
 async function sweepScratch(task, now) {
   const path = join(scratchDir, task.id);
   const finished = finishedAt(task);
-  if (!finished || now < finished + holdMsFrom(process.env.CODEX_SUPERVISOR_CLEANUP_HOLD_DAYS) || !existsSync(path)) return null;
+  if (!finished || now < finished + holdMsFrom(process.env.AGENT_SUPERVISOR_CLEANUP_HOLD_DAYS) || !existsSync(path)) return null;
   const claim = await claimIdleTask(task.id);
   if (!claim) return null;
   try {
@@ -55,7 +56,7 @@ async function sweepScratch(task, now) {
 
 // Returns what was removed. One failure never stops the sweep or the poll.
 export async function sweepCleanup({ now = Date.now(), force = false } = {}) {
-  if (process.env.CODEX_SUPERVISOR_NO_AUTO_CLEANUP === "1") return [];
+  if (process.env.AGENT_SUPERVISOR_NO_AUTO_CLEANUP === "1") return [];
   if (!force && now - lastSweepAt < intervalMs()) return [];
   lastSweepAt = now;
   let tasks;

@@ -1,12 +1,12 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { join } from "node:path";
-import { tempHome, withMcp, openStore } from "./helpers.js";
+import { tempHome, withMcp, openStore, listWorkers } from "./helpers.js";
 
 test("an interrupted acceptance with no recorded process exit becomes resumable lost work", async () => {
   const home = await tempHome("supervisor-exit-reconcile-");
   await withMcp({ SUPERVISOR_HOME: home }, async ({ call }) => {
-    await call("list_codex_workers", { includeHistory: true });
+    await listWorkers(call);
     const db = openStore(home);
     const old = new Date(Date.now() - 60000).toISOString();
     db.prepare(`
@@ -21,7 +21,7 @@ test("an interrupted acceptance with no recorded process exit becomes resumable 
       "01a0fd0a-0000-7000-8000-000000000099", 1, JSON.stringify({ allowedCommands: [], ownedPaths: [] })
     );
     db.close();
-    const rows = await call("list_codex_workers", { includeHistory: true });
+    const rows = await listWorkers(call);
     const row = rows.find((entry) => entry.id === "codex-exit-reconcile");
     assert.equal(row.status, "lost", JSON.stringify(row));
     assert.match(row.error ?? "", /before acceptance/);
@@ -32,7 +32,7 @@ test("an interrupted acceptance with no recorded process exit becomes resumable 
 for (const acceptanceState of ["none", "interrupted", "passed", "failed"]) test(`a completed turn with ${acceptanceState} acceptance recovers its missing exit independently`, async () => {
   const home = await tempHome("supervisor-exit-recovered-");
   await withMcp({ SUPERVISOR_HOME: home }, async ({ call }) => {
-    await call("list_codex_workers", { includeHistory: true });
+    await listWorkers(call);
     const db = openStore(home);
     const old = new Date(Date.now() - 60000).toISOString();
     const taskId = "codex-exit-recovered";
@@ -76,16 +76,16 @@ for (const acceptanceState of ["none", "interrupted", "passed", "failed"]) test(
     }
     db.close();
 
-    const rows = await call("list_codex_workers", { includeHistory: true });
+    const rows = await listWorkers(call);
     const row = rows.find((entry) => entry.id === taskId);
     assert.equal(row.status, "completed", JSON.stringify(row));
     assert.equal(row.exit_code, 0);
     assert.equal(row.attention_reason, null);
     if (acceptanceState !== "none") {
-      const result = await call("get_worker_result", { task_id: taskId });
+      const result = await call("get_worker", { task_id: taskId, include: ["result"] });
       assert.equal(result.acceptance.status, acceptanceState);
       assert.equal(result.acceptance.passed, acceptanceState === "interrupted" ? null : acceptanceState === "passed");
-      const land = await call("land_codex_worker", { task_id: taskId });
+      const land = await call("land_worker", { task_id: taskId });
       if (acceptanceState !== "passed") assert.equal(land.error, acceptanceState === "failed" ? "acceptance_failed" : "acceptance_not_run");
     }
 
@@ -104,7 +104,7 @@ for (const acceptanceState of ["none", "interrupted", "passed", "failed"]) test(
 test("a running row with a durable completed turn is recovered before the lost/resume path", async () => {
   const home = await tempHome("supervisor-exit-running-");
   await withMcp({ SUPERVISOR_HOME: home }, async ({ call }) => {
-    await call("list_codex_workers", { includeHistory: true });
+    await listWorkers(call);
     const db = openStore(home);
     const old = new Date(Date.now() - 60000).toISOString();
     const taskId = "codex-exit-running";
@@ -125,7 +125,7 @@ test("a running row with a durable completed turn is recovered before the lost/r
     `).run(taskId, `run-${taskId}-1`, 1, old, "turn.completed", JSON.stringify({ type: "turn.completed" }), "codex");
     db.close();
 
-    const rows = await call("list_codex_workers", { includeHistory: true });
+    const rows = await listWorkers(call);
     const row = rows.find((entry) => entry.id === taskId);
     assert.equal(row.status, "completed", JSON.stringify(row));
     assert.equal(row.exit_code, 0);
@@ -136,7 +136,7 @@ test("a running row with a durable completed turn is recovered before the lost/r
 test("exit recovery preserves an existing attention reason and error", async () => {
   const home = await tempHome("supervisor-exit-attention-");
   await withMcp({ SUPERVISOR_HOME: home }, async ({ call }) => {
-    await call("list_codex_workers", { includeHistory: true });
+    await listWorkers(call);
     const db = openStore(home);
     const old = new Date(Date.now() - 60000).toISOString();
     const taskId = "codex-exit-attention";
@@ -157,7 +157,7 @@ test("exit recovery preserves an existing attention reason and error", async () 
     `).run(taskId, `run-${taskId}-1`, 1, old, "turn.completed", JSON.stringify({ type: "turn.completed" }), "codex");
     db.close();
 
-    const rows = await call("list_codex_workers", { includeHistory: true });
+    const rows = await listWorkers(call);
     const row = rows.find((entry) => entry.id === taskId);
     assert.equal(row.status, "completed", JSON.stringify(row));
     assert.equal(row.exit_code, 0);
@@ -169,7 +169,7 @@ test("exit recovery preserves an existing attention reason and error", async () 
 test("exit recovery marks an unparsable durable report as invalid_report", async () => {
   const home = await tempHome("supervisor-exit-invalid-report-");
   await withMcp({ SUPERVISOR_HOME: home }, async ({ call }) => {
-    await call("list_codex_workers", { includeHistory: true });
+    await listWorkers(call);
     const db = openStore(home);
     const old = new Date(Date.now() - 60000).toISOString();
     const taskId = "codex-exit-invalid-report";
@@ -195,7 +195,7 @@ test("exit recovery marks an unparsable durable report as invalid_report", async
     insert.run(taskId, runId, 1, old, "turn.completed", JSON.stringify({ type: "turn.completed" }), "codex");
     db.close();
 
-    const rows = await call("list_codex_workers", { includeHistory: true });
+    const rows = await listWorkers(call);
     const row = rows.find((entry) => entry.id === taskId);
     assert.equal(row.status, "completed", JSON.stringify(row));
     assert.equal(row.exit_code, 0);

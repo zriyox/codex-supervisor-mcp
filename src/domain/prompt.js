@@ -9,7 +9,7 @@
 // its goal.
 //
 // Report format, at the end. A worker's last message is what the supervisor
-// reads back through get_worker_result. Left to itself a worker narrates
+// reads back through get_worker (include result). Left to itself a worker narrates
 // the whole run and lists every file it touched, and one real report ran to
 // four thousand tokens with the conclusion buried in the middle. The format
 // asks for the three things a reviewer checks and nothing else: the result,
@@ -51,11 +51,11 @@ export const REPORT_SECTIONS = ["Result", "Verification", "Not done / risks"];
 
 // The first thing a worker reads, and the only place the run's write boundary
 // is stated. A worker is not always an editor: a read-only one can only read,
-// and one with no ownedPaths lands nothing, so both are told what their shell
+// and one with no owned_paths lands nothing, so both are told what their shell
 // may do instead of being told to use apply_patch they cannot use.
 export function buildGuardPreamble({ sandbox, ownedPaths = [], allowedCommands = [], forbid = [], networkAccess = false, workspaceKind = null } = {}) {
   const forbidden = JSON.stringify(forbid);
-  const stage = 'For a long gate, checkpoint phases with node "$CODEX_SUPERVISOR_STAGE_CLI" "gate:s3" --detail "current check"; stage text is visible to status/overview/wait and must not contain secrets.';
+  const stage = 'For a long gate, checkpoint phases with node "$AGENT_SUPERVISOR_STAGE_CLI" "gate:s3" --detail "current check"; stage text is visible to status/overview/wait and must not contain secrets.';
   if (sandbox === "read-only") {
     return [
       "Runtime supervisor guard: this is a read-only task.",
@@ -70,7 +70,7 @@ export function buildGuardPreamble({ sandbox, ownedPaths = [], allowedCommands =
       ? "Its execution directory is a supervisor-managed scratch directory, not the user's source directory"
       : "Its worktree is a scratch copy";
     return [
-      "Runtime supervisor guard: this worker lands nothing: no ownedPaths means nothing it writes is ever merged into the project.",
+      "Runtime supervisor guard: this worker lands nothing: no owned_paths means nothing it writes is ever merged into the project.",
       `${location}, so the shell is unrestricted apart from the red lines; keep notes and downloads inside it.`,
       networkAccess ? "Network is available." : "There is no network in this sandbox; ask for it instead of retrying a failing fetch.",
       `Forbidden: ${forbidden}.`,
@@ -83,7 +83,7 @@ export function buildGuardPreamble({ sandbox, ownedPaths = [], allowedCommands =
   // about it instead of stalling on a tool it does not have.
   const shellEdit = "If your toolset has no apply_patch tool, run it through the shell as apply_patch <<'EOF' ... EOF; the guard checks the file paths the same way. A declared command ending in * is a prefix, so go test ./internal/* covers go test ./internal/service -run TestX.";
   const delivery = sandbox === "workspace-write" && (!workspaceKind || workspaceKind === "git_worktree")
-    ? "Do not run git add, git commit or git commit --amend: the dispatcher commits reviewed edits with land_codex_worker({commitMessage}). Leave your edits uncommitted; clean status and commit-count checks belong after landing. If the task or acceptance requires a self-commit or a clean edited worktree, report the contract conflict instead of bypassing the guard."
+    ? "Do not run git add, git commit or git commit --amend: the dispatcher commits reviewed edits with land_worker({commit_message}). Leave your edits uncommitted; clean status and commit-count checks belong after landing. If the task or acceptance requires a self-commit or a clean edited worktree, report the contract conflict instead of bypassing the guard."
     : "";
   return `Runtime supervisor guard: edits must use apply_patch within ${JSON.stringify(ownedPaths)}. ${shellEdit} ${delivery} Safe read-only inspection commands (rg, cat, sed without -i, git status/diff/log, jq without -i, find without -exec/-delete) are allowed and never reserve another worker's paths. Commands that validate, write, execute code or have side effects must exactly match declared commands ${JSON.stringify(allowedCommands)}. Forbidden: ${forbidden}. Undeclared shell programs are denied; report a needed validation command instead of bypassing the guard. ${stage}`;
 }
@@ -96,7 +96,7 @@ export function buildGuardPreamble({ sandbox, ownedPaths = [], allowedCommands =
 export function buildAcceptanceBlock(acceptance, { resume = false } = {}) {
   const commands = Array.isArray(acceptance) ? acceptance.filter(Boolean) : [];
   if (commands.length === 0) return "";
-  const runner = 'Run node "$CODEX_SUPERVISOR_ACCEPTANCE_CLI" to execute this exact contract through the supervisor\'s non-interactive Bash with errexit and pipefail. Do not retype the commands in zsh; the interactive shell is not the acceptance shell.';
+  const runner = 'Run node "$AGENT_SUPERVISOR_ACCEPTANCE_CLI" to execute this exact contract through the supervisor\'s non-interactive Bash with errexit and pipefail. Do not retype the commands in zsh; the interactive shell is not the acceptance shell.';
   if (resume) {
     return ["Acceptance is unchanged.", runner, `Commands: ${commands.map((check) => typeof check === "string" ? check : JSON.stringify(check)).join(" ; ")}`].join("\n");
   }
@@ -145,7 +145,7 @@ export function frameWorkerPrompt(prompt, goalOptions, { acceptance = null, outp
 export function buildHostGoalSync(session) {
   const id = JSON.stringify(String(session.id));
   const condition = [
-    `For supervisor session ${id}, read get_session_works and use its current objective, default_acceptance, approval_state and policy_revision (at least ${session.policy_revision ?? 0}).`,
+    `For supervisor session ${id}, read find_works and use its current objective, default_acceptance, approval_state and policy_revision (at least ${session.policy_revision ?? 0}).`,
     "Use the latest explicit human instruction and approved failure baseline; superseded goals and checks must not be revived.",
     "Stop when the current approved objective is verified and all required worker results are collected, checked and integrated as requested.",
     "If approval_state is waiting_user, stop after clearly reporting the blocker, attempted checks, options and recommendation and asking for the required decision; do not auto-resume or repeat unchanged waiting reports.",

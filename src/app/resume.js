@@ -21,7 +21,7 @@ import { appendFile } from "node:fs/promises";
 // goal are all inherited from the original task, and the row is reused so one
 // logical piece of work stays one row.
 //
-// `rebaseOnto` names a ref, resolved in the project directory (HEAD, main, a
+// `rebase_onto` names a ref, resolved in the project directory (HEAD, main, a
 // sha): the worktree is moved onto it first so the worker continues on
 // current code, and base_commit is recorded before the worker starts so a
 // spawn failure cannot leave the row describing the old base. A rebase that
@@ -64,7 +64,7 @@ async function rebaseBeforeResume(task, rebaseOnto) {
   try {
     ontoCommit = resolveCommit(task.project_root, rebaseOnto);
   } catch {
-    throw coded("invalid_rebase_onto", `rebaseOnto "${rebaseOnto}" does not resolve to a commit in ${task.project_root}`);
+    throw coded("invalid_rebase_onto", `rebase_onto "${rebaseOnto}" does not resolve to a commit in ${task.project_root}`);
   }
   const rebase = rebaseWorktree(task, ontoCommit);
   if (rebase.error) throw coded(rebase.error, rebase.reason, rebase);
@@ -104,7 +104,7 @@ async function resumeClaimed(claimed, { prompt, rebaseOnto, acceptance }) {
   let task = await refreshAcceptance(claimed, session, acceptance);
   if (!task.thread_id) {
     throw new Error(
-      `task ${task.id} has no Codex thread_id recorded. Only workers created by this version of codex-supervisor-mcp can be resumed; use create_codex_followup_worker otherwise.`
+      `task ${task.id} has no Codex thread_id recorded. Only workers created by this version of codex-supervisor-mcp can be resumed; use create_worker with followup_of otherwise.`
     );
   }
   await ensureTaskWorktree(task);

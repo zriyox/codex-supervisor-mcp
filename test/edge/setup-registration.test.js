@@ -50,7 +50,7 @@ for(const client of ["claude","codex"]){
     await assert.rejects(run(process.execPath,[join(repoRoot,"src/interface/bin/setup.js"),"--target",client],{env}),error=>error.code===1&&/MCP registration will still be attempted/.test(error.stderr));
     const state=JSON.parse(await readFile(h.state,"utf8"));assert.equal(state.command,process.execPath);
     await rm(h.state);
-    const automatic=await run(process.execPath,[join(repoRoot,"src/interface/bin/setup.js"),"--target",client,"--auto"],{env:{...env,npm_config_global:"true",CODEX_SUPERVISOR_SKIP_SETUP:""}});
+    const automatic=await run(process.execPath,[join(repoRoot,"src/interface/bin/setup.js"),"--target",client,"--auto"],{env:{...env,npm_config_global:"true",AGENT_SUPERVISOR_SKIP_SETUP:""}});
     assert.match(automatic.stderr,/MCP registration will still be attempted/);
     assert.deepEqual(JSON.parse(await readFile(h.state,"utf8")),state);
   });

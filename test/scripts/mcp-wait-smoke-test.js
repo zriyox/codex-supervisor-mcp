@@ -21,7 +21,7 @@ function parseTextResult(result) {
 try {
   await client.connect(transport);
   const created = parseTextResult(await client.callTool({
-    name: "create_codex_worker",
+    name: "create_worker",
     arguments: {
       title: "MCP wait smoke test",
       task: "Reply with one short sentence. Do not modify files.",
@@ -34,7 +34,7 @@ try {
   }));
 
   const waited = parseTextResult(await client.callTool({
-    name: "wait_codex_workers",
+    name: "wait_workers",
     arguments: {
       task_ids: [created.id],
       mode: "all",

@@ -18,7 +18,7 @@ test("a worker disables only the supervisor MCP server it inherited", async () =
   ].join("\n"));
 
   await withMcp({ SUPERVISOR_HOME: home, CODEX_HOME: codexHome, FAKE_CODEX_ARGS_LOG: argsLog }, async ({ call }) => {
-    const worker = await call("create_codex_worker", dispatchArgs("isolated worker", dir));
+    const worker = await call("create_worker", dispatchArgs("isolated worker", dir));
     assert.ok(worker.id, JSON.stringify(worker));
     await waitFor(call, worker.id, (task) => task.status === "completed" && task.exit_code !== null);
   });

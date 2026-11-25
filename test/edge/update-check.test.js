@@ -9,14 +9,14 @@ import { fakeRegistry, packageVersion, tempHome } from "./helpers.js";
 
 const home = await tempHome("supervisor-update-");
 process.env.SUPERVISOR_HOME = home;
-process.env.CODEX_SUPERVISOR_UPDATE_TIMEOUT_MS = "400";
-delete process.env.CODEX_SUPERVISOR_NO_UPDATE_CHECK;
+process.env.AGENT_SUPERVISOR_UPDATE_TIMEOUT_MS = "400";
+delete process.env.AGENT_SUPERVISOR_NO_UPDATE_CHECK;
 const { checkForUpdate, compareVersions, evaluateUpdate, parseVersion, updateNotice, INSTALL_COMMAND } = await import("../../src/infra/update/update-check.js");
 
 let registry;
 before(async () => {
   registry = await fakeRegistry("9.9.9");
-  process.env.CODEX_SUPERVISOR_REGISTRY = registry.url;
+  process.env.AGENT_SUPERVISOR_REGISTRY = registry.url;
 });
 after(async () => registry.close());
 
@@ -149,10 +149,10 @@ test("integrity: a recorded install hash that differs from the published one is 
 
 test("disabled by environment: no network, no notice", async () => {
   registry.state.plan = "9.9.9";
-  process.env.CODEX_SUPERVISOR_NO_UPDATE_CHECK = "1";
+  process.env.AGENT_SUPERVISOR_NO_UPDATE_CHECK = "1";
   const hits = registry.state.hits;
   const result = await checkForUpdate({ force: true });
-  delete process.env.CODEX_SUPERVISOR_NO_UPDATE_CHECK;
+  delete process.env.AGENT_SUPERVISOR_NO_UPDATE_CHECK;
   assert.equal(result.disabled, true);
   assert.equal(result.source, "disabled");
   assert.equal(result.update_available, false);

@@ -68,7 +68,7 @@ export const TOOLCHAIN_CACHE_DIRS = [
 ];
 
 // Credentials are never granted automatically. A dispatcher that needs them
-// names the directory in writableRoots for that one dispatch: an ssh test wants
+// names the directory in sandbox.writable_roots for that one dispatch: an ssh test wants
 // ~/.ssh (known_hosts, ControlMaster sockets), a kubectl test ~/.kube, a registry
 // push ~/.docker, an aws test ~/.aws, a signed commit ~/.gnupg. Everything here is
 // granted automatically only when it holds build state, not secrets, so a worker

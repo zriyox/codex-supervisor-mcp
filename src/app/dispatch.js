@@ -1,3 +1,4 @@
+import { newWorkerBranch } from "../domain/worker-branch.js";
 import { failedStart } from "./run-state.js";
 import "./compose.js";
 import { frameWorkerPrompt } from "../domain/prompt.js";
@@ -26,7 +27,7 @@ function validateGoal(goal) {
   }
   const tokenBudget = goal.tokenBudget ?? goal.token_budget ?? null;
   if (tokenBudget !== null && (!Number.isInteger(tokenBudget) || tokenBudget <= 0)) {
-    throw new Error("goal.tokenBudget must be a positive integer when provided");
+    throw new Error("goal.token_budget must be a positive integer when provided");
   }
   return { objective: goal.objective, tokenBudget };
 }
@@ -77,7 +78,7 @@ async function validateDependencies(dependsOn, projectRoot, baseCommit) {
       });
     }
     if (!baseCommit || !containsCommit(projectRoot, dependency.landed_head, baseCommit)) {
-      throw dependencyError("dependency_base_mismatch", `worker base does not contain landed dependency ${dependencyId}; use the integrated branch or a newer baseRef`, {
+      throw dependencyError("dependency_base_mismatch", `worker base does not contain landed dependency ${dependencyId}; use the integrated branch or a newer workspace.base_ref`, {
         dependency_id: dependencyId,
         dependency_head: dependency.landed_head,
         base_commit: baseCommit ?? null
@@ -115,10 +116,10 @@ async function validateDispatch(input) {
   const acceptanceCommands = normalizeAcceptance(acceptance);
   if (!cwd || typeof cwd !== "string") throw new Error("cwd is required");
   if (!allowedReasoningEfforts.has(reasoningEffort)) {
-    throw new Error(`unsupported reasoningEffort: ${reasoningEffort}`);
+    throw new Error(`unsupported reasoning_effort: ${reasoningEffort}`);
   }
   if (!Array.isArray(ownedPaths)) {
-    throw new Error("ownedPaths is required; pass an empty list only for a worker that must never land a change (a read-only verifier, or a research worker that reads and reports)");
+    throw new Error("owned_paths is required; pass an empty list only for a worker that must never land a change (a read-only verifier, or a research worker that reads and reports)");
   }
   if (ownedPaths.length > 0 && acceptanceCommands?.length && acceptanceCommands.every(isArtifactOnlyAcceptance)) {
     throw new Error("a write worker cannot use only file-existence acceptance; add a real test, endpoint probe or structured execution evidence");
@@ -128,19 +129,19 @@ async function validateDispatch(input) {
   await captureExternalOutputs(externalOutputs, { checkBaseline: true });
   if (externalOutputs.length && !acceptanceCommands?.length) throw new Error("shared outputs require explicit acceptance commands");
   if (externalOutputs.length && sandbox === "read-only") throw new Error("a read-only worker cannot declare writable shared outputs");
-  if (networkAccess && sandbox === "danger-full-access") throw new Error("networkAccess is only for the sandboxed workers");
-  if (networkAccess && sandbox === "read-only") throw new Error("the read-only sandbox has no network (a fetch there fails on DNS even with network_access); for a worker that must fetch, use sandbox \"workspace-write\" with networkAccess: true and ownedPaths: []");
+  if (networkAccess && sandbox === "danger-full-access") throw new Error("sandbox.network_access is only for the sandboxed workers");
+  if (networkAccess && sandbox === "read-only") throw new Error("the read-only sandbox has no network (a fetch there fails on DNS even with network_access); for a worker that must fetch, use sandbox \"workspace-write\" with sandbox.network_access: true and owned_paths: []");
   if (!Array.isArray(writableRoots) || writableRoots.length > 20 || writableRoots.some((root) => typeof root !== "string" || !isAbsolute(root))) {
-    throw new Error("writableRoots must be a list of at most 20 absolute paths");
+    throw new Error("sandbox.writable_roots must be a list of at most 20 absolute paths");
   }
-  if (writableRoots.length && sandbox !== "workspace-write") throw new Error("writableRoots is only configurable for workspace-write workers");
+  if (writableRoots.length && sandbox !== "workspace-write") throw new Error("sandbox.writable_roots is only configurable for workspace-write workers");
   // Codex refuses a writable root with a symlink component and then fails every
   // command in the worker, so a declared root is stored resolved. Passing the
   // alias would look fine in the receipt and break the run.
   const resolvedWritableRoots = [];
   for (const root of writableRoots) {
     const resolved = resolveWritableRoot(root);
-    if (resolved.error) throw new Error(`writableRoots entry is unusable: ${root} (${resolved.error}); pass an existing directory whose path has no symlink component`);
+    if (resolved.error) throw new Error(`sandbox.writable_roots entry is unusable: ${root} (${resolved.error}); pass an existing directory whose path has no symlink component`);
     resolvedWritableRoots.push(resolved.path);
   }
   for (const value of [maxRunMs, maxTotalMs]) if (value !== null && (!Number.isInteger(value) || value < 1000)) throw new Error("time limits must be integer milliseconds of at least 1000");
@@ -150,7 +151,7 @@ async function validateDispatch(input) {
   if (baseRef && !isGitCheckout(cwd)) throw invalidBaseRefError(cwd, baseRef);
   if (preflight && (!Array.isArray(preflight.probeCommands) || preflight.probeCommands.length === 0
     || preflight.probeCommands.some((command) => typeof command !== "string" || !command.trim()))) {
-    throw new Error("preflight.probeCommands must be a nonempty list of shell commands");
+    throw new Error("preflight.probe_commands must be a nonempty list of shell commands");
   }
   return { acceptanceCommands, validatedGoal, resolvedWritableRoots };
 }
@@ -172,7 +173,7 @@ async function claimWorkspace(input, id, acceptanceCommands) {
   const projectRoot = workspace.sourceRoot;
   const normalizedOwnedPaths = normalizeOwnedPaths([...ownedPaths, ...externalOutputs.map((entry) => entry.path)], projectRoot);
   const normalizedWorkspaceSetup = normalizeWorkspaceSetup(workspaceSetup, projectRoot);
-  if (normalizedWorkspaceSetup && workspace.kind !== "git_worktree") throw new Error("workspaceSetup is only supported for git_worktree workers");
+  if (normalizedWorkspaceSetup && workspace.kind !== "git_worktree") throw new Error("workspace.setup is only supported for git_worktree workers");
   const conflicts = await findOwnershipConflicts(normalizedOwnedPaths);
   if (conflicts.length > 0) throw ownershipConflictError(conflicts);
   return { workspace, projectRoot, normalizedOwnedPaths, normalizedWorkspaceSetup };
@@ -192,7 +193,7 @@ async function sessionPolicy({ sessionId, sessionTitle, sessionNote }, acceptanc
 // model edits. Remove it normally; never force-remove user work.
 async function discardWorktree(projectRoot, worktreePath, id) {
   await runToExit(gitBin(), ["-C", projectRoot, "worktree", "remove", worktreePath]).catch(() => {});
-  await runToExit(gitBin(), ["-C", projectRoot, "branch", "-D", `codex/${id}`]).catch(() => {});
+  await runToExit(gitBin(), ["-C", projectRoot, "branch", "-D", newWorkerBranch(id)]).catch(() => {});
 }
 
 async function createWorkerWorktree({ workspace, projectRoot, normalizedWorkspaceSetup }, id, baseRef) {
@@ -200,7 +201,7 @@ async function createWorkerWorktree({ workspace, projectRoot, normalizedWorkspac
     ? await withWorktreeCreationLock(projectRoot, () => ensureWorktree(projectRoot, id, baseRef))
     : { path: null, baseCommit: null };
   if (workspace.kind === "git_worktree" && !worktree.path) {
-    throw coded("git_worktree_unavailable", "workspaceKind git_worktree could not create an isolated worktree; use read_only_in_place for a non-writing inspection or initialize and commit the repository first");
+    throw coded("git_worktree_unavailable", "workspace.kind git_worktree could not create an isolated worktree; use read_only_in_place for a non-writing inspection or initialize and commit the repository first");
   }
   if (normalizedWorkspaceSetup) {
     try {
@@ -276,7 +277,8 @@ function buildRecord(input, parts) {
       in_place_authorization: workspace.kind === "in_place_write" ? String(inPlaceAuthorization).trim() : null,
       landable: workspace.landable,
       cleanable: workspace.cleanable,
-      setup: normalizedWorkspaceSetup
+      setup: normalizedWorkspaceSetup,
+      branch: worktreePath ? newWorkerBranch(id) : null
     },
     sandbox,
     model,
@@ -333,7 +335,7 @@ async function assertPreflightMatches(preflightId, runtimeContract) {
   }
   const contractHash = runtimeContractHash(runtimeContract);
   if (preflightResult.contract_hash === contractHash) return;
-  throw coded("preflight_mismatch", `preflight ${preflightId} does not match this worker's runtime contract; create a new preflight after changing baseRef, sandbox, ownedPaths, commands, context, contracts, network or writable roots`, {
+  throw coded("preflight_mismatch", `preflight ${preflightId} does not match this worker's runtime contract; create a new preflight after changing workspace.base_ref, sandbox, owned_paths, commands, context, contracts, network or writable roots`, {
     preflight_id: preflightId,
     expected_contract_hash: contractHash,
     actual_contract_hash: preflightResult.contract_hash,

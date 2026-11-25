@@ -1,6 +1,7 @@
 // A cleaned-up worker keeps its branch. When the main thread comes back to it
 // (to resume or land), the worktree is cut again from that branch, with the
 // same setup links, so cleanup never closes the door on unfinished work.
+import { branchOf } from "../domain/worker-branch.js";
 import "./compose.js";
 import { gitBin, gitSucceeds } from "../infra/git.js";
 import { runToExit } from "../infra/process.js";
@@ -20,7 +21,7 @@ function deliveryStepOf(task) {
 // gone and cannot be brought back, so no caller carries on somewhere else.
 export async function ensureTaskWorktree(task) {
   if (!task.worktree_path || !task.project_root || existsSync(task.worktree_path)) return false;
-  const branch = `codex/${task.id}`;
+  const branch = branchOf(task);
   if (!gitSucceeds(task.project_root, ["rev-parse", "--verify", "--quiet", `refs/heads/${branch}`])) {
     const error = new Error(`the worktree of ${task.id} is gone and its branch ${branch} does not exist, so it cannot be restored`);
     error.code = "worktree_unrecoverable";

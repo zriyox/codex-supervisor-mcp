@@ -1,6 +1,6 @@
 // Landing a worker's commits where they were dispatched from.
 //
-// A worker commits on codex/<taskId> inside its own worktree. Getting that
+// A worker's commits live on its own branch inside its own worktree. Getting that
 // work onto the branch the main thread integrates on used to be the main
 // thread's job, one cherry-pick per step, dozens of times per batch. This
 // does the same thing with the same guard rails a careful person would use:
@@ -129,8 +129,8 @@ function hasStagedChanges(cwd) {
 // (task.project_root: the row's cwd is the worktree the worker ran in).
 // `onto`, when given, must name that branch: it is a guard, not a switch.
 //
-// `commitMessage` commits what the worker left uncommitted in its worktree
-// first, as one commit on codex/<id>. A worker in Codex's workspace-write
+// `commit_message` commits what the worker left uncommitted in its worktree
+// first, as one commit on its branch. A worker in Codex's workspace-write
 // sandbox cannot commit at all (the sandbox keeps .git read-only), so this
 // is how "one step, one commit" is kept without giving workers full access.
 //
@@ -145,14 +145,14 @@ function acceptanceRefusal(task) {
   if (acceptance.passed === false) {
     return {
       error: "acceptance_failed",
-      reason: `the worker's acceptance run failed${failing ? ` on "${failing.command.slice(0, 120)}" (exit ${failing.error ?? (failing.baseline?.passed === false ? "baseline/evidence mismatch" : failing.timed_out ? "timeout" : failing.exit_code)})` : acceptance.error ? ` (${acceptance.error})` : ""}; resume the worker with the failing output and land once it passes. ignoreAcceptance: true lands anyway, only when the user said to.`,
+      reason: `the worker's acceptance run failed${failing ? ` on "${failing.command.slice(0, 120)}" (exit ${failing.error ?? (failing.baseline?.passed === false ? "baseline/evidence mismatch" : failing.timed_out ? "timeout" : failing.exit_code)})` : acceptance.error ? ` (${acceptance.error})` : ""}; resume the worker with the failing output and land once it passes. ignore_acceptance: true lands anyway, only when the user said to.`,
       acceptance: { status: acceptance.status, passed: false, checks: acceptance.checks ?? [], error: acceptance.error ?? null }
     };
   }
   if (acceptance.status === "running" || acceptance.status === "interrupted" || acceptance.status === "cancelled") {
     return {
       error: "acceptance_not_run",
-      reason: `the worker's acceptance is ${acceptance.status}; wait for it (or resume the worker to run it again) before landing. ignoreAcceptance: true lands anyway, only when the user said to.`,
+      reason: `the worker's acceptance is ${acceptance.status}; wait for it (or resume the worker to run it again) before landing. ignore_acceptance: true lands anyway, only when the user said to.`,
       acceptance: { status: acceptance.status, passed: null }
     };
   }
@@ -163,7 +163,7 @@ function acceptanceRefusal(task) {
 function targetState(task, onto) {
   const target = task.project_root;
   if (!task.worktree_path || !existsSync(task.worktree_path)) {
-    return { error: "no_worktree", reason: "this worker has no worktree (it ran in place), so there is nothing on a codex/ branch to land" };
+    return { error: "no_worktree", reason: "this worker has no worktree (it ran in place), so there is no worker branch to land" };
   }
   if (!target || !existsSync(target)) {
     return { error: "no_target", reason: `the directory the worker was dispatched from (${target}) no longer exists` };
@@ -191,7 +191,7 @@ function ownershipRefusal(task) {
   const paths = [...filterWorkspaceSetupChanges(task, readWorktreeChanges(task.worktree_path, worktreeRef(task))),
     ...diff.files.flatMap((file) => [file.path, file.from].filter(Boolean).map((path) => join(task.worktree_path, path)))];
   const { outside } = findOutsideOwnedChanges(task, [...new Set(paths)]);
-  if (outside.length) return { error: "outside_owned_paths", reason: "worker changes exceed declared ownedPaths; review them and obtain explicit authorization before allowing an exception", outside_paths: outside.map((entry) => relative(task.worktree_path, entry)) };
+  if (outside.length) return { error: "outside_owned_paths", reason: "worker changes exceed declared owned_paths; review them and obtain explicit authorization before allowing an exception", outside_paths: outside.map((entry) => relative(task.worktree_path, entry)) };
   return null;
 }
 
@@ -267,7 +267,7 @@ function nothingToLand(proof, { branch, target, uncommitted, base }) {
   return {
     error: "nothing_to_land",
     reason: uncommitted.length > 0
-      ? "the worker made no commits on its branch (a workspace-write worker cannot: the sandbox keeps .git read-only); pass commitMessage to commit its edits as one commit and land that"
+      ? "the worker made no commits on its branch (a workspace-write worker cannot: the sandbox keeps .git read-only); pass commit_message to commit its edits as one commit and land that"
       : "the worker made no commits and left no edits on its branch",
     uncommitted,
     base_commit: base

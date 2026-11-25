@@ -13,10 +13,10 @@ let ids = {};
 before(async () => {
   // Build the store through the real MCP server with the fake codex.
   await withMcp({ SUPERVISOR_HOME: home, FAKE_CODEX_SCENARIO: "commit-in-worktree" }, async ({ call }) => {
-    const a = await call("create_codex_worker", dispatchArgs("titled-1", repo, { session_id: "s/with slash", session_title: "有标题的批次", session_note: "一句说明" }));
-    const b = await call("create_codex_worker", dispatchArgs("titled-2", repo, { session_id: "s/with slash" }));
-    const c = await call("create_codex_worker", dispatchArgs("derived-1", join(home, "workspace"), { session_id: "no-title", goal: { objective: "第一路的目标" } }));
-    const d = await call("create_codex_worker", dispatchArgs("loose", join(home, "workspace")));
+    const a = await call("create_worker", dispatchArgs("titled-1", repo, { session: { id: "s/with slash", title: "有标题的批次", note: "一句说明" } }));
+    const b = await call("create_worker", dispatchArgs("titled-2", repo, { session: { id: "s/with slash" } }));
+    const c = await call("create_worker", dispatchArgs("derived-1", join(home, "workspace"), { session: { id: "no-title" }, goal: { objective: "第一路的目标" } }));
+    const d = await call("create_worker", dispatchArgs("loose", join(home, "workspace")));
     for (const w of [a, b, c, d]) await waitFor(call, w.id, (t) => t.status === "completed");
     ids = { a: a.id, b: b.id, c: c.id, d: d.id };
   });
@@ -54,7 +54,7 @@ test("a session id with a slash round-trips through the URL", async () => {
   assert.equal(body.workers.length, 2);
   const row = body.workers.find((w) => w.id === ids.a);
   assert.equal(row.changed_file_count, 2, "the list count is the live git diff, not the stored event count");
-  assert.equal(row.branch, `codex/${ids.a}`);
+  assert.equal(row.branch, `worker/${ids.a}`);
   assert.ok(row.duration_ms >= 0);
   assert.equal(row.prompt, undefined, "the list never carries the prompt");
 });
@@ -125,7 +125,7 @@ import { repoRoot } from "./helpers.js";
 async function runEntry({ cwd, env, port = 0 }) {
   const child = spawn(process.execPath, [join(repoRoot, "src", "interface", "bin", "web-server.js")], {
     cwd,
-    env: { ...process.env, SUPERVISOR_HOME: "", CODEX_SUPERVISOR_NO_UPDATE_CHECK: "1", ...env, SUPERVISOR_WEB_PORT: String(port) },
+    env: { ...process.env, SUPERVISOR_HOME: "", AGENT_SUPERVISOR_NO_UPDATE_CHECK: "1", ...env, SUPERVISOR_WEB_PORT: String(port) },
     stdio: ["ignore", "pipe", "pipe"]
   });
   let out = "";

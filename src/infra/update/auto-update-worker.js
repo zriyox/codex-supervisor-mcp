@@ -83,10 +83,10 @@ async function acquireLock() {
 }
 
 // npm as `node npm-cli.js`: steps over the npm.cmd shim on Windows and uses
-// the npm that belongs to the node running this server. CODEX_SUPERVISOR_NPM
+// the npm that belongs to the node running this server. AGENT_SUPERVISOR_NPM
 // points at another npm-cli.js (or any executable) when that is wrong.
 function npmCommand() {
-  const override = process.env.CODEX_SUPERVISOR_NPM?.trim();
+  const override = process.env.AGENT_SUPERVISOR_NPM?.trim();
   if (override) {
     const target = resolveCommand(override);
     return [target.cmd, ...target.prefixArgs];
@@ -106,7 +106,7 @@ async function npm(args, { registry, timeout = NPM_TIMEOUT_MS } = {}) {
   const [cmd, ...prefix] = npmCommand();
   const full = [...prefix, ...args, "--no-fund", "--no-audit", "--loglevel=error"];
   if (registry) full.push(`--registry=${registry}`);
-  const env = { ...process.env, CODEX_SUPERVISOR_NO_AUTO_UPDATE: "1" };
+  const env = { ...process.env, AGENT_SUPERVISOR_NO_AUTO_UPDATE: "1" };
   return run(cmd, full, { timeout, env, maxBuffer: 4 * 1024 * 1024, windowsHide: true });
 }
 

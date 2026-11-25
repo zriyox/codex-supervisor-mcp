@@ -8,7 +8,7 @@
 //   npx codex-supervisor-setup
 //   codex-supervisor-setup --target claude --force
 //
-// Set CODEX_SUPERVISOR_SKIP_SETUP=1 to opt out of the automatic run.
+// Set AGENT_SUPERVISOR_SKIP_SETUP=1 to opt out of the automatic run.
 import { runFile } from "../../infra/process.js";
 import { existsSync, readdirSync } from "node:fs";
 import { homedir } from "node:os";
@@ -114,7 +114,7 @@ Options:
   -h, --help        Show help.
 
 Environment:
-  CODEX_SUPERVISOR_SKIP_SETUP=1   Skip the automatic postinstall run entirely.
+  AGENT_SUPERVISOR_SKIP_SETUP=1   Skip the automatic postinstall run entirely.
 `);
 }
 
@@ -264,7 +264,7 @@ async function main() {
   }
 
   if (options.auto) {
-    if (process.env.CODEX_SUPERVISOR_SKIP_SETUP) {
+    if (process.env.AGENT_SUPERVISOR_SKIP_SETUP) {
       return 0;
     }
     if (process.env.npm_config_global !== "true") {

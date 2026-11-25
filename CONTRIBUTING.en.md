@@ -36,4 +36,4 @@ Then install it on a machine that never had it (`npm i -g codex-supervisor-mcp@<
 
 ## Filing an issue
 
-Include the platform, `node -v`, `codex --version`, the output of `check_for_update`, and the smallest steps that reproduce it. For a worker problem, attach the last 20 lines of `data/runs/<taskId>.jsonl`.
+Include the platform, `node -v`, `codex --version`, the output of `poll_workers`, and the smallest steps that reproduce it. For a worker problem, attach the last 20 lines of `data/runs/<taskId>.jsonl`.

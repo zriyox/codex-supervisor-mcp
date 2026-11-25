@@ -23,8 +23,8 @@ function guardPolicyFor(record, externalBefore, outputSchema) {
       // This CLI writes only data/stages/<this task>.json. It is part of the
       // runtime contract, not an ad-hoc command the model must declare. The
       // task id comes from the injected environment; stage.js has no override.
-      'node "$CODEX_SUPERVISOR_STAGE_CLI"*',
-      'node "$CODEX_SUPERVISOR_ACCEPTANCE_CLI"*'
+      'node "$AGENT_SUPERVISOR_STAGE_CLI"*',
+      'node "$AGENT_SUPERVISOR_ACCEPTANCE_CLI"*'
     ] };
 }
 
@@ -54,10 +54,10 @@ export function buildLaunch({ record, args, prompt, outputSchema, externalBefore
   const configArgs = configArgsFor(record, externalBefore, outputSchema);
   // Insert before the prompt/session positional arguments for exec/resume.
   const guardedArgs = [...args.slice(0, -1), ...configArgs, args.at(-1)];
-  const env = () => withWorkerToolPath({ ...process.env, NO_COLOR: "1", CODEX_SUPERVISOR_TASK_ID: record.id,
-    CODEX_SUPERVISOR_BASE_COMMIT: record.base_commit ?? "",
-    CODEX_SUPERVISOR_STAGE_CLI: stageCli,
-    CODEX_SUPERVISOR_ACCEPTANCE_CLI: acceptanceCli,
-    CODEX_SUPERVISOR_RUN: String((record.run_count ?? 0) + 1), CODEX_SUPERVISOR_GUARD_POLICY: JSON.stringify(guardPolicy) });
+  const env = () => withWorkerToolPath({ ...process.env, NO_COLOR: "1", AGENT_SUPERVISOR_TASK_ID: record.id,
+    AGENT_SUPERVISOR_BASE_COMMIT: record.base_commit ?? "",
+    AGENT_SUPERVISOR_STAGE_CLI: stageCli,
+    AGENT_SUPERVISOR_ACCEPTANCE_CLI: acceptanceCli,
+    AGENT_SUPERVISOR_RUN: String((record.run_count ?? 0) + 1), AGENT_SUPERVISOR_GUARD_POLICY: JSON.stringify(guardPolicy) });
   return { guardedArgs, prompt: `${buildGuardPreamble(guardPolicy)}\n\n${prompt}`, env };
 }

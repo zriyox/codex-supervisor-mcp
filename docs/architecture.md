@@ -29,7 +29,7 @@ Two more rules sit on top of the table:
 
 ## What each layer holds
 
-**interface.** `mcp/server.js` creates the server and registers the tools in a fixed order; that order is what `tools/list` returns. Each tool lives in `mcp/tools/` as `[name, config, handler]`. A handler validates input, calls a use case and shapes the reply; `mcp/views/` builds the reply rows. `bin/` holds the CLIs, `web/` the board's read-only API. `src/mcp-server.js` is a four-line entry kept at that path because client registrations store it as an absolute path.
+**interface.** `mcp/server.js` creates the server and registers the tools in a fixed order; that order is what `tools/list` returns. `mcp/tools/` holds the public surface: each tool's name, description and schema, and the mapping from its arguments onto an operation. `mcp/handlers/` holds the operations: each validates its own input strictly and returns a result, and one tool may call several. The split keeps the public schema small, because it is paid for in every session's context, while validation stays exact. `mcp/views/` builds the reply rows. `bin/` holds the CLIs, `web/` the board's read-only API. `src/mcp-server.js` is a four-line entry kept at that path because client registrations store it as an absolute path.
 
 **run-host.** `entry.js` is started detached by `app/start-run.js`, one process per run. It spawns the worker, stores its events, decides the terminal status, runs acceptance and writes the final row, and it keeps going after the MCP server that started it exits. `track.js` wires it together; `launch.js`, `live-run.js`, `streams.js` and `finalize.js` are the four stages.
 
@@ -43,13 +43,13 @@ Two more rules sit on top of the table:
 
 ## One dispatch, start to finish
 
-1. `interface/mcp/tools/dispatch.js` receives `create_codex_worker` and calls `createCodexWorker`.
+1. `interface/mcp/tools/dispatch.js` receives `create_worker`, maps its grouped arguments onto the dispatch operation in `interface/mcp/handlers/dispatch.js`, which calls `createCodexWorker`.
 2. `app/dispatch.js` validates the input, claims a workspace (`infra/workspace-kind.js`), checks path ownership (`app/ownership.js`), reads the session policy (`infra/store/sessions.js`), cuts the worktree (`app/worktree-setup.js` through `infra/git.js`), builds the guard and runtime contract (`domain/worker-preflight.js`) and reserves the paths with the task row in one transaction (`infra/store/tasks.js`).
 3. `app/start-run.js` compiles the worker's context (`app/context-compiler.js`) and starts `run-host/entry.js` detached. The IPC channel carries only the startup handshake.
 4. `run-host/track.js` asks the runner how to launch (`run-host/launch.js`, `runners/codex/adapter.js`), spawns the worker, and writes the running row.
 5. `run-host/streams.js` turns each stdout line into a stored event (`infra/store/events.js`) and a row change (`runners/codex/event-parser.js`).
 6. When the worker closes, `run-host/finalize.js` picks the terminal status, records what changed (`infra/worktree.js`), runs acceptance (`app/acceptance.js`) and writes the final row and facts.
-7. The main thread reads it back through `get_worker_result` and `get_worker_diff`, then `land_codex_worker` calls `app/land-chain.js` and `app/landing.js`.
+7. The main thread reads it back through `get_worker` and `get_worker_diff`, then `land_worker` calls `app/land-chain.js` and `app/landing.js`.
 
 ## Tests
 

@@ -5,15 +5,11 @@ import { packageVersion } from "./meta.js";
 import { refreshUpdateState, UPDATE_RECHECK_MS } from "./update-state.js";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-
-import { overviewDeltaTool, checkWorkersTool } from "./tools/poll.js";
-import { checkAcceptanceTool, preflightCodexWorkerTool, getWorkerPreflightTool, createCodexWorkerTool, createCodexFollowupWorkerTool, resumeCodexWorkerTool } from "./tools/dispatch.js";
-import { listCodexWorkersTool, getOrchestrationOverviewTool, getSessionWorksTool, checkForUpdateTool, describeSessionTool, searchWorksTool, getCodexWorkerStatusTool, getCodexWorkerEventsTool } from "./tools/overview.js";
-import { waitCodexWorkersTool } from "./tools/wait.js";
-import { getContextSnapshotMetaTool, getFactTool, getArtifactTool, promoteWorkerFactTool, revokeWorkerFactTool, getWorkerEvidenceTool, searchWorkerFactsTool } from "./tools/facts.js";
-import { createIndependentVerifierTool, recordIndependentFindingTool, resolveIndependentFindingTool, getIndependentReviewTool } from "./tools/review.js";
-import { getWorkerGoalTool, getWorkerSummaryTool, getWorkerResultTool, getWorkerDiffTool, askCodexWorkerTool } from "./tools/results.js";
-import { landCodexWorkerTool, verifyDeliveryPushTool, cleanupPlanTool, applyCleanupTool, cleanupHistoryTool, cancelCodexWorkerTool } from "./tools/delivery.js";
+import { cancelWorkerTool, createWorkerTool, preflightWorkerTool, resumeWorkerTool } from "./tools/dispatch.js";
+import { cleanupTool, landWorkerTool, verifyPushTool } from "./tools/deliver.js";
+import { factsTool, getArtifactTool, reviewTool } from "./tools/optional.js";
+import { askWorkerTool, describeSessionTool, findWorksTool, getWorkerDiffTool, getWorkerTool } from "./tools/read.js";
+import { pollWorkersTool, waitWorkersTool } from "./tools/track.js";
 
 const server = new McpServer({
   name: "codex-supervisor",
@@ -28,7 +24,7 @@ setInterval(() => refreshUpdateState({ force: true }), UPDATE_RECHECK_MS).unref(
 // and a global install only synced the skill on the day it was installed.
 // Runs in the background; a client that cannot write its skill directory
 // only costs a line on stderr.
-if (!process.env.CODEX_SUPERVISOR_SKIP_SKILL_SYNC) {
+if (!process.env.AGENT_SUPERVISOR_SKIP_SKILL_SYNC) {
   syncSkills()
     .then((result) => {
       const changed = [...result.installed, ...result.updated];
@@ -46,49 +42,20 @@ if (!process.env.CODEX_SUPERVISOR_SKIP_SKILL_SYNC) {
     });
 }
 
-// Registration order is part of the contract: tools/list returns it.
+// The order is the order tools/list returns, which is the order a model reads
+// them in: the path of a batch from preflight to cleanup.
 const TOOLS = [
-  overviewDeltaTool,
-  checkWorkersTool,
-  checkAcceptanceTool,
-  preflightCodexWorkerTool,
-  getWorkerPreflightTool,
-  createCodexWorkerTool,
-  createCodexFollowupWorkerTool,
-  resumeCodexWorkerTool,
-  listCodexWorkersTool,
-  getOrchestrationOverviewTool,
-  waitCodexWorkersTool,
-  getSessionWorksTool,
-  checkForUpdateTool,
-  describeSessionTool,
-  searchWorksTool,
-  getCodexWorkerStatusTool,
-  getCodexWorkerEventsTool,
-  getContextSnapshotMetaTool,
-  getFactTool,
-  getArtifactTool,
-  promoteWorkerFactTool,
-  revokeWorkerFactTool,
-  getWorkerEvidenceTool,
-  searchWorkerFactsTool,
-  createIndependentVerifierTool,
-  recordIndependentFindingTool,
-  resolveIndependentFindingTool,
-  getIndependentReviewTool,
-  getWorkerGoalTool,
-  getWorkerSummaryTool,
-  getWorkerResultTool,
-  getWorkerDiffTool,
-  askCodexWorkerTool,
-  landCodexWorkerTool,
-  verifyDeliveryPushTool,
-  cleanupPlanTool,
-  applyCleanupTool,
-  cleanupHistoryTool,
-  cancelCodexWorkerTool
+  preflightWorkerTool, createWorkerTool, resumeWorkerTool, cancelWorkerTool,
+  pollWorkersTool, waitWorkersTool,
+  getWorkerTool, getWorkerDiffTool, askWorkerTool,
+  landWorkerTool, verifyPushTool, cleanupTool,
+  findWorksTool, describeSessionTool
 ];
-for (const tool of TOOLS) server.registerTool(...tool);
+// The fact ledger, independent review and raw artifacts are rarely needed and
+// cost context in every session, so they are opt-in.
+const OPTIONAL_TOOLS = [factsTool, reviewTool, getArtifactTool];
+const enabled = process.env.AGENT_SUPERVISOR_TOOLS === "all" ? [...TOOLS, ...OPTIONAL_TOOLS] : TOOLS;
+for (const tool of enabled) server.registerTool(...tool);
 
 const transport = new StdioServerTransport();
 await server.connect(transport);

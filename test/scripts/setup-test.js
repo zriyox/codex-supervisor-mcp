@@ -115,11 +115,11 @@ await check("--auto stays silent unless the install is global", async () => {
   assert.equal(existsSync(skillAt(global, "claude")), true);
 });
 
-await check("CODEX_SUPERVISOR_SKIP_SETUP opts the automatic run out", async () => {
+await check("AGENT_SUPERVISOR_SKIP_SETUP opts the automatic run out", async () => {
   const home = await makeHome();
   await runSetup(home, ["--auto", "--skill-only"], {
     npm_config_global: "true",
-    CODEX_SUPERVISOR_SKIP_SETUP: "1"
+    AGENT_SUPERVISOR_SKIP_SETUP: "1"
   });
   assert.equal(existsSync(join(home, ".claude", "skills", "codex-supervisor")), false);
 });

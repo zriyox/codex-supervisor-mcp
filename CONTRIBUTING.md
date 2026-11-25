@@ -36,4 +36,4 @@ gh release create v<x.y.z> --notes "..."
 
 ## 提 issue
 
-带上：平台、`node -v`、`codex --version`、`check_for_update` 的返回、能复现的最小步骤。worker 出问题附 `data/runs/<taskId>.jsonl` 的最后 20 行。
+带上：平台、`node -v`、`codex --version`、`poll_workers` 的返回、能复现的最小步骤。worker 出问题附 `data/runs/<taskId>.jsonl` 的最后 20 行。
