@@ -1741,7 +1741,7 @@ export async function readAgentMessages(taskId, limit = 1) {
   `).all(taskId, limit * 5 + 10);
   const messages = [];
   for (const row of rows) {
-    let text = null;
+    let text;
     try {
       text = extractAgentMessage(JSON.parse(row.payload));
     } catch {

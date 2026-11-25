@@ -5,7 +5,7 @@ For any agent working in this repository. CONTRIBUTING.md has the human version.
 ## Layout
 
 ```
-src/mcp-server.js        the 19 MCP tools; everything else is called from here
+src/mcp-server.js        the 39 MCP tools; everything else is called from here
 src/codex-runner.js      spawns codex exec, one worktree per worker, writes the task row
 src/task-store.js        sqlite: tasks, task_events, sessions, side_sessions / side_turns
 src/event-parser.js      codex --json events -> status / phase / error on the row; summarizeVerification
@@ -36,6 +36,6 @@ npm run web:build        # runs by itself before npm publish
 - `npm test` green before every commit. Never `npm version` or `npm publish` while CI is red or still running; check `gh run list` first.
 - Tests use a temp `SUPERVISOR_HOME` and `CODEX_BIN=src/test-fixtures/fake-codex.js`. No real Codex, no network, no git identity, no writable `/tmp` assumed. CI's Linux and Windows runners have none of those.
 - Never run `npm i -g` or `codex-supervisor-setup` against the user's machine unless asked.
-- A tool, argument or behaviour change is done when the skill, both READMEs (tool table and count) and a test say the same thing. The skill ships inside the package: a skill change reaches users only with a release.
+- A tool, argument or behaviour change is done when the skill, both READMEs (tool table and count), both `docs/reference*.md` (arguments and edge cases) and a test say the same thing. The skill ships inside the package: a skill change reaches users only with a release.
 - The skill is read by a model at the start of a session: rules, not a tour. Cut before adding. README tool rows are two sentences at most.
 - One change per commit. The message says why, in prose; `git log` shows the register.

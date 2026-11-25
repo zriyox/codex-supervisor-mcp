@@ -17,20 +17,31 @@ function documentedTools(markdown, heading, end) {
   return [...markdown.slice(start, stop).matchAll(/^\| `([^`]+)`/gm)].map((match) => match[1]);
 }
 
-test("both READMEs document every registered MCP tool", async () => {
-  const [source, zh, en] = await Promise.all([
+function mentionedTools(markdown, heading, end, registered) {
+  const start = markdown.indexOf(heading);
+  const stop = markdown.indexOf(end, start);
+  assert.ok(start >= 0 && stop > start, `missing documentation section ${heading}`);
+  const section = markdown.slice(start, stop);
+  return registered.filter((name) => section.includes(`\`${name}\``));
+}
+
+test("both READMEs and both references document every registered MCP tool", async () => {
+  const [source, zh, en, zhRef, enRef] = await Promise.all([
     read("src/mcp-server.js"),
     read("README.md"),
-    read("README.en.md")
+    read("README.en.md"),
+    read("docs/reference.md"),
+    read("docs/reference.en.md")
   ]);
   const registered = registeredTools(source).sort();
-  const chinese = documentedTools(zh, "## 工具", "## 和 Claude Code").sort();
-  const english = documentedTools(en, "## Tools", "## How this differs").sort();
   assert.equal(registered.length, 39);
-  assert.deepEqual(chinese, registered);
-  assert.deepEqual(english, registered);
+  // The READMEs group tools by stage, several to a row; the references keep one row per tool with its arguments.
+  assert.deepEqual(mentionedTools(zh, "## 工具", "## 和 Claude Code", registered), registered);
+  assert.deepEqual(mentionedTools(en, "## Tools", "## How this differs", registered), registered);
+  assert.deepEqual(documentedTools(zhRef, "## 工具", "## 看板里有什么").sort(), registered);
+  assert.deepEqual(documentedTools(enRef, "## Tools", "## What the board shows").sort(), registered);
   assert.match(zh.slice(zh.indexOf("## 工具"), zh.indexOf("## 和 Claude Code")), /39 个/);
-  assert.match(en.slice(en.indexOf("## Tools"), en.indexOf("## How this differs")), /Thirty-nine/);
+  assert.match(en.slice(en.indexOf("## Tools"), en.indexOf("## How this differs")), /39 of them/);
 });
 
 test("the core dispatch and recovery contract stays visible in the skill", async () => {
@@ -51,12 +62,14 @@ test("the core dispatch and recovery contract stays visible in the skill", async
   assert.doesNotMatch(skill, /git commit --amend|amend 进原来那个提交|三者都要各自 push/);
 });
 
-test("the READMEs keep the 0.13 contract and remove stale commit workflow", async () => {
-  const [zh, en] = await Promise.all([read("README.md"), read("README.en.md")]);
+test("the references keep the 0.13 contract and the docs drop the stale commit workflow", async () => {
+  const [zh, en, zhReadme, enReadme] = await Promise.all([read("docs/reference.md"), read("docs/reference.en.md"), read("README.md"), read("README.en.md")]);
   for (const text of [zh, en]) {
     for (const required of ["workspaceSetup", "preflight_id", "invalid_report", "token_budget", "commitMessage", "includeFollowupParents", "commitMessages", "ActiveTurnOutputSchemaMismatch", "allowLongWait", "timeout_capped"]) {
       assert.match(text, new RegExp(required), required);
     }
+  }
+  for (const text of [zh, en, zhReadme, enReadme]) {
     assert.doesNotMatch(text, /one worker per step|一个 worker 只做一步|amend(?:ed)? (?:it )?into the same commit|改完 `--amend`/i);
   }
   for (const required of ["emitProgress", "file`, `hunk", "CODEX_SUPERVISOR_HANDOFF_TOKEN_THRESHOLD"]) {

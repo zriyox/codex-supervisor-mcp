@@ -3,7 +3,7 @@
 // nothing. Reading is never exclusive, writing still is.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { dispatchArgs, makeRepo, tempHome, waitFor, withMcp } from "./helpers.js";
 

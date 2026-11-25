@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
-import { lstat, realpath, stat } from "node:fs/promises";
+import { lstat, realpath } from "node:fs/promises";
 import { execFileSync } from "node:child_process";
-import { isAbsolute, relative, resolve } from "node:path";
+import { resolve } from "node:path";
 import { ACTIVE_STATUSES } from "./status.js";
 import { worktreesDir } from "./paths.js";
 import { appendTaskEvent, getTask, isPidAlive, markCleanupPlanItemApplied, readTasks, updateWorkItemDelivery, runIdFor } from "./task-store.js";
