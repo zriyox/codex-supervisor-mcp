@@ -318,7 +318,7 @@ await test("R4-2 overlapping ownedPaths are refused with the conflicting task id
     await call(client, "cancel_codex_worker", { task_id: first.id });
     await call(client, "cancel_codex_worker", { task_id: distinct.id });
     const cancelled = await call(client, "get_codex_worker_status", { task_id: first.id });
-    assert.equal(cancelled.status, "cancelled");
+    assert.equal(cancelled.status, "cancelled", JSON.stringify(concurrentDispatchSummary(cancelled)));
   });
 });
 
@@ -725,5 +725,15 @@ await withServer({}, async (client) => {
   }
 });
 
+// A failure on a CI runner leaves nothing to inspect afterwards, so the run
+// hosts' own logs are printed with it.
+if (failures > 0) {
+  const { readdirSync, readFileSync } = await import("node:fs");
+  const runs = join(home, "data", "runs");
+  for (const name of readdirSync(runs).filter((entry) => entry.endsWith(".host.log"))) {
+    const text = readFileSync(join(runs, name), "utf8").trim();
+    if (text) console.log(`--- ${name}\n${text.split("\n").slice(-25).join("\n")}`);
+  }
+}
 console.log(`\n${passed} passed, ${failures} failed  (state dir: ${home})`);
 process.exit(failures === 0 ? 0 : 1);

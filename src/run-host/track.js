@@ -6,7 +6,8 @@ import { failedStart, processes } from "../app/run-state.js";
 import { captureExternalOutputs } from "../infra/external-output.js";
 import { spawnProcess } from "../infra/process.js";
 import { clearStage } from "../infra/stage-store.js";
-import { ensureRunRecord } from "../infra/store/events.js";
+import { appendTaskEvent, ensureRunRecord } from "../infra/store/events.js";
+import { getTask } from "../infra/store/tasks.js";
 import { snapshotTaskOutput } from "../infra/worktree.js";
 import { codexRunner } from "../runners/codex/adapter.js";
 import { finalizeChild } from "./finalize.js";
@@ -68,12 +69,17 @@ function noteStdinFailure(run, error) {
 }
 
 // finalizeChild runs detached from any caller. A rejection there would end the
-// run host as an unhandled rejection and leave the row half-written, so it is
-// reported and noted on the row instead; reconcile then treats the row as a
-// run whose exit was never recorded.
+// run host as an unhandled rejection, so it is reported and recorded instead.
+// The note goes onto the row as it is stored now, not onto this process's last
+// snapshot: another process may already have closed the row, and writing an
+// older "running" snapshot over it would reopen a finished worker.
 async function noteFinalizeFailure(run, error) {
-  process.stderr.write(`[codex-supervisor] finalize failed for ${run.record.id}: ${error.message}\n`);
-  await persist(run, { ...run.live, error: run.live.error ?? `supervisor could not finish recording this run: ${error.message}`, updated_at: new Date().toISOString() });
+  process.stderr.write(`[codex-supervisor] finalize failed for ${run.record.id}: ${error.stack ?? error.message}\n`);
+  await appendTaskEvent(run.record.id, { type: "supervisor.finalize_failed", error: error.message, stack: String(error.stack ?? "").slice(0, 2000), run: run.live.run_count },
+    { runId: run.runId, actor: "supervisor" }).catch(() => null);
+  const stored = await getTask(run.record.id).catch(() => null);
+  const base = stored ?? run.live;
+  await persist(run, { ...base, error: base.error ?? `supervisor could not finish recording this run: ${error.message}`, updated_at: new Date().toISOString() });
 }
 
 export async function trackRunInHost({ record, args, prompt, logPath, spawnOptions = {}, outputSchema = true }) {
