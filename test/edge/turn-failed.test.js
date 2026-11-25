@@ -44,3 +44,25 @@ test("zero exit without a terminal event is lost, not successful completion", as
     assert.doesNotMatch(done.error, /signal null/);
   });
 });
+
+// A failed worker's row carries the worker's own error text. Reading it is a
+// successful call; only a read that cannot be answered is a failed one.
+test("reading a failed worker is not a failed call, in one part or several", async () => {
+  const home = await tempHome("supervisor-read-failed-");
+  await withMcp({ SUPERVISOR_HOME: home, FAKE_CODEX_SCENARIO: "turn-failed" }, async ({ call, client }) => {
+    const worker = await call("create_worker", dispatchArgs("fails", join(home, "workspace")));
+    await waitFor(call, worker.id, (task) => task.status === "failed" && task.exit_code !== null);
+    const read = (args) => client.callTool({ name: "get_worker", arguments: { task_id: worker.id, ...args } });
+    for (const args of [{}, { include: ["status"] }, { include: ["result"] }]) {
+      const reply = await read(args);
+      assert.notEqual(reply.isError, true, JSON.stringify(args));
+      assert.ok(JSON.parse(reply.content[0].text).error, "the worker's error text is in the row");
+    }
+    const several = await read({ include: ["result", "goal", "events"] });
+    assert.notEqual(several.isError, true);
+    assert.deepEqual(Object.keys(JSON.parse(several.content[0].text)).sort(), ["events", "goal", "result", "task_id"]);
+    const missing = await client.callTool({ name: "get_worker", arguments: { task_id: "no-such-worker", include: ["status"] } });
+    assert.equal(missing.isError, true);
+    assert.equal(JSON.parse(missing.content[0].text).error, "task_not_found");
+  });
+});

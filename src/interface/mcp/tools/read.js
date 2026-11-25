@@ -3,20 +3,29 @@ import { getWorkerPreflightOp } from "../handlers/dispatch.js";
 import { getContextSnapshotMetaOp, getWorkerEvidenceOp } from "../handlers/facts.js";
 import { describeSessionOp, getCodexWorkerEventsOp, getCodexWorkerStatusOp, getSessionWorksOp, searchWorksOp } from "../handlers/overview.js";
 import { askCodexWorkerOp, getWorkerDiffOp, getWorkerGoalOp, getWorkerResultOp, getWorkerSummaryOp } from "../handlers/results.js";
-import { defineTool, run } from "./run.js";
+import { asData, defineTool, isFailure, run } from "./run.js";
 import { acceptanceCommands } from "./shapes.js";
 
 const PARTS = ["status", "result", "goal", "events", "evidence", "context", "preflight", "prompt"];
 
+// A read that found the worker returns its row, which always has a status;
+// "task_not_found" and the like do not. Only the former is data.
+const row = async (reading) => {
+  const payload = await reading;
+  return payload?.status === undefined ? payload : asData(payload);
+};
+
 // Each part of a worker and the operation that reads it.
 const READERS = {
-  status: (args) => run(getCodexWorkerStatusOp, { task_id: args.task_id, includePrompt: args.include.includes("prompt") }),
-  result: (args) => run(getWorkerResultOp, { task_id: args.task_id, maxChars: args.max_chars, limit: args.result_limit, includeFiles: args.include_files }),
+  status: (args) => row(run(getCodexWorkerStatusOp, { task_id: args.task_id, includePrompt: args.include.includes("prompt") })),
+  result: (args) => row(run(getWorkerResultOp, {
+    task_id: args.task_id, maxChars: args.max_chars, limit: args.result_limit, includeFiles: args.include_files
+  })),
   goal: (args) => run(getWorkerGoalOp, { task_id: args.task_id }),
   events: (args) => run(getCodexWorkerEventsOp, { task_id: args.task_id, limit: args.event_limit, kinds: args.event_kinds, maxChars: args.max_chars }),
   evidence: (args) => run(getWorkerEvidenceOp, { task_id: args.task_id }),
   context: (args) => run(getContextSnapshotMetaOp, { task_id: args.task_id }),
-  preflight: (args) => run(getWorkerPreflightOp, { task_id: args.task_id })
+  preflight: (args) => row(run(getWorkerPreflightOp, { task_id: args.task_id }))
 };
 
 export const getWorkerTool = defineTool("get_worker", {
@@ -34,13 +43,13 @@ export const getWorkerTool = defineTool("get_worker", {
 }, async (args) => {
   const wanted = args.include.includes("prompt") && !args.include.includes("status") ? [...args.include, "status"] : args.include;
   const parts = wanted.filter((part) => READERS[part]);
-  if (parts.length === 0) return run(getWorkerSummaryOp, { task_id: args.task_id });
+  if (parts.length === 0) return row(run(getWorkerSummaryOp, { task_id: args.task_id }));
   // One part comes back as itself; several come back keyed by part.
   if (parts.length === 1) return READERS[parts[0]]({ ...args, include: wanted });
   const out = { task_id: args.task_id };
   for (const part of parts) {
     const payload = await READERS[part]({ ...args, include: wanted });
-    if (payload?.error) return payload;
+    if (isFailure(payload)) return payload;
     out[part] = payload;
   }
   return out;

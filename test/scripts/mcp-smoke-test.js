@@ -17,18 +17,8 @@ try {
   const tools = await client.listTools();
   const toolNames = tools.tools.map((tool) => tool.name).sort();
   const required = [
-    "cancel_worker",
-    "create_worker with followup_of",
-    "create_worker",
-    "get_worker (include events)",
-    "get_worker",
-    "poll_workers",
-    "get_worker (include goal)",
-    "get_worker (include result)",
-    "get_worker",
-    "poll_workers",
-    "resume_worker",
-    "wait_workers"
+    "preflight_worker", "create_worker", "resume_worker", "cancel_worker", "poll_workers", "wait_workers", "get_worker",
+    "get_worker_diff", "ask_worker", "land_worker", "verify_push", "cleanup", "find_works", "describe_session"
   ];
   const missing = required.filter((name) => !toolNames.includes(name));
   if (missing.length > 0) {

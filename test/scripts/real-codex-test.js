@@ -157,9 +157,10 @@ assert.ok(finished.worktree_path?.startsWith(home), `worktree_path ${finished.wo
 assert.ok(await stat(finished.worktree_path).then(() => true, () => false), "worktree should exist");
 
 await withServer(async (client) => {
-  const listed = await call(client, "poll_workers", {});
+  const listed = (await call(client, "poll_workers", {})).workers;
   assert.equal(listed.length, 1);
-  assert.equal(listed[0].goal_objective, "Respond with PONG without touching files; the supervisor validates your response");
+  const goal = await call(client, "get_worker", { task_id: listed[0].id, include: ["goal"] });
+  assert.equal(goal.objective, "Respond with PONG without touching files; the supervisor validates your response");
 });
 
 // Resume the SAME Codex session from a brand new MCP server process.

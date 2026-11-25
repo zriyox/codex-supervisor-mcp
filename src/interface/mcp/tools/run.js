@@ -22,11 +22,23 @@ export async function run(op, args, extra) {
   }
 }
 
+// A worker's row has an `error` field of its own: the text of what went wrong
+// with the worker. Reading a failed worker is a successful call, so a payload
+// that is such a row is marked as data and its `error` is left alone.
+const DATA = Symbol("data");
+
+export function asData(payload) {
+  if (payload && typeof payload === "object") Object.defineProperty(payload, DATA, { value: true });
+  return payload;
+}
+
+export const isFailure = (payload) => Boolean(payload) && typeof payload === "object" && typeof payload.error === "string" && !payload[DATA];
+
 // A payload whose top level carries `error` is a failed call, and says so in
 // the protocol as well as in the text.
 export function reply(payload) {
   const result = textResult(payload);
-  if (payload && typeof payload === "object" && typeof payload.error === "string") result.isError = true;
+  if (isFailure(payload)) result.isError = true;
   return result;
 }
 
