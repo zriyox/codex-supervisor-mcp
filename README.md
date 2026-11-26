@@ -18,6 +18,8 @@ codex-supervisor-mcp 是一个 MCP server。主线程（Claude Code、Codex 或�
 
 *30 秒真跑：派 3 个 worker，各自 worktree 并行，主线程收 3 份 diff 合成一次 commit。*
 
+> **这个包已改名为 [agent-supervisor-mcp](https://www.npmjs.com/package/agent-supervisor-mcp)。** 这是旧名字下的最后一版。全局安装的机器不用动手：它会在后台装好新包、换掉 MCP 注册和 skill，下次开会话就在新包上，状态目录原地不动。没自动换成的（npx 启动、源码检出）手动跑 `npm install -g agent-supervisor-mcp`。
+>
 > **从 0.x 升级到 1.x**：工具从 39 个收成 14 个，名字和参数都换了，旧名不留别名。升级前先把在跑的 worker 收完，升级后重开会话让新 skill 生效。对照表在[参考手册](docs/reference.md)，变更说明在 [1.0.0 release](https://github.com/zriyox/codex-supervisor-mcp/releases/tag/v1.0.0)。
 
 ## 解决什么

@@ -1,4 +1,5 @@
 import { maybeAutoUpdate } from "../../infra/update/auto-update.js";
+import { handoverNotice, maybeHandOver } from "../../infra/update/handover.js";
 import { checkForUpdate, updateNotice } from "../../infra/update/update-check.js";
 
 // Nobody should keep running an old build without hearing about it. The
@@ -10,21 +11,26 @@ export let updateState = null;
 // The last word from auto-update.js: null until a check found a newer
 // version, then started | running | done | failed | skipped.
 export let autoUpdateState = null;
+// The package was renamed; handover.js installs the new one. Null until the first check.
+export let handoverState = null;
 export async function refreshUpdateState({ force = false } = {}) {
   try {
     updateState = await checkForUpdate({ force });
     autoUpdateState = await maybeAutoUpdate(updateState);
-    const notice = updateNotice(updateState, autoUpdateState)?.notice;
-    if (notice) process.stderr.write(`[codex-supervisor] ${notice}\n`);
+    handoverState = await maybeHandOver(updateState);
+    if (!updateState.disabled) process.stderr.write(`[codex-supervisor] ${handoverNotice(handoverState).notice}\n`);
   } catch (error) {
     process.stderr.write(`[codex-supervisor] update check failed: ${error.message}\n`);
   }
   return updateState;
 }
 
-// The short form for tool results: null when the install is current.
+// The short form for tool results. The rename is always said; a newer release
+// of this package is not worth a line beside it.
 export function updateField() {
-  return updateNotice(updateState, autoUpdateState);
+  // With the update check switched off the server says nothing unasked, the rename included.
+  if (!updateState || updateState.disabled) return updateNotice(updateState, autoUpdateState);
+  return handoverNotice(handoverState);
 }
 
 // Spread into a result: adds `update` only when there is something to say.

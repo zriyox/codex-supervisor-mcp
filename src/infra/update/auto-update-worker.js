@@ -22,15 +22,16 @@ const LOCK_STALE_MS = 10 * 60 * 1000;
 const NPM_TIMEOUT_MS = 10 * 60 * 1000;
 
 function parseArgs(argv) {
-  const options = { version: null, packageRoot: null, registry: null };
+  const options = { version: null, packageRoot: null, registry: null, successor: null };
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
     if (arg === "--version") options.version = argv[++index];
     else if (arg === "--package-root") options.packageRoot = argv[++index];
     else if (arg === "--registry") options.registry = argv[++index];
+    else if (arg === "--successor") options.successor = argv[++index];
     else throw new Error(`Unknown argument: ${arg}`);
   }
-  if (!options.version || !options.packageRoot) throw new Error("--version and --package-root are required");
+  if ((!options.version && !options.successor) || !options.packageRoot) throw new Error("--package-root and one of --version, --successor are required");
   return options;
 }
 
@@ -118,8 +119,49 @@ function samePath(a, b) {
   }
 }
 
+// Installs the package this one was renamed to. Its own install step does the
+// rest: registers it, removes this package's registration, retires its skill.
+async function installSuccessor(options) {
+  const handoverPath = join(dataDir, "handover.json");
+  const record = async (patch) => {
+    await mkdir(dataDir, { recursive: true });
+    await writeFile(handoverPath, JSON.stringify({ ...patch, pid: process.pid, updated_at: new Date().toISOString() }, null, 2));
+  };
+  if (!(await acquireLock())) {
+    console.log(`handover: another installer holds ${lockPath}; leaving it to that one`);
+    return 0;
+  }
+  try {
+    await record({ state: "running" });
+    const { stdout: rootOut } = await npm(["root", "-g"], { registry: options.registry, timeout: 60_000 });
+    const globalRoot = rootOut.trim();
+    if (!samePath(join(globalRoot, PACKAGE_NAME), options.packageRoot)) {
+      await record({ state: "skipped", reason: `the running copy (${options.packageRoot}) is not npm's global install; nothing was changed` });
+      return 0;
+    }
+    try {
+      await npm(["install", "-g", `${options.successor}@latest`], { registry: options.registry });
+    } catch (error) {
+      const tail = `${error.stdout ?? ""}${error.stderr ?? ""}`.trim().split("\n").slice(-12).join("\n");
+      await record({ state: "failed", reason: `npm install exited ${error.code ?? "?"}`, log: tail });
+      return 1;
+    }
+    const installedAt = join(globalRoot, options.successor);
+    if (!existsSync(join(installedAt, "package.json"))) {
+      await record({ state: "failed", reason: `npm reported success but ${installedAt} is not there` });
+      return 1;
+    }
+    await record({ state: "done", installed_path: installedAt });
+    console.log(`handover: installed ${options.successor} at ${installedAt}`);
+    return 0;
+  } finally {
+    await rm(lockPath, { force: true });
+  }
+}
+
 async function main() {
   const options = parseArgs(process.argv.slice(2));
+  if (options.successor) return installSuccessor(options);
   const stamp = { version: options.version, pid: process.pid, started_at: new Date().toISOString() };
 
   if (!(await acquireLock())) {

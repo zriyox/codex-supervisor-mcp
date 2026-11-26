@@ -18,6 +18,8 @@ codex-supervisor-mcp is an MCP server. A main thread (Claude Code, Codex, or any
 
 *30 seconds, recorded live: three workers in their own worktrees in parallel, then the main thread collects three diffs and makes one commit.*
 
+> **This package is now [agent-supervisor-mcp](https://www.npmjs.com/package/agent-supervisor-mcp).** This is the last release under the old name. A global install needs nothing from you: it installs the new package in the background, replaces the MCP registration and the skill, and the next session starts on the new package with the state directory where it was. Where that does not happen (started through npx, a source checkout), run `npm install -g agent-supervisor-mcp`.
+>
 > **Upgrading from 0.x to 1.x**: 39 tools became 14, with new names and arguments and no aliases for the old ones. Finish the workers in flight first, then reopen the session after upgrading so the new skill loads. The tool table is in the [reference](docs/reference.en.md); what changed is in the [1.0.0 release](https://github.com/zriyox/codex-supervisor-mcp/releases/tag/v1.0.0).
 
 ## What it solves
