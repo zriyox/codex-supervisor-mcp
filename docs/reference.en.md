@@ -156,7 +156,7 @@ A terminal state lands in two steps: `turn.completed` sets `completed`, the proc
 |---|---|
 | `data/supervisor.sqlite` | `tasks` (one row per work), `task_events`, `sessions`, `side_sessions` / `side_turns` (side chat) |
 | `data/crash.log` | Uncaught errors of the MCP server, a run host or the board, one JSON line each. Read it first when every tool call suddenly answers `Connection closed` |
-| `data/runs/<taskId>.jsonl` | Raw `codex --json` output |
+| `data/runs/<taskId>.jsonl` | Raw `codex --json` output. An event over 2 KB (mostly command output) is whole only here, with a clipped copy in `task_events`; `get_worker` with `events` and no `max_chars` reads the full body back from this file, and returns the clipped copy marked `body.missing` when the file is gone |
 | `data/update-check.json`, `auto-update.json` | Update check and background update records |
 | `worktrees/<taskId>/` | The worker's Git worktree |
 
