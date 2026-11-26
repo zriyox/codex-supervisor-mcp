@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { collectWorkerChanges } from "../../src/domain/worker-changes.js";
 import { join } from "node:path";
-import { dispatchArgs, tempHome, withMcp, openStore } from "./helpers.js";
+import { dispatchArgs, tempHome, waitFor, withMcp, openStore } from "./helpers.js";
 
 const task = (extra = {}) => ({ id: "worker", status: "completed", exit_code: 0, run_count: 1, ...extra });
 
@@ -87,6 +87,10 @@ test("poll_workers returns a threshold reminder through MCP without resuming the
       owned_paths: []
     }));
     try {
+      // The run host rewrites the whole row with each event. The hanging worker
+      // prints two and goes quiet; an edit made before the second has landed is
+      // overwritten by it, which is how this test failed one run in a few dozen.
+      await waitFor(call, worker.id, (task) => task.status === "running" && task.last_event_type === "turn.started");
       const db = openStore(home);
       db.prepare("UPDATE tasks SET goal_tokens_used=? WHERE id=?").run(378000, worker.id);
       db.close();
