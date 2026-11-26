@@ -5,7 +5,7 @@ English | [中文](README.md)
 [![npm version](https://img.shields.io/npm/v/agent-supervisor-mcp.svg)](https://www.npmjs.com/package/agent-supervisor-mcp)
 [![npm downloads](https://img.shields.io/npm/dm/agent-supervisor-mcp.svg)](https://www.npmjs.com/package/agent-supervisor-mcp)
 [![license](https://img.shields.io/npm/l/agent-supervisor-mcp.svg)](LICENSE)
-[![CI](https://github.com/zriyox/codex-supervisor-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/zriyox/codex-supervisor-mcp/actions/workflows/ci.yml)
+[![CI](https://github.com/zriyox/agent-supervisor-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/zriyox/agent-supervisor-mcp/actions/workflows/ci.yml)
 [![node](https://img.shields.io/badge/node-%3E%3D22.13.0-339933.svg)](package.json)
 
 Website [codex-supervisor.zriyo.com](https://codex-supervisor.zriyo.com) · for models [llms.txt](https://codex-supervisor.zriyo.com/llms.txt) · [reference](docs/reference.en.md)
@@ -14,13 +14,13 @@ Point several agents at one repository and they overwrite each other, nobody can
 
 agent-supervisor-mcp is an MCP server. A main thread (Claude Code, Codex, or any MCP client) uses it to run several Codex CLI workers at once: one Git worktree per worker, state in SQLite, and a web board to watch them. Dispatch and bookkeeping live on disk, not in the model's context.
 
-![Demo: one Claude Code main thread dispatches three Codex workers into separate worktrees, waits, and merges the result](https://raw.githubusercontent.com/zriyox/codex-supervisor-mcp/main/assets/demo.gif)
+![Demo: one Claude Code main thread dispatches three Codex workers into separate worktrees, waits, and merges the result](https://raw.githubusercontent.com/zriyox/agent-supervisor-mcp/main/assets/demo.gif)
 
 *30 seconds, recorded live: three workers in their own worktrees in parallel, then the main thread collects three diffs and makes one commit.*
 
 > **This package used to be codex-supervisor-mcp.** It was renamed because a worker is no longer only Codex. A machine with the old package is brought over by its last release: this package is installed, the MCP registration and the skill become `agent-supervisor`, and the state directory stays where it is. The command line tools change prefix from `codex-supervisor-` to `agent-supervisor-`.
 >
-> **Upgrading from 0.x to 1.x**: 39 tools became 14, with new names and arguments and no aliases for the old ones. Finish the workers in flight first, then reopen the session after upgrading so the new skill loads. The tool table is in the [reference](docs/reference.en.md); what changed is in the [1.0.0 release](https://github.com/zriyox/codex-supervisor-mcp/releases/tag/v1.0.0).
+> **Upgrading from 0.x to 1.x**: 39 tools became 14, with new names and arguments and no aliases for the old ones. Finish the workers in flight first, then reopen the session after upgrading so the new skill loads. The tool table is in the [reference](docs/reference.en.md); what changed is in the [1.0.0 release](https://github.com/zriyox/agent-supervisor-mcp/releases/tag/v1.0.0).
 
 ## What it solves
 
@@ -53,7 +53,7 @@ claude mcp add -s user agent-supervisor -- npx -y agent-supervisor-mcp
 codex mcp add agent-supervisor -- npx -y agent-supervisor-mcp
 ```
 
-GUI clients such as Claude Desktop, Cursor and Windsurf need their MCP config edited by hand; the snippet is in the [reference](docs/reference.en.md#environment-variables). For the skill without the server: `npx skills add zriyox/codex-supervisor-mcp`.
+GUI clients such as Claude Desktop, Cursor and Windsurf need their MCP config edited by hand; the snippet is in the [reference](docs/reference.en.md#environment-variables). For the skill without the server: `npx skills add zriyox/agent-supervisor-mcp`.
 
 Then say it in plain words in Claude Code:
 
@@ -201,7 +201,7 @@ npm run web:dev        # board development, /api proxied to 7877
 
 CI runs on Ubuntu, macOS and Windows, plus a Node 22.13.0 job that pins the lower bound of `engines`.
 
-To contribute, read [CONTRIBUTING.en.md](CONTRIBUTING.en.md). Security reports go through the [private channel](https://github.com/zriyox/codex-supervisor-mcp/security/advisories/new); see [SECURITY.md](SECURITY.md).
+To contribute, read [CONTRIBUTING.en.md](CONTRIBUTING.en.md). Security reports go through the [private channel](https://github.com/zriyox/agent-supervisor-mcp/security/advisories/new); see [SECURITY.md](SECURITY.md).
 
 ## License
 
