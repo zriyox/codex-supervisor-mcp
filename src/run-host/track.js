@@ -84,7 +84,7 @@ async function noteFinalizeFailure(run, error) {
 
 export async function trackRunInHost({ record, args, prompt, logPath, spawnOptions = {}, outputSchema = true }) {
   // The run host is its own process: a third-party runner is loaded here again.
-  const capability = (await loadRunner(record.worker)).capabilityPreflight();
+  const capability = await (await loadRunner(record.worker)).capabilityPreflight();
   if (!capability.ok) return failedStart(record, capability.error);
   const target = capability.target;
   const before = {

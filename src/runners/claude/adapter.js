@@ -13,7 +13,8 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 const CLAUDE_NPM_ENTRY = { pkg: "@anthropic-ai/claude-code", bin: "cli.js" };
-const EFFORTS = new Set(["low", "medium", "high"]);
+// Claude Code has no "minimal"; the nearest it has is low.
+const EFFORTS = new Map([["minimal", "low"], ["low", "low"], ["medium", "medium"], ["high", "high"]]);
 const quoteCommand = (path) => process.platform === "win32" ? `"${path.replace(/"/g, '""')}"` : `'${path.replace(/'/g, "'\\''")}'`;
 
 export class ClaudeRunnerAdapter {
@@ -36,7 +37,7 @@ export class ClaudeRunnerAdapter {
     if (target.error) return { ok: false, error: target.error };
     try {
       const help = runSync(target.cmd, [...target.prefixArgs, "--help"], { encoding: "utf8", timeout: 20000, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
-      const missing = ["--json-schema", "--settings", "--resume", "--output-format"].filter((flag) => !help.includes(flag));
+      const missing = ["--json-schema", "--settings", "--resume", "--output-format", "--permission-mode", "--strict-mcp-config", "--disallowed-tools"].filter((flag) => !help.includes(flag));
       if (missing.length) return { ok: false, error: `Claude Code lacks ${missing.join(", ")}; install a newer Claude Code before dispatch` };
       return { ok: true, target };
     } catch (error) {
@@ -55,7 +56,7 @@ export class ClaudeRunnerAdapter {
       "--strict-mcp-config"];
     if (sandbox === "read-only") args.push("--disallowed-tools", "Edit", "Write", "MultiEdit", "NotebookEdit");
     if (model) args.push("--model", model);
-    if (EFFORTS.has(reasoningEffort)) args.push("--effort", reasoningEffort);
+    if (EFFORTS.has(reasoningEffort)) args.push("--effort", EFFORTS.get(reasoningEffort));
     return args;
   }
 

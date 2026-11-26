@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { stagesDir } from "./paths.js";
 
 function validate(taskId, stage, detail) {
-  if (!/^codex-[A-Za-z0-9-]+$/.test(String(taskId ?? ""))) throw new Error("invalid task id for stage checkpoint");
+  if (!/^[a-z][a-z0-9-]*-[A-Za-z0-9-]+$/.test(String(taskId ?? ""))) throw new Error("invalid task id for stage checkpoint");
   const name = String(stage ?? "").trim();
   if (!name || name.length > 200) throw new Error("stage must be 1-200 characters");
   const note = detail == null ? null : String(detail).trim();

@@ -134,6 +134,8 @@ try {
   step("wait", { termination_reason: waited.termination_reason ?? null });
   const settled = await Promise.all(ids.map((id) => settle(id)));
   for (const task of settled) assert.equal(task.status, "completed", `worker ${task.id} ended ${task.status}: ${JSON.stringify(task).slice(0, 600)}`);
+  // The flow is only a test of this runner if the workers really ran on it.
+  for (const task of settled) assert.equal(task.worker, RUNNER ?? "codex", `worker ${task.id} ran on ${task.worker}`);
   step("settled", { statuses: settled.map((task) => task.status) });
 
   for (const [index, id] of ids.entries()) {

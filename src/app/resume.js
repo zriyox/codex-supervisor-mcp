@@ -111,7 +111,7 @@ async function resumeClaimed(claimed, { prompt, rebaseOnto, acceptance }) {
     prompt: frameWorkerPrompt(prompt, {
       objective: task.goal_objective ?? task.title ?? task.id,
       resume: true
-    }, { acceptance: task.acceptance, outputSchema }),
+    }, { acceptance: task.acceptance, outputSchema, nativeGoal: runner.capabilities.native_goal }),
     logPath: task.run_log,
     outputSchema,
     spawnOptions: { cwd }

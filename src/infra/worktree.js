@@ -13,7 +13,7 @@
 import { branchOf } from "../domain/worker-branch.js";
 import { runGit } from "./git.js";
 import { existsSync, lstatSync, readFileSync, realpathSync } from "node:fs";
-import { join, relative, resolve } from "node:path";
+import { basename, dirname, join, relative, resolve } from "node:path";
 import { truncateMiddleChars } from "../domain/truncate.js";
 import { createHash } from "node:crypto";
 
@@ -263,20 +263,24 @@ function statusWord(code) {
   }
 }
 
-// A CLI may name a file through a different path than git does (on macOS a
-// temp directory is both /var/... and /private/var/...). One file is listed once.
-function sameFileKey(path) {
+// A CLI may name a file through a different path than git does: relative to
+// the worktree, or through another name for the same directory (on macOS a
+// temp directory is both /var/... and /private/var/...). One file is listed
+// once. The directory is resolved and the name kept, so a deleted file is
+// still matched and a symlink is not folded into its target.
+function sameFileKey(path, root) {
+  const absolute = root ? resolve(root, path) : resolve(path);
   try {
-    return realpathSync(path);
+    return join(realpathSync(dirname(absolute)), basename(absolute));
   } catch {
-    return path; // deleted or never there: the name is all there is
+    return absolute; // the directory is gone too: the name is all there is
   }
 }
 
-export function mergeChangedFiles(existing, discovered) {
+export function mergeChangedFiles(existing, discovered, root = null) {
   const seen = new Map();
   for (const path of [...(existing ?? []), ...(discovered ?? [])]) {
-    const key = sameFileKey(path);
+    const key = sameFileKey(path, root);
     if (!seen.has(key)) seen.set(key, path);
   }
   return [...seen.values()];
@@ -293,7 +297,8 @@ export function worktreeRef(task) {
 }
 
 export function readTaskChanges(task) {
-  return filterWorkspaceSetupChanges(task, mergeChangedFiles(task.changed_files, readWorktreeChanges(task.worktree_path, worktreeRef(task))));
+  const observed = readWorktreeChanges(task.worktree_path, worktreeRef(task));
+  return filterWorkspaceSetupChanges(task, mergeChangedFiles(task.changed_files, observed, task.worktree_path ?? task.cwd));
 }
 
 // Compare output at this run's start/end, rather than treating the previous

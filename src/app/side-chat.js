@@ -234,12 +234,27 @@ async function settleSideTurn(live, taskId, code, signal) {
   return status;
 }
 
+// For a caller that only wants to know whether to offer the question box.
+export function supportsSideChat(task) {
+  try {
+    return runnerOf(task).capabilities.side_chat === true;
+  } catch {
+    return false; // a runner this process has not loaded
+  }
+}
+
+// Checked before a session row is opened, so a runner without a side chat leaves nothing behind.
+export async function requireSideChat(task) {
+  const runner = await loadRunner(task.worker);
+  if (!runner.capabilities.side_chat) throw unsupported(runner, "side_chat", "asking a worker a side question");
+  return runner;
+}
+
 // Start a turn. `res` (optional) becomes the first watcher. Resolves when the
 // turn has ended, however it ended.
 export async function runSideTurn({ task, text, res = null, fresh = false }) {
   await sweepOnce();
-  const runner = await loadRunner(task.worker);
-  if (!runner.capabilities.side_chat) throw unsupported(runner, "side_chat", "asking a worker a side question");
+  const runner = await requireSideChat(task);
   if (!task.thread_id) throw Object.assign(new Error("this worker recorded no thread_id, so there is no thread to fork"), { code: "no_thread" });
   if (running.has(task.id)) throw Object.assign(new Error("a side turn is already running for this worker"), { code: "busy" });
   const target = runner.resolveTarget();
@@ -298,6 +313,7 @@ export async function latestSideTurn(taskId) {
 export async function askWorker({ task, question, timeoutMs = 110000, fresh = false }) {
   // Decided here, before the race, so a turn that outruns the budget still
   // reports whether the fork was taken anew.
+  await requireSideChat(task);
   const { refreshed } = await prepareSideSession(task, { fresh });
   const turn = runSideTurn({ task, text: question });
   // runSideTurn throws synchronously-ish (rejected promise) for no_thread,
@@ -336,9 +352,10 @@ export async function endSideSession(taskId) {
   if (!row) return { ended: false };
   let deleted = false;
   if (row.fork_thread_id) {
+    // The task may be gone and its runner not loaded here; then the fork is left to the CLI's own housekeeping.
     const stored = await getTask(taskId);
-    const runner = runnerOf(stored);
-    const target = runner.resolveTarget();
+    const runner = stored ? await loadRunner(stored.worker).catch(() => null) : null;
+    const target = runner?.capabilities.side_chat ? runner.resolveTarget() : { error: "no runner" };
     if (!target.error) {
       deleted = await new Promise((resolve) => {
         // --force: without a terminal codex asks for confirmation and exits.

@@ -20,7 +20,7 @@ export const CAPABILITIES = ["os_sandbox", "resume", "side_chat", "tool_guard", 
 
 const REQUIRED = ["resolveTarget", "capabilityPreflight", "startArgs", "launchArgs", "toEvents", "parseEvent", "cancelChild", "cancelPid", "ownsPid"];
 // Members a runner must have once it declares the capability.
-const BY_CAPABILITY = { resume: ["resumeArgs"], side_chat: ["sideChat"], native_goal: ["nativeGoal", "nativeGoalState"] };
+const BY_CAPABILITY = { resume: ["resumeArgs"], side_chat: ["sideChat", "start"], native_goal: ["nativeGoal", "nativeGoalState"] };
 
 // Throws with every problem at once, so a runner author fixes them in one pass.
 export function assertRunner(runner, source = "runner") {

@@ -19,6 +19,11 @@ export function evaluateClaudeToolUse(event, policy) {
     return evaluateToolUse({ ...event, tool_name: "apply_patch", tool_input: { command: `*** Begin Patch\n*** Update File: ${path}\n*** End Patch` } }, policy);
   }
   if (tool === "Bash") {
+    // The shared rules accept a patch written through the shell and judge it by
+    // the sandbox; the override below would hide that this worker is read-only.
+    if (policy.sandbox === "read-only" && /\bapply_patch\b/.test(String(event.tool_input?.command ?? ""))) {
+      return deny("read-only worker: only read commands run; report the change instead of making it");
+    }
     // With an OS sandbox a worker that lands nothing may run anything, since
     // the sandbox stops its writes. Here nothing would, so the allowlist
     // always applies: that is what danger-full-access means to the shared rules.

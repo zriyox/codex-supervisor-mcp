@@ -8,11 +8,17 @@ import { readAgentMessages } from "../../../infra/store/events.js";
 import { baseBehind, readTaskChanges, readWorktreeDiff, splitPatchHunks, workspaceSetupIgnorePaths, worktreeRef } from "../../../infra/worktree.js";
 import { summarizeVerification } from "../../../runners/codex/event-parser.js";
 import { readNativeGoal } from "../../../infra/store/runner-readers.js";
-import { runnerOf } from "../../../runners/registry.js";
+import { loadRunner } from "../../../runners/registry.js";
 import { textResult } from "../result.js";
 import { buildWorkerSummary, externalOutputView, reportView, runEvidenceView } from "../views/overview.js";
 import { acceptanceView } from "../views/task.js";
 import { z } from "zod";
+
+// A runner with no native goal, or one this process cannot load, has none to read.
+async function nativeGoalRead(task) {
+  const runner = await loadRunner(task.worker).catch(() => null);
+  return runner?.capabilities.native_goal ? runner.nativeGoalState(task.thread_id) : { state: "unsupported", goal: null };
+}
 
 export const getWorkerGoalOp = {
   input: z.object({
@@ -30,7 +36,7 @@ export const getWorkerGoalOp = {
       goal_status: task.goal_status,
       needs_attention: isGoalNeedingAttention(task.goal_status),
       native_goal: readNativeGoal(task.thread_id, task.worker),
-      native_goal_read: runnerOf(task).capabilities.native_goal ? runnerOf(task).nativeGoalState(task.thread_id) : { state: "unsupported", goal: null }
+      native_goal_read: await nativeGoalRead(task)
     });
   }
 };

@@ -66,6 +66,10 @@ export async function createFollowupWorker(options) {
   const { ownedPaths, goal, baseRef, acceptance, acceptanceTimeoutMs, workspaceKind, inPlaceAuthorization, workspaceSetup } = options;
   const parent = await getTask(taskId);
   if (!parent) throw new Error(`task not found: ${taskId}`);
+  // A follow-up continues the parent's session, which only the parent's CLI can open.
+  if (options.runner && options.runner !== (parent.worker ?? "codex")) {
+    throw Object.assign(new Error(`a follow-up runs on its parent's runner (${parent.worker}); dispatch a new worker to use ${options.runner}`), { code: "invalid_arguments" });
+  }
   const inheritedBaseRef = followupBaseRef(parent, baseRef);
   const recentEvents = await readTaskEvents(taskId, 20);
   const inheritedAcceptance = parent.session_policy_revision == null ? parent.acceptance : parent.acceptance_local;

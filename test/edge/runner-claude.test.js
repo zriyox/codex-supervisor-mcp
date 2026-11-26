@@ -41,6 +41,11 @@ test("a claude worker runs, reports, lands nothing outside its paths and resumes
     // What this runner cannot do is refused by name, not attempted.
     const asked = await call("ask_worker", { task_id: worker.id, question: "what did you do?" });
     assert.equal(asked.error, "unsupported", JSON.stringify(asked));
+    // The prompt names the objective and no goal tool this CLI does not have, and stage checkpoints take its id.
+    const { prompt } = await call("get_worker", { task_id: worker.id, include: ["status", "prompt"] });
+    assert.doesNotMatch(String(prompt), /create_goal|update_goal/);
+    const followup = await call("create_worker", { task: "continue on another CLI", followup_of: worker.id, runner: "codex" });
+    assert.match(JSON.stringify(followup), /parent's runner/);
     const scratch = await call("create_worker", dispatchArgs("claude scratch", dir, { runner: "claude", workspace: { kind: "scratch" }, sandbox: { mode: "workspace-write" }, owned_paths: [] }));
     assert.match(JSON.stringify(scratch), /no OS sandbox/);
   });

@@ -116,7 +116,7 @@ export function buildReportPreamble({ resume = false, acceptance = null, outputS
   }
   return withAcceptance([
     "Final report (your last message), under 2000 characters, in the language of the task. Quoted command output does not count toward the limit.",
-    `Return JSON with exactly result:string, verification:string[], not_done:string[]; ${outputSchema ? "--output-schema enforces these fields" : "no output schema is active, so follow this shape exactly"}. Cover the following content in those fields.`,
+    `Return JSON with exactly result:string, verification:string[], not_done:string[]; ${outputSchema ? "an output schema enforces these fields" : "no output schema is active, so follow this shape exactly"}. Cover the following content in those fields.`,
     "Write that JSON value on its own: no markdown code fences and nothing before or after it.",
     "Keep each verification entry concise: command name, exit code and key evidence; avoid embedding long quoted shell source. Ensure arrays and the object are fully closed and all strings use valid JSON escaping.",
     "1. Result: what is done, in two or three sentences. Say plainly what is not done.",
@@ -134,8 +134,12 @@ export function withGoalPreamble(prompt, goalOptions) {
 }
 
 // The whole frame: goal in front, task text, report format at the end.
-export function frameWorkerPrompt(prompt, goalOptions, { acceptance = null, outputSchema = true } = {}) {
-  return `${withGoalPreamble(prompt, goalOptions)}\n\n${buildReportPreamble({ resume: Boolean(goalOptions?.resume), acceptance, outputSchema })}`;
+// nativeGoal false is a CLI with no goal of its own: it is told the objective
+// in a line, not to call goal tools it does not have.
+export function frameWorkerPrompt(prompt, goalOptions, { acceptance = null, outputSchema = true, nativeGoal = true } = {}) {
+  const plainObjective = !goalOptions?.resume && goalOptions?.objective ? `Objective: ${goalOptions.objective}\n\n${prompt}` : prompt;
+  const framed = nativeGoal ? withGoalPreamble(prompt, goalOptions) : plainObjective;
+  return `${framed}\n\n${buildReportPreamble({ resume: Boolean(goalOptions?.resume), acceptance, outputSchema })}`;
 }
 
 // Claude's native /goal owns its Stop condition. MCP cannot silently replace

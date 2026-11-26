@@ -40,7 +40,7 @@ async function handleLines(run, lines) {
   // whole of it, so the log comes first and a failed write keeps the event whole.
   const inLog = (await Promise.all(logged.map((entry) => entry.written))).every(Boolean) && !run.logFailed;
   const storedEvents = await appendTaskEvents(run.record.id, events, {
-    runId: run.runId, actor: "codex", bodyInLog: inLog, logOffsets: logged.map((entry) => entry.offset)
+    runId: run.runId, actor: runner.name, bodyInLog: inLog, logOffsets: logged.map((entry) => entry.offset)
   });
   let next = run.live;
   for (const [index, event] of events.entries()) {

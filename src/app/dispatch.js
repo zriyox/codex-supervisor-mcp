@@ -379,7 +379,7 @@ export async function createCodexWorker(rawInput) {
     prompt: frameWorkerPrompt(task, {
       objective: validatedGoal.objective,
       tokenBudget: validatedGoal.tokenBudget
-    }, { acceptance: combinedAcceptance, outputSchema: true }),
+    }, { acceptance: combinedAcceptance, outputSchema: true, nativeGoal: runner.capabilities.native_goal }),
     logPath: record.run_log,
     outputSchema: true,
     // --cd tells Codex where the agent works. The shell/tool process must also

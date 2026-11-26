@@ -8,7 +8,7 @@ import { join } from "node:path";
 
 const args = process.argv.slice(2);
 if (args.includes("--help")) {
-  console.log("Usage: claude [options]\n  -p, --print\n  --output-format <format>\n  --json-schema <schema>\n  --settings <file-or-json>\n  -r, --resume [value]");
+  console.log("Usage: claude [options]\n  -p, --print\n  --output-format <format>\n  --json-schema <schema>\n  --settings <file-or-json>\n  -r, --resume [value]\n  --permission-mode <mode>\n  --strict-mcp-config\n  --disallowedTools, --disallowed-tools <tools...>");
   process.exit(0);
 }
 if (process.env.FAKE_CLAUDE_ARGS_LOG) appendFileSync(process.env.FAKE_CLAUDE_ARGS_LOG, `${JSON.stringify(args)}\n`);
