@@ -5,22 +5,22 @@
 [![npm version](https://img.shields.io/npm/v/agent-supervisor-mcp.svg)](https://www.npmjs.com/package/agent-supervisor-mcp)
 [![npm downloads](https://img.shields.io/npm/dm/agent-supervisor-mcp.svg)](https://www.npmjs.com/package/agent-supervisor-mcp)
 [![license](https://img.shields.io/npm/l/agent-supervisor-mcp.svg)](LICENSE)
-[![CI](https://github.com/zriyox/codex-supervisor-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/zriyox/codex-supervisor-mcp/actions/workflows/ci.yml)
+[![CI](https://github.com/zriyox/agent-supervisor-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/zriyox/agent-supervisor-mcp/actions/workflows/ci.yml)
 [![node](https://img.shields.io/badge/node-%3E%3D22.13.0-339933.svg)](package.json)
 
-官网 [codex-supervisor.zriyo.com](https://codex-supervisor.zriyo.com) · 给模型读的 [llms.txt](https://codex-supervisor.zriyo.com/llms.txt) · [参考手册](docs/reference.md)
+官网 [agent-supervisor.zriyo.com](https://agent-supervisor.zriyo.com) · 给模型读的 [llms.txt](https://agent-supervisor.zriyo.com/llms.txt) · [参考手册](docs/reference.md)
 
 让几个 agent 同时改一个仓库，结果是互相覆盖，没人说得清谁改了什么，主线程的上下文还被 worker 的输出塞满。
 
 agent-supervisor-mcp 是一个 MCP server。主线程（Claude Code、Codex 或任何 MCP 客户端）用它同时指挥多个 Codex CLI worker：一个 worker 一个 Git worktree，状态写进 SQLite，另有一个网页看板。派单和记账都在磁盘上，不占模型上下文。
 
-![演示：一个 Claude Code 主线程同时派 3 个 Codex worker，各自独立 worktree，并行跑完后合并提交](https://raw.githubusercontent.com/zriyox/codex-supervisor-mcp/main/assets/demo.gif)
+![演示：一个 Claude Code 主线程同时派 3 个 Codex worker，各自独立 worktree，并行跑完后合并提交](https://raw.githubusercontent.com/zriyox/agent-supervisor-mcp/main/assets/demo.gif)
 
 *30 秒真跑：派 3 个 worker，各自 worktree 并行，主线程收 3 份 diff 合成一次 commit。*
 
 > **这个包以前叫 codex-supervisor-mcp**。改名是因为 worker 不再只是 Codex。装着旧包的机器会被它的最后一版自动带过来：装上本包、把 MCP 注册和 skill 换成 `agent-supervisor`，状态目录原地不动。命令行工具的前缀从 `codex-supervisor-` 变成 `agent-supervisor-`。
 >
-> **从 0.x 升级到 1.x**：工具从 39 个收成 14 个，名字和参数都换了，旧名不留别名。升级前先把在跑的 worker 收完，升级后重开会话让新 skill 生效。对照表在[参考手册](docs/reference.md)，变更说明在 [1.0.0 release](https://github.com/zriyox/codex-supervisor-mcp/releases/tag/v1.0.0)。
+> **从 0.x 升级到 1.x**：工具从 39 个收成 14 个，名字和参数都换了，旧名不留别名。升级前先把在跑的 worker 收完，升级后重开会话让新 skill 生效。对照表在[参考手册](docs/reference.md)，变更说明在 [1.0.0 release](https://github.com/zriyox/agent-supervisor-mcp/releases/tag/v1.0.0)。
 
 ## 解决什么
 
@@ -53,7 +53,7 @@ claude mcp add -s user agent-supervisor -- npx -y agent-supervisor-mcp
 codex mcp add agent-supervisor -- npx -y agent-supervisor-mcp
 ```
 
-Claude Desktop、Cursor、Windsurf 这类 GUI 客户端要自己改 MCP 配置，写法在[参考手册](docs/reference.md#环境变量)。只要 skill 不要 MCP：`npx skills add zriyox/codex-supervisor-mcp`。
+Claude Desktop、Cursor、Windsurf 这类 GUI 客户端要自己改 MCP 配置，写法在[参考手册](docs/reference.md#环境变量)。只要 skill 不要 MCP：`npx skills add zriyox/agent-supervisor-mcp`。
 
 然后在 Claude Code 里说人话：
 
@@ -200,7 +200,7 @@ npm run web:dev        # 看板开发，/api 代理到 7877
 
 CI 跑 Ubuntu、macOS、Windows，外加一个 Node 22.13.0 的 job 卡住 `engines` 下界。
 
-贡献看 [CONTRIBUTING.md](CONTRIBUTING.md)。安全问题走[私密通道](https://github.com/zriyox/codex-supervisor-mcp/security/advisories/new)，见 [SECURITY.md](SECURITY.md)。
+贡献看 [CONTRIBUTING.md](CONTRIBUTING.md)。安全问题走[私密通道](https://github.com/zriyox/agent-supervisor-mcp/security/advisories/new)，见 [SECURITY.md](SECURITY.md)。
 
 ## License
 

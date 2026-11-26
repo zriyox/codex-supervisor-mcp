@@ -4,7 +4,7 @@ labels: ["bug"]
 body:
   - type: markdown
     attributes:
-      value: "Security problem? Use the [private advisory form](https://github.com/zriyox/codex-supervisor-mcp/security/advisories/new) instead."
+      value: "Security problem? Use the [private advisory form](https://github.com/zriyox/agent-supervisor-mcp/security/advisories/new) instead."
   - type: input
     id: version
     attributes:

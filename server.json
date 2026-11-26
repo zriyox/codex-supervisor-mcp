@@ -3,16 +3,16 @@
   "name": "io.github.zriyox/agent-supervisor-mcp",
   "description": "Parallel Codex CLI or Claude Code workers from any MCP client: one git worktree each, 14 tools.",
   "repository": {
-    "url": "https://github.com/zriyox/codex-supervisor-mcp",
+    "url": "https://github.com/zriyox/agent-supervisor-mcp",
     "source": "github"
   },
-  "websiteUrl": "https://codex-supervisor.zriyo.com",
-  "version": "2.0.0",
+  "websiteUrl": "https://agent-supervisor.zriyo.com",
+  "version": "2.0.1",
   "packages": [
     {
       "registryType": "npm",
       "identifier": "agent-supervisor-mcp",
-      "version": "2.0.0",
+      "version": "2.0.1",
       "transport": {
         "type": "stdio"
       },

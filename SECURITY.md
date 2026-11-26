@@ -2,7 +2,7 @@
 
 Supported: the latest published version on npm. Older versions get no fixes; the server updates itself in the background, so staying current costs nothing.
 
-Report a vulnerability through GitHub's private advisory form: https://github.com/zriyox/codex-supervisor-mcp/security/advisories/new. Do not open a public issue for it.
+Report a vulnerability through GitHub's private advisory form: https://github.com/zriyox/agent-supervisor-mcp/security/advisories/new. Do not open a public issue for it.
 
 Include the version (`poll_workers` prints it), the platform, how the server is launched, and steps to reproduce. Expect a first reply within a week.
 

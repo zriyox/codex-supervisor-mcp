@@ -1,17 +1,17 @@
 {
   "name": "agent-supervisor-mcp",
-  "version": "2.0.0",
-  "mcpName": "io.github.zriyox/codex-supervisor-mcp",
+  "version": "2.0.1",
+  "mcpName": "io.github.zriyox/agent-supervisor-mcp",
   "type": "module",
   "description": "MCP server that runs parallel Codex CLI or Claude Code workers from any MCP client: one Git worktree each, 14 tools to dispatch, track, check, land and clean up, state on disk.",
-  "homepage": "https://codex-supervisor.zriyo.com",
+  "homepage": "https://agent-supervisor.zriyo.com",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/zriyox/codex-supervisor-mcp.git"
+    "url": "git+https://github.com/zriyox/agent-supervisor-mcp.git"
   },
   "bugs": {
-    "url": "https://github.com/zriyox/codex-supervisor-mcp/issues"
+    "url": "https://github.com/zriyox/agent-supervisor-mcp/issues"
   },
   "keywords": [
     "mcp",
