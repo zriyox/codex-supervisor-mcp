@@ -1,0 +1,34 @@
+name: MCP Registry
+
+# Publishes server.json to the official MCP Registry. The registry trusts this
+# repository's own identity (GitHub OIDC), so no token is stored and nobody has
+# to sign in by hand. Runs when a release is published, or on demand.
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    # The last release under the old package name comes from another branch and has its own entry.
+    if: github.event_name == 'workflow_dispatch' || !startsWith(github.event.release.tag_name, 'v1.')
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check that npm has the version server.json names
+        run: |
+          name=$(node -p "require('./server.json').packages[0].identifier")
+          version=$(node -p "require('./server.json').packages[0].version")
+          npm view "$name@$version" version
+      - name: Install mcp-publisher
+        run: |
+          curl -fsSL "https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_linux_amd64.tar.gz" | tar xz mcp-publisher
+          ./mcp-publisher --version
+      - name: Sign in with this repository's identity
+        run: ./mcp-publisher login github-oidc
+      - name: Publish
+        run: ./mcp-publisher publish
