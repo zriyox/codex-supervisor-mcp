@@ -58,7 +58,11 @@ const transport = new StdioClientTransport({
 });
 const client = new Client({ name: "supervisor-e2e", version: "1.0.0" });
 await client.connect(transport);
-const call = async (name, args = {}) => {
+// E2E_RUNNER=claude runs the same flow with Claude Code workers.
+const RUNNER = process.env.E2E_RUNNER ?? null;
+const call = async (name, given = {}) => {
+  const dispatches = name === "create_worker" || (name === "preflight_worker" && given.probe_commands);
+  const args = RUNNER && dispatches ? { ...given, runner: RUNNER } : given;
   const reply = await client.callTool({ name, arguments: args }, undefined, { timeout: 180000 });
   const text = reply.content?.[0]?.text ?? "null";
   try { return JSON.parse(text); } catch { return { raw: text }; }
@@ -276,6 +280,6 @@ try {
   await client.close().catch(() => {});
 }
 
-console.log(JSON.stringify({ ok: !failure, package: PACKAGE, version: installed.version, home, error: failure?.message ?? null, steps }, null, 2));
+console.log(JSON.stringify({ ok: !failure, runner: RUNNER ?? "codex", package: PACKAGE, version: installed.version, home, error: failure?.message ?? null, steps }, null, 2));
 if (!keep && !failure) await rm(home, { recursive: true, force: true });
 process.exitCode = failure ? 1 : 0;
