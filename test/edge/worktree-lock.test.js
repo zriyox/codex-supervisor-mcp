@@ -22,12 +22,18 @@ test("a lock left by a dead process is taken over, a live holder's is waited for
   assert.equal(await withWorktreeCreationLock(repo, async () => "ran"), "ran");
   assert.ok(Date.now() - started < 5000, "the dead holder's lock was not waited out");
 
-  const order = [];
-  const first = withWorktreeCreationLock(repo, async () => {
-    order.push("first in");
-    await new Promise((done) => setTimeout(done, 300));
-    order.push("first out");
+  // Which waiter gets a free lock first is not defined; that only one holds it is.
+  let holders = 0;
+  let most = 0;
+  const hold = () => withWorktreeCreationLock(repo, async () => {
+    holders += 1;
+    most = Math.max(most, holders);
+    await new Promise((done) => setTimeout(done, 150));
+    holders -= 1;
   });
+  await Promise.all([hold(), hold(), hold()]);
+  assert.equal(most, 1);
+});
   const second = withWorktreeCreationLock(repo, async () => order.push("second in"));
   await Promise.all([first, second]);
   assert.deepEqual(order, ["first in", "first out", "second in"]);
