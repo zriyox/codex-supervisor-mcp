@@ -248,6 +248,28 @@ try {
   const victimResult = await call("get_worker", { task_id: victim.id, include: ["result"] });
   assert.equal(victimResult.acceptance?.passed, true, `the recovered run did not finish the work: ${JSON.stringify(victimResult.acceptance).slice(0, 400)}`);
   step("killed run host", { killed: hosts.length + 1, recovered, polls, status: victimSettled.status, runs: victimSettled.run_count });
+
+  // A command with a large output: the store keeps a clipped copy, the full body comes back from the run log.
+  const noisy = await call("create_worker", {
+    cwd: repo, sandbox: { mode: "read-only" }, owned_paths: [], workspace: { kind: "read_only_in_place" },
+    title: "prints a lot",
+    task: "Run exactly this shell command once and then reply with the single word done: seq 1 6000",
+    goal: { objective: "the command seq 1 6000 was run" },
+    session: { id: session }
+  });
+  assert.ok(noisy.id, `create failed: ${JSON.stringify(noisy).slice(0, 600)}`);
+  await settle(noisy.id);
+  const { DatabaseSync } = await import("node:sqlite");
+  const db = new DatabaseSync(join(home, "data", "supervisor.sqlite"), { readOnly: true });
+  const storedRows = db.prepare("SELECT payload FROM task_events WHERE task_id = ? AND payload LIKE '%supervisor_clipped%'").all(noisy.id);
+  db.close();
+  assert.ok(storedRows.length > 0, "no event of the noisy worker was clipped in the store");
+  const clippedBytes = Math.max(...storedRows.map((row) => row.payload.length));
+  const read = await call("get_worker", { task_id: noisy.id, include: ["events"], event_limit: 200 });
+  const whole = (read.events ?? []).filter((event) => event.item?.aggregated_output?.includes("\n5999\n6000") && event.item.aggregated_output.includes("\n3000\n"));
+  assert.ok(whole.length > 0, "the full command output did not come back from the log");
+  assert.ok(!(read.events ?? []).some((event) => event.supervisor_clipped), "an event came back clipped");
+  step("event bodies", { clipped_rows: storedRows.length, stored_bytes: clippedBytes, restored_bytes: JSON.stringify(whole[0]).length });
 } catch (error) {
   failure = error;
 } finally {
