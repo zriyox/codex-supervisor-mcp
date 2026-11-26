@@ -255,7 +255,8 @@ try {
 
   // A command with a large output: the store keeps a clipped copy, the full body comes back from the run log.
   const noisy = await call("create_worker", {
-    cwd: repo, sandbox: { mode: "read-only" }, owned_paths: [], workspace: { kind: "read_only_in_place" },
+    // Declared, because a runner without an OS sandbox runs only reads and declared commands.
+    cwd: repo, sandbox: { mode: "read-only", allowed_commands: ["seq 1 6000"] }, owned_paths: [], workspace: { kind: "read_only_in_place" },
     title: "prints a lot",
     task: "Run exactly this shell command once and then reply with the single word done: seq 1 6000",
     goal: { objective: "the command seq 1 6000 was run" },
