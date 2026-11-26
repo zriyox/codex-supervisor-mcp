@@ -168,7 +168,7 @@ node "$AGENT_SUPERVISOR_STAGE_CLI" "gate:s3" --detail "integration queue"
 |---|---|
 | `data/supervisor.sqlite` | `tasks`（一行一个 work）、`task_events`、`sessions`、`side_sessions` / `side_turns`（旁问） |
 | `data/crash.log` | MCP 进程、run host、看板的未捕获异常，一行一条 JSON。工具突然全部 `Connection closed` 时先看这里 |
-| `data/runs/<taskId>.jsonl` | Codex `--json` 的原始输出。超过 2KB 的事件（主要是命令输出）全文只在这里，`task_events` 里是截断摘要；`get_worker` 读 `events` 不带 `max_chars` 时从这里取回全文，文件没了就返回摘要并标 `body.missing` |
+| `data/runs/<taskId>.jsonl` | Codex `--json` 的原始输出。超过 2KB 的事件（主要是命令输出）全文只在这里，`task_events` 里是截断摘要；`get_worker` 读 `events` 不带 `max_chars` 时从这里取回全文，文件没了就返回摘要并标 `supervisor_clipped.missing` |
 | `data/update-check.json`、`auto-update.json` | 更新检查和后台更新的记录 |
 | `worktrees/<taskId>/` | 该 worker 的 Git worktree |
 

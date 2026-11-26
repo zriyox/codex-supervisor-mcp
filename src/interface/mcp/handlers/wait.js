@@ -2,6 +2,7 @@ import { acceptanceVerdict } from "../../../app/acceptance.js";
 import { ACTIVE_STATUSES } from "../../../domain/status.js";
 import { truncateEventStrings } from "../../../domain/truncate.js";
 import { getTasks } from "../../../infra/store/tasks.js";
+import { restoreEventBodies } from "../../../infra/store/event-body.js";
 import { readTaskEvents } from "../../../infra/store/events.js";
 import { reconcileDetachedActiveTasks } from "../../../infra/store/reconcile.js";
 import { readTaskChanges } from "../../../infra/worktree.js";
@@ -63,9 +64,9 @@ function fullWorkerRows(tasks, { includeEvents, eventLimit, eventMaxChars, event
     tasks.map(async (task) => ({
       ...summarizeTask(task),
       recent_events: includeEvents
-        ? await readTaskEvents(task.id, eventLimit, eventKinds ?? null).then((events) =>
-            eventMaxChars === undefined ? events : events.map((event) => truncateEventStrings(event, eventMaxChars))
-          )
+        ? await readTaskEvents(task.id, eventLimit, eventKinds ?? null)
+          .then((stored) => restoreEventBodies(stored, task.run_log))
+          .then((events) => (eventMaxChars === undefined ? events : events.map((event) => truncateEventStrings(event, eventMaxChars))))
         : undefined
     }))
   );

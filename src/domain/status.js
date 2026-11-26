@@ -40,10 +40,11 @@ export function isGoalNeedingAttention(nativeStatus) {
 }
 
 // True once nothing of a worker's last run can still be running: its exit
-// code is recorded (the last thing a run host writes), or the row was marked
+// code or the signal that ended it is recorded (the last thing a run host
+// writes), or the row was marked
 // lost (done only after both processes were seen gone). From then on the pids
 // on the row are history. The system hands them to other processes, on
 // Windows within seconds, and a live stranger must not read as a live worker.
 export function runIsOver(task) {
-  return task.status === "lost" || (TERMINAL_STATUSES.has(task.status) && task.exit_code != null);
+  return task.status === "lost" || (TERMINAL_STATUSES.has(task.status) && (task.exit_code != null || task.signal != null));
 }

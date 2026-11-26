@@ -93,8 +93,8 @@ export const getCodexWorkerEventsOp = {
     const task = await getTask(task_id);
     if (!task) return textResult({ error: "task_not_found", task_id });
     const stored = await readTaskEvents(task_id, limit, kinds ?? null);
-    // Large bodies live in the run log only; they are fetched when the caller did not ask for a clipped view.
-    const events = maxChars === undefined ? await restoreEventBodies(stored, task.run_log) : stored;
+    // Large bodies live in the run log only; max_chars then cuts the whole event, as it always did.
+    const events = await restoreEventBodies(stored, task.run_log);
     const trimmed = maxChars === undefined ? events : events.map((event) => truncateEventStrings(event, maxChars));
     return textResult({
       task_id,

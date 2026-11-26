@@ -21,7 +21,10 @@ test("a large logged event is stored clipped and read back whole from the log", 
   const logPath = join(home, "run.jsonl");
   await mkdir(home, { recursive: true });
   await writeFile(logPath, [command, report, small].map((event) => `${JSON.stringify(event)}\n`).join(""));
-  await appendTaskEvents("w1", [command, report, small], { actor: "codex", bodyInLog: true });
+  const lines = [command, report, small].map((event) => `${JSON.stringify(event)}\n`);
+  // Offsets as the run host records them; the last one is deliberately wrong to show the reader still finds the line.
+  const logOffsets = [0, Buffer.byteLength(lines[0]), 7];
+  await appendTaskEvents("w1", [command, report, small], { actor: "codex", bodyInLog: true, logOffsets });
   // The supervisor's own events are in no log and are never clipped.
   await appendTaskEvents("w1", [{ type: "supervisor.acceptance", checks: [{ output_tail: "y".repeat(9000) }] }]);
 
@@ -35,12 +38,12 @@ test("a large logged event is stored clipped and read back whole from the log", 
   const stored = await readTaskEvents("w1", 10);
   assert.equal(stored[0].item.command, "npm run build", "the clipped copy is still the event");
   assert.equal(stored[0].item.exit_code, 0);
-  assert.equal(stored[0].body.stored, "jsonl");
+  assert.equal(stored[0].supervisor_clipped.stored, "jsonl");
   const restored = await restoreEventBodies(stored, logPath);
   assert.deepEqual(restored.slice(0, 3), [command, report, small]);
 
   await rm(logPath);
   const withoutLog = await restoreEventBodies(stored, logPath);
-  assert.equal(withoutLog[0].body.missing, true, "a lost log leaves the clipped copy and says so");
+  assert.equal(withoutLog[0].supervisor_clipped.missing, true, "a lost log leaves the clipped copy and says so");
   assert.equal(withoutLog[0].item.command, "npm run build");
 });

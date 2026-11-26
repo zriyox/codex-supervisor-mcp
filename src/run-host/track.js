@@ -14,7 +14,7 @@ import { finalizeChild } from "./finalize.js";
 import { buildLaunch } from "./launch.js";
 import { persist, startingRow, watchQuota } from "./live-run.js";
 import { attachStreams } from "./streams.js";
-import { createWriteStream } from "node:fs";
+import { createWriteStream, statSync } from "node:fs";
 
 // Spawn can fail either by throwing synchronously, or by emitting "error"
 // instead of "spawn". Both paths are handled so a bad CODEX_BIN marks the task
@@ -108,8 +108,11 @@ export async function trackRunInHost({ record, args, prompt, logPath, spawnOptio
   run.quotaWatch = watchQuota(run, now);
   await persist(run, run.live);
   run.runId = await ensureRunRecord(run.live, run.live.run_count);
+  // Where the next line will start, so a stored event can say where its full body is.
+  run.logOffset = statSync(logPath, { throwIfNoEntry: false })?.size ?? 0;
   run.logStream = createWriteStream(logPath, { flags: "a" });
-  run.logStream.on("error", () => {});
+  // A log that cannot be written is not the place to keep the only copy of anything.
+  run.logStream.on("error", () => { run.logFailed = true; });
   child.stdin.on("error", (error) => { noteStdinFailure(run, error); });
   attachStreams(run, earlyOutput);
 

@@ -162,7 +162,8 @@ export async function recoverEligibleRuns() {
       || (!runIsOver(task) && (await isPidAlive(task.pid) || await isPidAlive(task.run_host_pid)))
       // Something of the dead run is still alive and holds the session;
       // resuming now fails with "already has an active writer". A later poll retries.
-      || isGroupAlive(task.run_host_pid)) continue;
+      // A recorded exit is the one thing that rules a survivor out.
+      || (task.exit_code == null && isGroupAlive(task.run_host_pid))) continue;
     const session = task.session_id ? await getSession(task.session_id) : null;
     if (session?.approval_state === "waiting_user") continue;
     try {

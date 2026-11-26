@@ -51,9 +51,10 @@ export async function completeRunRecord(task, attempt) {
   }));
 }
 
-// bodyInLog: the caller has written each event to the run log, so a large one
-// need not be kept whole here as well.
-export async function appendTaskEvents(taskId, events, { runId = null, actor = "supervisor", bodyInLog = false } = {}) {
+// bodyInLog: each event is already in the run log (the caller waited for the
+// write), so a large one need not be kept whole here as well. logOffsets says
+// where each line starts.
+export async function appendTaskEvents(taskId, events, { runId = null, actor = "supervisor", bodyInLog = false, logOffsets = [] } = {}) {
   await ensureFilesystem();
   if (!Array.isArray(events) || events.length === 0) return [];
   const dbInstance = openDb();
@@ -67,7 +68,7 @@ export async function appendTaskEvents(taskId, events, { runId = null, actor = "
       `);
       const createdAt = new Date().toISOString();
       const records = events.map((event, index) => {
-        const stored = storedForm(event, { bodyInLog });
+        const stored = storedForm(event, { bodyInLog, offset: logOffsets[index] ?? null });
         const result = insert.run(taskId, runId, nextSeqRow.seq + index, createdAt, actor, event.type ?? "unknown", stored.payload, stored.sha256);
         return { id: Number(result.lastInsertRowid), run_id: runId, actor };
       });
