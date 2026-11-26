@@ -56,6 +56,6 @@ export async function projectOutcomeFacts(run, finalRecord, { acceptanceEventId 
   } catch (error) {
     await appendTaskEvent(finalRecord.id, { type: "supervisor.fact_record_failed", error: error.message, run: run.live.run_count },
       { runId: run.runId, actor: "supervisor" }).catch(() => null);
-    process.stderr.write(`[codex-supervisor] fact projection failed for ${finalRecord.id}: ${error.message}\n`);
+    process.stderr.write(`[agent-supervisor] fact projection failed for ${finalRecord.id}: ${error.message}\n`);
   }
 }

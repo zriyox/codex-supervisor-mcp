@@ -35,7 +35,7 @@ test("newer on the registry: overview, receipt and wait all carry the notice", a
     assert.equal(overview.version, packageVersion);
     assert.equal(overview.update.update_available, true);
     assert.equal(overview.update.latest_version, "9.9.9");
-    assert.match(overview.update.notice, /npm i -g codex-supervisor-mcp@latest/);
+    assert.match(overview.update.notice, /npm i -g agent-supervisor-mcp@latest/);
 
     const created = await call("create_worker", dispatchArgs("notice", join(home, "workspace")));
     assert.ok(created.id, JSON.stringify(created));

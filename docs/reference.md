@@ -66,7 +66,7 @@ worker 和 run host 都已退出时，当前 run 的 durable `turn.completed` �
 
 链式 landing 会跳过已证明在目标分支上的提交和零改动祖先；`ignore_acceptance` / `allow_outside_owned` 只作用于指定的 leaf，不自动扩大到祖先。
 
-普通 worker 启动时会关闭它继承到的 `codex-supervisor` MCP，不能再派 worker、resume、cancel 或改编排状态；主线程是唯一编排者。其他业务 MCP 不受影响；旁问 fork 仍关闭全部 MCP，因为它只允许只读回答。
+普通 worker 启动时会关闭它继承到的 `agent-supervisor` MCP，不能再派 worker、resume、cancel 或改编排状态；主线程是唯一编排者。其他业务 MCP 不受影响；旁问 fork 仍关闭全部 MCP，因为它只允许只读回答。
 
 `session.id` 只负责批次、默认门禁和审批，不再把同批 worker 的标题、汇报或 session objective 自动塞进新 worker。worker 只收到内部编译的 context capsule：L0 只标明 branch 与 acceptance 来源（不塞命令正文）、自身身份/任务、显式依赖的最小交付摘要和路径/SHA 命中的 verified facts；raw event、完整 diff、历史报告、candidate facts 都只可按需读取。repo fact 只有两个 checkout 的 canonical `origin`、repo-relative watched path 和 base SHA 同时匹配时才跨 checkout 可见；无可识别 origin 就保持 work-scoped。事实的 base SHA 不再覆盖、watched path 发生 Git diff、context 输入内容 hash 或非 Git in-place manifest 漂移时会自动追加 `expired` 版本并从 capsule 排除。主线程只看 `get_worker`，需要证据时再显式 `facts` / `get_worker` / `get_worker_diff`。
 
@@ -124,7 +124,7 @@ owned_paths 预留和任务入库在同一事务内，跨MCP并发派单/恢复�
 
 worktree 被清掉后，`resume_worker`、`land_worker`、`ask_worker`、`get_worker_diff` 会从分支把它重新切出来，`workspace.setup` 也会重做，所以清理不会让没做完的活接不回来。
 
-手动入口：`cleanup` 看判定和原因，`cleanup` 立刻清 SAFE 项；命令行是 `codex-supervisor-cleanup --dry-run` 和 `codex-supervisor-cleanup --apply --plan <plan_id> --item <item_id>`。`AGENT_SUPERVISOR_NO_AUTO_CLEANUP=1` 关掉自动清理，只留手动。研究型 worker 的 scratch 目录按同一个保留期清。
+手动入口：`cleanup` 看判定和原因，`cleanup` 立刻清 SAFE 项；命令行是 `agent-supervisor-cleanup --dry-run` 和 `agent-supervisor-cleanup --apply --plan <plan_id> --item <item_id>`。`AGENT_SUPERVISOR_NO_AUTO_CLEANUP=1` 关掉自动清理，只留手动。研究型 worker 的 scratch 目录按同一个保留期清。
 
 ## 看板里有什么
 
@@ -162,7 +162,7 @@ node "$AGENT_SUPERVISOR_STAGE_CLI" "gate:s3" --detail "integration queue"
 
 ## 状态存储
 
-默认在 `~/.codex-supervisor/`：
+默认在 `~/.agent-supervisor`（从 codex-supervisor-mcp 升上来、已有 `~/.codex-supervisor` 的机器继续用旧目录）：
 
 | 文件 | 内容 |
 |---|---|
@@ -178,7 +178,7 @@ node "$AGENT_SUPERVISOR_STAGE_CLI" "gate:s3" --detail "integration queue"
 
 | 变量 | 默认 | 作用 |
 |---|---|---|
-| `SUPERVISOR_HOME` | `~/.codex-supervisor` | 状态根目录。MCP 和看板要指同一个 |
+| `SUPERVISOR_HOME` | `~/.agent-supervisor` | 状态根目录。MCP 和看板要指同一个 |
 | `CODEX_HOME` | `~/.codex` | 只读，读 Codex 原生的 `goals_1.sqlite` 和 MCP 配置 |
 | `CODEX_BIN` | `codex` | Codex CLI 路径。Windows 上 `.cmd` shim 自动绕开 |
 | `CLAUDE_BIN` | `claude` | Claude Code 路径，`runner: "claude"` 的 worker 用 |
@@ -201,9 +201,9 @@ GUI 客户端（Claude Desktop、Cursor、Windsurf）不在本安装器的自动
 ```json
 {
   "mcpServers": {
-    "codex-supervisor": {
+    "agent-supervisor": {
       "command": "npx",
-      "args": ["-y", "codex-supervisor-mcp"],
+      "args": ["-y", "agent-supervisor-mcp"],
       "env": { "CODEX_BIN": "/usr/local/bin/codex" }
     }
   }
@@ -214,7 +214,7 @@ GUI 客户端（Claude Desktop、Cursor、Windsurf）不在本安装器的自动
 
 不用手动更。server 启动时后台查一次 registry，有新版就起独立进程 `npm i -g` 到同一个全局路径；正在跑的会话不受影响，下一个新会话就是新版。只对 `npm i -g` 装的那份生效，git 源码和 `npx` 起的不碰。skill 也一样，每次启动刷到已有的 skill 目录，改过的先备份成 `SKILL.md.bak-<时间戳>`。
 
-装失败（全局目录要 sudo）时 `update` 字段带原因，手动 `npm install -g codex-supervisor-mcp@latest`。0.6.1 及以前只提醒不自动装，手动升一次就进自动了。换 Node/安装前缀后，setup 会修复本包生成的旧入口，并读回核对 command/args；已有自定义、disabled、project配置保留并提示处理，不擅自覆盖。重跑安装：`codex-supervisor-setup`（`--skill-only` / `--mcp-only` / `--dry-run`）。手动注册失败返回非0，自动安装保持成功但打印warning；skill写入失败仍继续尝试MCP注册；没找到CLI时可设 `CLAUDE_BIN` / `CODEX_BIN`。skill路径跟随 `CLAUDE_CONFIG_DIR` / `CODEX_HOME`。
+装失败（全局目录要 sudo）时 `update` 字段带原因，手动 `npm install -g agent-supervisor-mcp@latest`。0.6.1 及以前只提醒不自动装，手动升一次就进自动了。换 Node/安装前缀后，setup 会修复本包生成的旧入口，并读回核对 command/args；已有自定义、disabled、project配置保留并提示处理，不擅自覆盖。重跑安装：`agent-supervisor-setup`（`--skill-only` / `--mcp-only` / `--dry-run`）。手动注册失败返回非0，自动安装保持成功但打印warning；skill写入失败仍继续尝试MCP注册；没找到CLI时可设 `CLAUDE_BIN` / `CODEX_BIN`。skill路径跟随 `CLAUDE_CONFIG_DIR` / `CODEX_HOME`。
 
 ## Windows
 

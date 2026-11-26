@@ -2,7 +2,7 @@
 //
 // The server never blocks on this. When the update check says a newer
 // version is published, a detached worker process (auto-update-worker.js)
-// runs `npm install -g codex-supervisor-mcp@<that version>` and writes what
+// runs `npm install -g agent-supervisor-mcp@<that version>` and writes what
 // happened to data/auto-update.json. The running server keeps its own
 // already-loaded code; the next MCP session starts on the new files. This is
 // the same shape as Claude Code's and opencode's updaters: check in the

@@ -4,11 +4,13 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 const transport = new StdioClientTransport({
   command: "node",
   args: ["./src/mcp-server.js"],
-  cwd: new URL("../..", import.meta.url).pathname
+  cwd: new URL("../..", import.meta.url).pathname,
+  // Uses the real store on purpose, but never rewrites the installed skill with the checkout's.
+  env: { ...process.env, AGENT_SUPERVISOR_SKIP_SKILL_SYNC: "1" }
 });
 
 const client = new Client({
-  name: "codex-supervisor-smoke-test",
+  name: "agent-supervisor-smoke-test",
   version: "0.2.0"
 });
 

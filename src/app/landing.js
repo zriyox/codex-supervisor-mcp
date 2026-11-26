@@ -19,7 +19,7 @@ const PATCH_ID_MAX_BUFFER = 256 * 1024 * 1024;
 // config), cherry-pick and commit both die with "empty ident name", so a
 // stand-in identity is supplied through the environment for that one
 // directory. An identity git already has is used untouched.
-const FALLBACK_IDENTITY = { name: "codex-supervisor", email: "codex-supervisor@localhost" };
+const FALLBACK_IDENTITY = { name: "agent-supervisor", email: "agent-supervisor@localhost" };
 const identityCache = new Map();
 
 export function identityEnv(cwd) {

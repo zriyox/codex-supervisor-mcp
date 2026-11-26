@@ -197,7 +197,7 @@ test("a machine where git has no identity still rebases, with the stand-in commi
     assert.ok(!resumed.error, JSON.stringify(resumed).slice(0, 400));
     assert.equal(resumed.base_commit, mainHead);
     await waitFor(call, created.id, settled);
-    assert.equal(git(created.worktree_path, ["log", "-1", "--format=%cn <%ce>"]), "codex-supervisor <codex-supervisor@localhost>");
+    assert.equal(git(created.worktree_path, ["log", "-1", "--format=%cn <%ce>"]), "agent-supervisor <agent-supervisor@localhost>");
   });
 });
 

@@ -64,7 +64,7 @@ test("both READMEs and both references document every registered MCP tool", asyn
 });
 
 test("the skill names every default tool and the rules a main thread must not miss", async () => {
-  const skill = await read("skills/codex-supervisor/SKILL.md");
+  const skill = await read("skills/agent-supervisor/SKILL.md");
   const home = await mkdtemp(join(tmpdir(), "supervisor-skill-"));
   try {
     const byDefault = await withMcp({ SUPERVISOR_HOME: home, AGENT_SUPERVISOR_TOOLS: "", AGENT_SUPERVISOR_SKIP_SKILL_SYNC: "1" }, async ({ client }) => (await client.listTools()).tools.map((tool) => tool.name));
@@ -79,7 +79,7 @@ test("the skill names every default tool and the rules a main thread must not mi
 
 test("no document still names a tool or argument that was removed", async () => {
   const removed = /create_codex_worker|land_codex_worker|check_workers|overview_delta|get_worker_result|verify_delivery_push|cleanup_plan|ownedPaths|commitMessage|allowLongWait|CODEX_SUPERVISOR_/;
-  for (const path of ["README.md", "README.en.md", "docs/reference.md", "docs/reference.en.md", "skills/codex-supervisor/SKILL.md"]) {
+  for (const path of ["README.md", "README.en.md", "docs/reference.md", "docs/reference.en.md", "skills/agent-supervisor/SKILL.md"]) {
     const hit = (await read(path)).match(removed);
     assert.equal(hit, null, `${path} still says ${hit?.[0]}`);
   }

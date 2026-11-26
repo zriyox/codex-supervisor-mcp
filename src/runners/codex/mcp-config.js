@@ -35,5 +35,5 @@ export function codexConfigText() {
 }
 
 export function supervisorMcpDisableArgs() {
-  return disableMcpServerArgs(codexConfigText(), new Set(["codex-supervisor"]));
+  return disableMcpServerArgs(codexConfigText(), new Set(["agent-supervisor", "codex-supervisor"]));
 }

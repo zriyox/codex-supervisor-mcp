@@ -24,9 +24,9 @@ for(const client of ["claude","codex"]){
     const state=JSON.parse(await readFile(h.state,"utf8"));assert.equal(state.command,process.execPath);assert.deepEqual(state.args,[join(repoRoot,"src/mcp-server.js")]);
   });
   test(`${client}: repair obsolete package path but preserve custom registrations`,async()=>{
-    const h=await host(client,{command:"/old/node",args:["/old/node_modules/codex-supervisor-mcp/src/mcp-server.js"]});assert.match((await h.setup()).stdout,/repaired/);
-    const custom={command:"npx",args:["-y","codex-supervisor-mcp"],env:{CUSTOM:"keep"}};const c=await host(client,custom);await assert.rejects(c.setup(),error=>error.code===1&&/preserved/.test(error.stderr));assert.deepEqual(JSON.parse(await readFile(c.state,"utf8")),custom);
-    const checkout=join(c.root,"codex-supervisor-mcp/src/mcp-server.js");await mkdir(join(c.root,"codex-supervisor-mcp/src"),{recursive:true});await writeFile(checkout,"// user source entry");
+    const h=await host(client,{command:"/old/node",args:["/old/node_modules/agent-supervisor-mcp/src/mcp-server.js"]});assert.match((await h.setup()).stdout,/repaired/);
+    const custom={command:"npx",args:["-y","agent-supervisor-mcp"],env:{CUSTOM:"keep"}};const c=await host(client,custom);await assert.rejects(c.setup(),error=>error.code===1&&/preserved/.test(error.stderr));assert.deepEqual(JSON.parse(await readFile(c.state,"utf8")),custom);
+    const checkout=join(c.root,"agent-supervisor-mcp/src/mcp-server.js");await mkdir(join(c.root,"agent-supervisor-mcp/src"),{recursive:true});await writeFile(checkout,"// user source entry");
     const source={command:process.execPath,args:[checkout]};await writeFile(c.state,JSON.stringify(source));
     await assert.rejects(c.setup(),error=>error.code===1&&/preserved/.test(error.stderr));
     assert.deepEqual(JSON.parse(await readFile(c.state,"utf8")),source);
@@ -35,7 +35,7 @@ for(const client of ["claude","codex"]){
     for(const mode of ["fail","no-write"]){const h=await host(client,null,mode);await assert.rejects(h.setup(),error=>error.code===1&&/registration failed/.test(error.stderr));}
   });
   test(`${client}: failure during repair restores the previous package entry`,async()=>{
-    const previous={command:"/old/node",args:["/old/node_modules/codex-supervisor-mcp/src/mcp-server.js"]};
+    const previous={command:"/old/node",args:["/old/node_modules/agent-supervisor-mcp/src/mcp-server.js"]};
     const h=await host(client,previous,"fail-new");
     await assert.rejects(h.setup(),error=>error.code===1&&/registration failed/.test(error.stderr));
     assert.deepEqual(JSON.parse(await readFile(h.state,"utf8")),previous);
@@ -43,7 +43,7 @@ for(const client of ["claude","codex"]){
   test(`${client}: a skill write failure does not prevent automatic MCP registration`,async()=>{
     const h=await host(client);
     await mkdir(join(h.root,`.${client}`,"skills"),{recursive:true});
-    await writeFile(join(h.root,`.${client}`,"skills/codex-supervisor"),"unwritable skill destination");
+    await writeFile(join(h.root,`.${client}`,"skills/agent-supervisor"),"unwritable skill destination");
     const result=await h.setup(["--skill-only","--auto"]); // Non-global automatic runs remain inert.
     assert.equal(result.stderr,"");
     const env={...process.env,HOME:h.root,USERPROFILE:h.root,CODEX_HOME:"",CLAUDE_CONFIG_DIR:"",REG_STATE:h.state,REG_CLIENT:client,REG_MODE:"ok",[client==='codex'?'CODEX_BIN':'CLAUDE_BIN']:join(h.root,"client.cjs")};

@@ -1,12 +1,12 @@
 #!/usr/bin/env node
-// Installs the codex-supervisor skill into the skill directories of the agent
+// Installs the agent-supervisor skill into the skill directories of the agent
 // clients found on this machine, and registers the MCP server with them.
 //
 // Runs automatically after a *global* npm install (`postinstall`), and can be
 // invoked directly to repair or re-run setup:
 //
-//   npx codex-supervisor-setup
-//   codex-supervisor-setup --target claude --force
+//   npx agent-supervisor-setup
+//   agent-supervisor-setup --target claude --force
 //
 // Set AGENT_SUPERVISOR_SKIP_SETUP=1 to opt out of the automatic run.
 import { runFile } from "../../infra/process.js";
@@ -29,7 +29,9 @@ import { installSkill, skillRoots } from "../../infra/skill-sync.js";
 const packageRoot = fileURLToPath(new URL("../../..", import.meta.url)).replace(/[\\/]$/, "");
 const serverEntry = join(packageRoot, "src", "mcp-server.js");
 
-const MCP_NAME = "codex-supervisor";
+const MCP_NAME = "agent-supervisor";
+// What this package registered itself as when it was codex-supervisor-mcp.
+const LEGACY_MCP_NAME = "codex-supervisor";
 const CLIENT_TIMEOUT_MS = 60_000;
 
 // A client is "present" when its binary is on PATH or its skill directory
@@ -98,9 +100,9 @@ function parseArgs(argv) {
 }
 
 function printHelp() {
-  console.log(`Usage: codex-supervisor-setup [options]
+  console.log(`Usage: agent-supervisor-setup [options]
 
-Installs the codex-supervisor skill and registers the MCP server with the
+Installs the agent-supervisor skill and registers the MCP server with the
 Claude Code and Codex clients found on this machine.
 
 Options:
@@ -173,9 +175,9 @@ function selectClients(options) {
   });
 }
 
-async function registeredMcp(target, client) {
+async function registeredMcp(target, client, name = MCP_NAME) {
   try {
-    const { stdout } = await runClient(target, ["mcp", "get", MCP_NAME, ...(client.id === "codex" ? ["--json"] : [])], { timeout: CLIENT_TIMEOUT_MS });
+    const { stdout } = await runClient(target, ["mcp", "get", name, ...(client.id === "codex" ? ["--json"] : [])], { timeout: CLIENT_TIMEOUT_MS });
     if (client.id === "codex") {
       const value = JSON.parse(stdout);
       const transport = value.transport ?? value;
@@ -193,10 +195,35 @@ async function registeredMcp(target, client) {
   }
 }
 
+// A registration this installer wrote and nobody edited: user scope, plain
+// node, the package's own entry, no environment. Only such a one is replaced
+// or removed without asking.
+function isManaged(entry, packageName) {
+  return entry.userScope && entry.enabled && !entry.cwd && Object.keys(entry.env).length === 0
+    && ["node", "node.exe"].includes(basename(entry.command ?? "").toLowerCase())
+    && entry.args.length === 1 && isAbsolute(entry.args[0])
+    && new RegExp(`(?:^|[\\\\/])${packageName}[\\\\/]src[\\\\/]mcp-server\\.js$`).test(entry.args[0])
+    && (/[\\/]node_modules[\\/]/.test(entry.args[0]) || !existsSync(entry.args[0]));
+}
+
+// Two registrations would give a session both tool sets and two supervisors on
+// one store. The former name's entry goes once the new one is in place, unless
+// someone customised it, in which case they are told.
+async function retireLegacyRegistration(target, client, log, warn) {
+  const legacy = await registeredMcp(target, client, LEGACY_MCP_NAME).catch(() => null);
+  if (!legacy) return;
+  if (!isManaged(legacy, "codex-supervisor-mcp")) {
+    warn(`mcp     ${client.label}: "${LEGACY_MCP_NAME}" is still registered with custom settings; remove it with "${client.binary} mcp remove ${LEGACY_MCP_NAME}" so only one supervisor is loaded`);
+    return;
+  }
+  await runClient(target, client.id === "claude" ? ["mcp", "remove", "-s", "user", LEGACY_MCP_NAME] : ["mcp", "remove", LEGACY_MCP_NAME], { timeout: CLIENT_TIMEOUT_MS });
+  log(`mcp     ${client.label}: removed the former "${LEGACY_MCP_NAME}" registration`);
+}
+
 async function registerMcp(client, options, log, warn) {
   const target = locateClient(client.binary);
   if (!target) {
-    warn(`mcp     ${client.label}: no ${client.binary} CLI found; install it or set ${client.binEnv} to its executable, then run "codex-supervisor-setup"`);
+    warn(`mcp     ${client.label}: no ${client.binary} CLI found; install it or set ${client.binEnv} to its executable, then run "agent-supervisor-setup"`);
     return "failed";
   }
   if (target.shim) {
@@ -210,13 +237,12 @@ async function registerMcp(client, options, log, warn) {
   catch (error) { warn(`mcp     ${client.label}: ${error.message}`); return "failed"; }
   if (previous) {
     const same = previous.userScope && previous.command === process.execPath && previous.args.length === 1 && previous.args[0] === serverEntry;
-    if (same && previous.enabled) { log(`mcp     ${client.label}: already registered at this installation`); return "unchanged"; }
-    const managed = previous.userScope && previous.enabled && !previous.cwd && Object.keys(previous.env).length === 0
-      && ["node", "node.exe"].includes(basename(previous.command ?? "").toLowerCase())
-      && previous.args.length === 1 && isAbsolute(previous.args[0])
-      && /(?:^|[\\/])codex-supervisor-mcp[\\/]src[\\/]mcp-server\.js$/.test(previous.args[0])
-      && (/[\\/]node_modules[\\/]/.test(previous.args[0]) || !existsSync(previous.args[0]));
-    if (!managed) {
+    if (same && previous.enabled) {
+      await retireLegacyRegistration(target, client, log, warn).catch(() => {});
+      log(`mcp     ${client.label}: already registered at this installation`);
+      return "unchanged";
+    }
+    if (!isManaged(previous, "agent-supervisor-mcp")) {
       warn(`mcp     ${client.label}: existing custom, disabled or project registration preserved; inspect "${client.binary} mcp get ${MCP_NAME}" before replacing it`);
       return "failed";
     }
@@ -237,6 +263,7 @@ async function registerMcp(client, options, log, warn) {
     await runClient(target, args, { timeout: CLIENT_TIMEOUT_MS });
     const actual = await registeredMcp(target, client);
     if (!actual || actual.command !== process.execPath || actual.args.length !== 1 || actual.args[0] !== serverEntry || !actual.enabled) throw new Error("registration command succeeded but read-back does not match this package");
+    await retireLegacyRegistration(target, client, log, warn).catch((error) => warn(`mcp     ${client.label}: could not remove "${LEGACY_MCP_NAME}" (${error.message.split("\n")[0]})`));
     log(`mcp     ${client.label}: ${previous ? "repaired" : "registered"}`);
     return "registered";
   } catch (error) {
@@ -249,7 +276,7 @@ async function registerMcp(client, options, log, warn) {
     }
     warn(
       `mcp     ${client.label}: registration failed (${error.message.split("\n")[0]}) ` +
-        `- run "codex-supervisor-setup" once ${client.label} is working`
+        `- run "agent-supervisor-setup" once ${client.label} is working`
     );
     return "failed";
   }
@@ -279,7 +306,7 @@ async function main() {
   if (missingTargets.length) warn(`setup: requested client(s) not detected: ${missingTargets.join(", ")}; install the CLI or set CLAUDE_BIN / CODEX_BIN`);
 
   if (clients.length === 0) {
-    warn("setup: no Claude Code / Codex client detected; MCP was not registered. Install a client, then run codex-supervisor-setup.");
+    warn("setup: no Claude Code / Codex client detected; MCP was not registered. Install a client, then run agent-supervisor-setup.");
     return options.targets?.length && !options.auto ? 1 : 0;
   }
 

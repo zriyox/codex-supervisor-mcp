@@ -144,7 +144,7 @@ test("without SUPERVISOR_HOME the entry reads the nearest .mcp.json above cwd", 
   const projectHome = await tempHome("supervisor-mcpjson-store-");
   const project = join(await tempHome("supervisor-mcpjson-"), "proj");
   await mkdir(join(project, "deep", "er"), { recursive: true });
-  await writeFile(join(project, ".mcp.json"), JSON.stringify({ mcpServers: { "codex-supervisor": { command: "node", env: { SUPERVISOR_HOME: projectHome } } } }));
+  await writeFile(join(project, ".mcp.json"), JSON.stringify({ mcpServers: { "agent-supervisor": { command: "node", env: { SUPERVISOR_HOME: projectHome } } } }));
   const run = await runEntry({ cwd: join(project, "deep", "er"), env: {} });
   try {
     assert.match(run.out(), /web view on/);
@@ -161,7 +161,7 @@ test("SUPERVISOR_HOME in the environment wins over .mcp.json", async () => {
   const envHome = await tempHome("supervisor-envhome-");
   const project = join(await tempHome("supervisor-mcpjson-"), "proj");
   await mkdir(project, { recursive: true });
-  await writeFile(join(project, ".mcp.json"), JSON.stringify({ mcpServers: { "codex-supervisor": { env: { SUPERVISOR_HOME: "/nowhere/else" } } } }));
+  await writeFile(join(project, ".mcp.json"), JSON.stringify({ mcpServers: { "agent-supervisor": { env: { SUPERVISOR_HOME: "/nowhere/else" } } } }));
   const run = await runEntry({ cwd: project, env: { SUPERVISOR_HOME: envHome } });
   try {
     assert.ok(run.out().includes(envHome), run.out());

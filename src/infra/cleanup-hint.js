@@ -21,7 +21,7 @@ export async function cleanupHint({ list = readdir, root = supervisorRoot, dir =
   return {
     worktrees: entries,
     threshold,
-    command: `SUPERVISOR_HOME=${root} codex-supervisor-cleanup --dry-run`,
+    command: `SUPERVISOR_HOME=${root} agent-supervisor-cleanup --dry-run`,
     apply: null,
     next_step: "Read the plan: REVIEW items say when they become removable. Land or resume the work you still want; cleanup (action apply) removes a SAFE item right away.",
     note: "a worktree is SAFE once its work has landed, or has nothing to keep, or its hold period is over; uncommitted edits are saved on the worker branch first, and branches and evidence are never removed"

@@ -11,7 +11,7 @@ test("a worker disables only the supervisor MCP server it inherited", async () =
   const { dir } = await makeRepo(join(home, "repo"));
   await mkdir(codexHome);
   await writeFile(join(codexHome, "config.toml"), [
-    "[mcp_servers.codex-supervisor]",
+    "[mcp_servers.agent-supervisor]",
     'command = "node"',
     "[mcp_servers.obsidian]",
     'url = "http://127.0.0.1:27123"'
@@ -26,6 +26,6 @@ test("a worker disables only the supervisor MCP server it inherited", async () =
   const runs = (await readFile(argsLog, "utf8")).trim().split("\n").map((line) => JSON.parse(line).args);
   const args = runs.find((entry) => entry.includes("--output-schema"));
   assert.ok(args, JSON.stringify(runs));
-  assert.ok(args.includes("mcp_servers.codex-supervisor.enabled=false"), args.join(" "));
+  assert.ok(args.includes("mcp_servers.agent-supervisor.enabled=false"), args.join(" "));
   assert.ok(!args.includes("mcp_servers.obsidian.enabled=false"), args.join(" "));
 });

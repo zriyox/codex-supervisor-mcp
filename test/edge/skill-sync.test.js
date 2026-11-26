@@ -15,7 +15,7 @@ delete process.env.CODEX_HOME;
 delete process.env.CLAUDE_CONFIG_DIR;
 const { installSkill, skillRoots, skillSource, syncSkills } = await import("../../src/infra/skill-sync.js");
 const source = await readFile(skillSource, "utf8");
-const claudeSkill = join(home, ".claude", "skills", "codex-supervisor", "SKILL.md");
+const claudeSkill = join(home, ".claude", "skills", "agent-supervisor", "SKILL.md");
 
 test("skill roots follow custom client configuration homes", async () => {
   const claude = join(home, "custom-claude");
@@ -27,8 +27,8 @@ test("skill roots follow custom client configuration homes", async () => {
     assert.equal(skillRoots().codex.skillRoot, join(codex, "skills"));
     await installSkill(skillRoots().claude);
     await installSkill(skillRoots().codex);
-    assert.equal(await readFile(join(claude, "skills/codex-supervisor/SKILL.md"), "utf8"), source);
-    assert.equal(await readFile(join(codex, "skills/codex-supervisor/SKILL.md"), "utf8"), source);
+    assert.equal(await readFile(join(claude, "skills/agent-supervisor/SKILL.md"), "utf8"), source);
+    assert.equal(await readFile(join(codex, "skills/agent-supervisor/SKILL.md"), "utf8"), source);
     assert.equal(existsSync(join(home, ".claude")), false);
     assert.equal(existsSync(join(home, ".codex")), false);
   } finally {
@@ -50,7 +50,7 @@ test("a second run leaves an identical file alone", async () => {
   const result = await syncSkills();
   assert.deepEqual(result.unchanged, ["Claude Code"]);
   assert.deepEqual(result.updated, []);
-  const files = await readdir(join(home, ".claude", "skills", "codex-supervisor"));
+  const files = await readdir(join(home, ".claude", "skills", "agent-supervisor"));
   assert.deepEqual(files, ["SKILL.md"], "no backup for an unchanged file");
 });
 
@@ -59,16 +59,16 @@ test("an edited copy is backed up and brought back to the bundled text", async (
   const result = await syncSkills();
   assert.deepEqual(result.updated, ["Claude Code"]);
   assert.equal(await readFile(claudeSkill, "utf8"), source);
-  const files = await readdir(join(home, ".claude", "skills", "codex-supervisor"));
+  const files = await readdir(join(home, ".claude", "skills", "agent-supervisor"));
   const backup = files.find((name) => name.startsWith("SKILL.md.bak-"));
   assert.ok(backup, `backup expected, got ${files.join(", ")}`);
-  assert.equal(await readFile(join(home, ".claude", "skills", "codex-supervisor", backup), "utf8"), "locally edited\n");
+  assert.equal(await readFile(join(home, ".claude", "skills", "agent-supervisor", backup), "utf8"), "locally edited\n");
 });
 
 test("a client that cannot be written is reported, the others still succeed", async () => {
   await mkdir(join(home, ".codex", "skills"), { recursive: true });
   // A file where the skill directory should go makes mkdir fail for Codex only.
-  await writeFile(join(home, ".codex", "skills", "codex-supervisor"), "not a directory");
+  await writeFile(join(home, ".codex", "skills", "agent-supervisor"), "not a directory");
   const result = await syncSkills();
   assert.deepEqual(result.unchanged, ["Claude Code"]);
   assert.equal(result.failed.length, 1);
@@ -78,9 +78,9 @@ test("a client that cannot be written is reported, the others still succeed", as
 test("installSkill with force overwrites without a backup", async () => {
   const client = skillRoots().claude;
   await writeFile(claudeSkill, "edited again\n");
-  const before = (await readdir(join(home, ".claude", "skills", "codex-supervisor"))).length;
+  const before = (await readdir(join(home, ".claude", "skills", "agent-supervisor"))).length;
   assert.equal(await installSkill(client, { force: true }), "updated");
-  const after = (await readdir(join(home, ".claude", "skills", "codex-supervisor"))).length;
+  const after = (await readdir(join(home, ".claude", "skills", "agent-supervisor"))).length;
   assert.equal(after, before, "force must not add a backup");
   assert.equal(await readFile(claudeSkill, "utf8"), source);
 });

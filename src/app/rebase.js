@@ -128,7 +128,7 @@ function splitByPatch(cwd, base, ontoCommit, head) {
 function stashEdits(cwd, base, head) {
   const stashBefore = stashRef(cwd);
   try {
-    git(cwd, ["stash", "push", "--include-untracked", "-q", "-m", "codex-supervisor: rebase"]);
+    git(cwd, ["stash", "push", "--include-untracked", "-q", "-m", "agent-supervisor: rebase"]);
   } catch (error) {
     return { error: "rebase_failed", reason: `could not stash the worker's uncommitted edits: ${gitTail(error)}`, git: gitTail(error), base_commit: base, head };
   }

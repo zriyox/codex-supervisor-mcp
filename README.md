@@ -1,10 +1,10 @@
-# codex-supervisor-mcp
+# agent-supervisor-mcp
 
 [English](README.en.md) | 中文
 
-[![npm version](https://img.shields.io/npm/v/codex-supervisor-mcp.svg)](https://www.npmjs.com/package/codex-supervisor-mcp)
-[![npm downloads](https://img.shields.io/npm/dm/codex-supervisor-mcp.svg)](https://www.npmjs.com/package/codex-supervisor-mcp)
-[![license](https://img.shields.io/npm/l/codex-supervisor-mcp.svg)](LICENSE)
+[![npm version](https://img.shields.io/npm/v/agent-supervisor-mcp.svg)](https://www.npmjs.com/package/agent-supervisor-mcp)
+[![npm downloads](https://img.shields.io/npm/dm/agent-supervisor-mcp.svg)](https://www.npmjs.com/package/agent-supervisor-mcp)
+[![license](https://img.shields.io/npm/l/agent-supervisor-mcp.svg)](LICENSE)
 [![CI](https://github.com/zriyox/codex-supervisor-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/zriyox/codex-supervisor-mcp/actions/workflows/ci.yml)
 [![node](https://img.shields.io/badge/node-%3E%3D22.13.0-339933.svg)](package.json)
 
@@ -12,12 +12,14 @@
 
 让几个 agent 同时改一个仓库，结果是互相覆盖，没人说得清谁改了什么，主线程的上下文还被 worker 的输出塞满。
 
-codex-supervisor-mcp 是一个 MCP server。主线程（Claude Code、Codex 或任何 MCP 客户端）用它同时指挥多个 Codex CLI worker：一个 worker 一个 Git worktree，状态写进 SQLite，另有一个网页看板。派单和记账都在磁盘上，不占模型上下文。
+agent-supervisor-mcp 是一个 MCP server。主线程（Claude Code、Codex 或任何 MCP 客户端）用它同时指挥多个 Codex CLI worker：一个 worker 一个 Git worktree，状态写进 SQLite，另有一个网页看板。派单和记账都在磁盘上，不占模型上下文。
 
 ![演示：一个 Claude Code 主线程同时派 3 个 Codex worker，各自独立 worktree，并行跑完后合并提交](https://raw.githubusercontent.com/zriyox/codex-supervisor-mcp/main/assets/demo.gif)
 
 *30 秒真跑：派 3 个 worker，各自 worktree 并行，主线程收 3 份 diff 合成一次 commit。*
 
+> **这个包以前叫 codex-supervisor-mcp**。改名是因为 worker 不再只是 Codex。装着旧包的机器会被它的最后一版自动带过来：装上本包、把 MCP 注册和 skill 换成 `agent-supervisor`，状态目录原地不动。命令行工具的前缀从 `codex-supervisor-` 变成 `agent-supervisor-`。
+>
 > **从 0.x 升级到 1.x**：工具从 39 个收成 14 个，名字和参数都换了，旧名不留别名。升级前先把在跑的 worker 收完，升级后重开会话让新 skill 生效。对照表在[参考手册](docs/reference.md)，变更说明在 [1.0.0 release](https://github.com/zriyox/codex-supervisor-mcp/releases/tag/v1.0.0)。
 
 ## 解决什么
@@ -41,21 +43,21 @@ worker 也可以是 Claude Code：`create_worker` 带 `runner: "claude"`。它�
 要 Node.js 22.13.0 以上，`codex` CLI 在 `PATH` 里。macOS、Linux、Windows 都行。
 
 ```bash
-npm install -g codex-supervisor-mcp
+npm install -g agent-supervisor-mcp
 ```
 
-安装脚本会给检测到的 Claude Code 和 Codex 装 skill、注册 MCP，装完重启它们。没注册上（比如用了 `--ignore-scripts`）就跑一次 `codex-supervisor-setup`，或者手动加：
+安装脚本会给检测到的 Claude Code 和 Codex 装 skill、注册 MCP，装完重启它们。没注册上（比如用了 `--ignore-scripts`）就跑一次 `agent-supervisor-setup`，或者手动加：
 
 ```bash
-claude mcp add -s user codex-supervisor -- npx -y codex-supervisor-mcp
-codex mcp add codex-supervisor -- npx -y codex-supervisor-mcp
+claude mcp add -s user agent-supervisor -- npx -y agent-supervisor-mcp
+codex mcp add agent-supervisor -- npx -y agent-supervisor-mcp
 ```
 
 Claude Desktop、Cursor、Windsurf 这类 GUI 客户端要自己改 MCP 配置，写法在[参考手册](docs/reference.md#环境变量)。只要 skill 不要 MCP：`npx skills add zriyox/codex-supervisor-mcp`。
 
 然后在 Claude Code 里说人话：
 
-> 把这三个模块的单测补齐，用 codex-supervisor 分三路并行跑，session 叫「补单测」。
+> 把这三个模块的单测补齐，用 agent-supervisor 分三路并行跑，session 叫「补单测」。
 
 skill 会带着主线程走完这几步：
 
@@ -73,7 +75,7 @@ worker 自己不提交。它的改动留在 `worker/<taskId>` 分支，等主线
 想看着它们跑，开看板：
 
 ```bash
-codex-supervisor-web     # 或 npx -p codex-supervisor-mcp codex-supervisor-web
+agent-supervisor-web     # 或 npx -p agent-supervisor-mcp agent-supervisor-web
 ```
 
 打开 `http://127.0.0.1:7877`。按 session 看每路 worker 的状态、正在跑的命令、改动和事件，还能旁问：从 worker 的线程 fork 一个只读会话来答，不打断它手上的活。看板只看，不派单也不取消。
@@ -92,7 +94,7 @@ codex-supervisor-web     # 或 npx -p codex-supervisor-mcp codex-supervisor-web
 两个会话之间只传一段文字，粘进主脑会话用 `/goal` 接上：
 
 ```text
-【角色】  你是主脑：派 worker，核结果，更新文档，向我汇报。不写业务代码。先加载 codex-supervisor skill。
+【角色】  你是主脑：派 worker，核结果，更新文档，向我汇报。不写业务代码。先加载 agent-supervisor skill。
 【背景】  这一块为什么做，上一块留下了什么
 【先读】  哪几份文档的哪几节，说法冲突时以哪份为准
 【做什么】照任务书第几节那张表做，表里没有的不做
@@ -130,7 +132,7 @@ codex-supervisor-web     # 或 npx -p codex-supervisor-mcp codex-supervisor-web
 
 subagent 自己也能开 worktree，所以文件隔离不算差别。差别在模型和进程。
 
-| | Claude Code subagent | codex-supervisor worker |
+| | Claude Code subagent | agent-supervisor worker |
 |---|---|---|
 | 能跑什么模型 | 只能选 Claude | Codex CLI 配了 provider 的都行 |
 | 干活的是谁 | Claude Code 自己 | 独立的 `codex exec` 进程 |
@@ -141,11 +143,11 @@ subagent 自己也能开 worktree，所以文件隔离不算差别。差别在�
 
 ## 配置和状态
 
-状态都在 `~/.codex-supervisor/`：`data/supervisor.sqlite` 是台账，`data/runs/<taskId>.jsonl` 是 Codex 的原始输出，`worktrees/<taskId>/` 是各路的工作区。
+状态都在 `~/.agent-supervisor`（从 codex-supervisor-mcp 升上来、已有 `~/.codex-supervisor` 的机器继续用旧目录）：`data/supervisor.sqlite` 是台账，`data/runs/<taskId>.jsonl` 是 Codex 的原始输出，`worktrees/<taskId>/` 是各路的工作区。
 
 | 变量 | 默认 | 作用 |
 |---|---|---|
-| `SUPERVISOR_HOME` | `~/.codex-supervisor` | 状态根目录。MCP 和看板要指同一个 |
+| `SUPERVISOR_HOME` | `~/.agent-supervisor` | 状态根目录。MCP 和看板要指同一个 |
 | `CODEX_BIN` | `codex` | Codex CLI 路径。GUI 客户端的 `PATH` 里常常没有它 |
 | `SUPERVISOR_WEB_PORT` | `7877` | 看板端口 |
 | `AGENT_SUPERVISOR_NO_AUTO_UPDATE` | 未设 | `1` 关掉后台自动更新，只提醒 |
@@ -157,17 +159,17 @@ subagent 自己也能开 worktree，所以文件隔离不算差别。差别在�
 卸载：
 
 ```bash
-npm uninstall -g codex-supervisor-mcp
-claude mcp remove -s user codex-supervisor
-codex mcp remove codex-supervisor
-rm -rf ~/.claude/skills/codex-supervisor ~/.agents/skills/codex-supervisor ~/.codex/skills/codex-supervisor ~/.codex-supervisor
+npm uninstall -g agent-supervisor-mcp
+claude mcp remove -s user agent-supervisor
+codex mcp remove agent-supervisor
+rm -rf ~/.claude/skills/agent-supervisor ~/.agents/skills/agent-supervisor ~/.codex/skills/agent-supervisor ~/.agent-supervisor
 ```
 
 ## 排查
 
 | 症状 | 原因 | 处理 |
 |---|---|---|
-| `claude mcp list` 里没有 | 安装时没跑 `postinstall` | `codex-supervisor-setup` |
+| `claude mcp list` 里没有 | 安装时没跑 `postinstall` | `agent-supervisor-setup` |
 | worker 一起来就 `failed`，`spawn codex ENOENT` | 进程 `PATH` 里没有 codex | 设 `CODEX_BIN` |
 | `codex only resolved to a shell shim` | Windows 只找到 `.cmd`，包入口没了 | 重装 `@openai/codex`，或 `CODEX_BIN` 指到 `codex.js` |
 | `Cannot find module 'node:sqlite'` | Node 低于 22.13.0 | 升 Node |

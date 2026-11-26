@@ -115,9 +115,9 @@ await check("win32 bypasses the .cmd shim and actually registers the MCP server"
   assert.match(stdout, /mcp\s+Codex: registered/, stdout);
   const add = (await readCalls(root)).find((argv) => argv[0] === "mcp" && argv[1] === "add");
   assert.ok(add, "codex mcp add must be invoked");
-  assert.deepEqual(add, ["mcp", "add", "codex-supervisor", "--", process.execPath, serverEntry]);
+  assert.deepEqual(add, ["mcp", "add", "agent-supervisor", "--", process.execPath, serverEntry]);
   assert.equal(
-    existsSync(join(root, "home", ".codex", "skills", "codex-supervisor", "SKILL.md")),
+    existsSync(join(root, "home", ".codex", "skills", "agent-supervisor", "SKILL.md")),
     true,
     "the skill must land in the Codex skill directory"
   );
@@ -134,7 +134,7 @@ await check("win32 finds the CLI under %APPDATA%\\npm when PATH has nothing", as
 await check("win32 registers Claude through its native claude.exe, not the shim", async () => {
   const root = await makeHost({ withClaudeEntry: true });
   const { stderr, stdout } = await runSetup(root, ["--target", "claude", "--dry-run"]);
-  assert.match(stdout, /would run claude mcp add -s user codex-supervisor --/, stdout);
+  assert.match(stdout, /would run claude mcp add -s user agent-supervisor --/, stdout);
   assert.doesNotMatch(stderr, /shell shim/, stderr);
 });
 

@@ -21,10 +21,10 @@ const workerEntry = join(repoRoot, "src", "infra", "update", "auto-update-worker
 const check = (over = {}) => ({
   update_available: true,
   disabled: false,
-  installed: { version: "0.6.1", source: "npm", path: "/g/lib/node_modules/codex-supervisor-mcp", integrity: "sha512-x", commit: null },
+  installed: { version: "0.6.1", source: "npm", path: "/g/lib/node_modules/agent-supervisor-mcp", integrity: "sha512-x", commit: null },
   latest: { version: "0.7.0" },
-  install_command: "npm i -g codex-supervisor-mcp@latest",
-  notice: "codex-supervisor-mcp 0.6.1 is installed but 0.7.0 is published. Run `npm i -g codex-supervisor-mcp@latest` and restart the MCP client.",
+  install_command: "npm i -g agent-supervisor-mcp@latest",
+  notice: "agent-supervisor-mcp 0.6.1 is installed but 0.7.0 is published. Run `npm i -g agent-supervisor-mcp@latest` and restart the MCP client.",
   ...over
 });
 
@@ -42,18 +42,18 @@ test("blocker: when an install must not start", () => {
 
 test("where a copy came from: git checkout, npx cache, npm install, or unknown", () => {
   const none = { exists: () => false };
-  assert.equal(installSource("/Users/z/Workspace/codex-supervisor-mcp", { exists: (p) => p.endsWith(".git") }), "git");
-  assert.equal(installSource("/Users/z/.npm/_npx/4431c98850c9db56/node_modules/codex-supervisor-mcp", none), "npx");
-  assert.equal(installSource("/Users/admin/.npm-global/lib/node_modules/codex-supervisor-mcp", none), "npm", "a global install from a tarball has no lockfile entry but is still npm's");
-  assert.equal(installSource("/Users/z/.nvm/versions/node/v22.22.2/lib/node_modules/codex-supervisor-mcp", none), "npm");
-  assert.equal(installSource("/proj/node_modules/codex-supervisor-mcp", none), "npm", "project-local: the worker's npm root -g check keeps it from being touched");
-  assert.equal(installSource("/opt/somewhere/codex-supervisor-mcp", none), "unknown");
+  assert.equal(installSource("/Users/z/Workspace/agent-supervisor-mcp", { exists: (p) => p.endsWith(".git") }), "git");
+  assert.equal(installSource("/Users/z/.npm/_npx/4431c98850c9db56/node_modules/agent-supervisor-mcp", none), "npx");
+  assert.equal(installSource("/Users/admin/.npm-global/lib/node_modules/agent-supervisor-mcp", none), "npm", "a global install from a tarball has no lockfile entry but is still npm's");
+  assert.equal(installSource("/Users/z/.nvm/versions/node/v22.22.2/lib/node_modules/agent-supervisor-mcp", none), "npm");
+  assert.equal(installSource("/proj/node_modules/agent-supervisor-mcp", none), "npm", "project-local: the worker's npm root -g check keeps it from being touched");
+  assert.equal(installSource("/opt/somewhere/agent-supervisor-mcp", none), "unknown");
 });
 
 test("npx cache copies are recognised by their path", () => {
-  assert.equal(isNpxPath("/Users/z/.npm/_npx/4431c98850c9db56/node_modules/codex-supervisor-mcp"), true);
-  assert.equal(isNpxPath("C:\\Users\\z\\AppData\\Local\\npm-cache\\_npx\\abc\\node_modules\\codex-supervisor-mcp"), true);
-  assert.equal(isNpxPath("/g/lib/node_modules/codex-supervisor-mcp"), false);
+  assert.equal(isNpxPath("/Users/z/.npm/_npx/4431c98850c9db56/node_modules/agent-supervisor-mcp"), true);
+  assert.equal(isNpxPath("C:\\Users\\z\\AppData\\Local\\npm-cache\\_npx\\abc\\node_modules\\agent-supervisor-mcp"), true);
+  assert.equal(isNpxPath("/g/lib/node_modules/agent-supervisor-mcp"), false);
 });
 
 test("maybeAutoUpdate launches once per version and records it", async () => {
@@ -66,7 +66,7 @@ test("maybeAutoUpdate launches once per version and records it", async () => {
   const first = await maybeAutoUpdate(check(), { env: {}, launch });
   assert.equal(first.state, "started");
   assert.equal(first.version, "0.7.0");
-  assert.deepEqual(launches, [{ version: "0.7.0", packageRoot: "/g/lib/node_modules/codex-supervisor-mcp", registry: null }]);
+  assert.deepEqual(launches, [{ version: "0.7.0", packageRoot: "/g/lib/node_modules/agent-supervisor-mcp", registry: null }]);
   assert.equal((await readAutoUpdateState()).state, "started", "the server records the launch itself");
 
   const second = await maybeAutoUpdate(check(), { env: {}, launch });
@@ -154,9 +154,9 @@ process.exit(2);
 async function workerHost() {
   const root = join(home, `host-${Date.now()}-${Math.random().toString(16).slice(2)}`);
   const globalRoot = join(root, "lib", "node_modules");
-  const installed = join(globalRoot, "codex-supervisor-mcp");
+  const installed = join(globalRoot, "agent-supervisor-mcp");
   await mkdir(installed, { recursive: true });
-  await writeFile(join(installed, "package.json"), JSON.stringify({ name: "codex-supervisor-mcp", version: "0.6.1" }));
+  await writeFile(join(installed, "package.json"), JSON.stringify({ name: "agent-supervisor-mcp", version: "0.6.1" }));
   const npm = join(root, "fake-npm.js");
   await writeFile(npm, FAKE_NPM);
   await chmod(npm, 0o755);
@@ -199,7 +199,7 @@ test("worker: installs the exact version over npm's global copy and records done
   assert.equal(JSON.parse(await readFile(join(host.installed, "package.json"), "utf8")).version, "0.7.0");
   const seen = await calls(host);
   assert.deepEqual(seen[0].slice(0, 2), ["root", "-g"]);
-  assert.deepEqual(seen[1].slice(0, 3), ["install", "-g", "codex-supervisor-mcp@0.7.0"], "pinned to the version the check saw, not to latest");
+  assert.deepEqual(seen[1].slice(0, 3), ["install", "-g", "agent-supervisor-mcp@0.7.0"], "pinned to the version the check saw, not to latest");
   assert.ok(seen[1].includes("--registry=http://127.0.0.1:1/"), "the registry override reaches npm");
   assert.equal(await readFile(lockPath, "utf8").catch(() => null), null, "the lock is released");
 });

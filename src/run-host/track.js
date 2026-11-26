@@ -74,7 +74,7 @@ function noteStdinFailure(run, error) {
 // snapshot: another process may already have closed the row, and writing an
 // older "running" snapshot over it would reopen a finished worker.
 async function noteFinalizeFailure(run, error) {
-  process.stderr.write(`[codex-supervisor] finalize failed for ${run.record.id}: ${error.stack ?? error.message}\n`);
+  process.stderr.write(`[agent-supervisor] finalize failed for ${run.record.id}: ${error.stack ?? error.message}\n`);
   await appendTaskEvent(run.record.id, { type: "supervisor.finalize_failed", error: error.message, stack: String(error.stack ?? "").slice(0, 2000), run: run.live.run_count },
     { runId: run.runId, actor: "supervisor" }).catch(() => null);
   const stored = await getTask(run.record.id).catch(() => null);

@@ -66,7 +66,7 @@ export function queueEventLines(run, lines) {
     run.eventFlushPending = false;
     await handleLines(run, batch);
   }).catch((error) => {
-    process.stderr.write(`[codex-supervisor] event handling failed for ${run.record.id}: ${error.message}\n`);
+    process.stderr.write(`[agent-supervisor] event handling failed for ${run.record.id}: ${error.message}\n`);
   });
 }
 

@@ -46,7 +46,7 @@ test("a newer published version is reported with the install command", async () 
   assert.equal(result.latest.integrity, "sha512-INTEGRITY-9.9.9");
   assert.equal(result.installed.version, packageVersion);
   assert.match(result.notice, /9\.9\.9/);
-  assert.match(result.notice, /npm i -g codex-supervisor-mcp@latest/);
+  assert.match(result.notice, /npm i -g agent-supervisor-mcp@latest/);
   assert.equal(result.install_command, INSTALL_COMMAND);
   const short = updateNotice(result);
   assert.equal(short.update_available, true);
@@ -123,7 +123,7 @@ test("a registry that returns garbage is treated as offline", async () => {
 test("a registry reply without dist-tags is rejected, not trusted", async () => {
   registry.state.plan = (req, res) => {
     res.writeHead(200, { "content-type": "application/json" });
-    res.end(JSON.stringify({ name: "codex-supervisor-mcp", versions: {} }));
+    res.end(JSON.stringify({ name: "agent-supervisor-mcp", versions: {} }));
   };
   await clearCache();
   const result = await checkForUpdate({ force: true });

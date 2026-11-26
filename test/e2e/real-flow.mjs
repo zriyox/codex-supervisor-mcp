@@ -15,7 +15,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
-const PACKAGE = process.env.E2E_PACKAGE ?? "codex-supervisor-mcp";
+const PACKAGE = process.env.E2E_PACKAGE ?? "agent-supervisor-mcp";
 const keep = process.argv.includes("--keep");
 const globalRoot = execFileSync("npm", ["root", "-g"], { encoding: "utf8" }).trim();
 const packageRoot = join(globalRoot, PACKAGE);

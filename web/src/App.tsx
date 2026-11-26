@@ -79,7 +79,7 @@ export function App() {
         onSelect={(id) => go(id, null)}
       />
       <main className="min-h-0 min-w-0">
-        {overviewError && <p className="t-subhead p-8 text-red">读不到后端：{overviewError.message}。确认 codex-supervisor-web 在运行。</p>}
+        {overviewError && <p className="t-subhead p-8 text-red">读不到后端：{overviewError.message}。确认 agent-supervisor-web 在运行。</p>}
         {!overviewError && !session && !sessionError && <p className="t-subhead p-8 text-label-2">{overview ? "选一个 session。" : "读取中…"}</p>}
         {sessionError && <p className="t-subhead p-8 text-red">读取 session 失败：{sessionError.message}</p>}
         {session && sessionQuery.data && (

@@ -47,5 +47,5 @@ test("the npm tarball includes every local import reachable from its CLI entries
       if (/\.[cm]?jsx?$/.test(dependency)) pending.push(dependency);
     }
   }
-  assert.ok(shipped.has("skills/codex-supervisor/SKILL.md"), "the runtime skill must ship");
+  assert.ok(shipped.has("skills/agent-supervisor/SKILL.md"), "the runtime skill must ship");
 });
