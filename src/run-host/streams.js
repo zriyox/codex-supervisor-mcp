@@ -19,7 +19,7 @@ async function handleLines(run, lines) {
     }
   }
   if (events.length === 0) return;
-  const storedEvents = await appendTaskEvents(run.record.id, events, { runId: run.runId, actor: "codex" });
+  const storedEvents = await appendTaskEvents(run.record.id, events, { runId: run.runId, actor: "codex", bodyInLog: true });
   let next = run.live;
   for (const [index, event] of events.entries()) {
     if (event.type === "item.completed" && event.item?.type === "agent_message") {
