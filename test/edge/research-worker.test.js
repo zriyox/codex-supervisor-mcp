@@ -17,17 +17,19 @@ test("two workers may read the same shared file at the same time", async () => {
   const shared = join(repo, "shared.txt");
   await writeFile(shared, "the same input both need\n");
   await withMcp({ SUPERVISOR_HOME: home, FAKE_CODEX_SCENARIO: "hang" }, async ({ call }) => {
-    const reader = (title) => call("create_codex_worker", dispatchArgs(title, repo, {
-      sandbox: "read-only", ownedPaths: [], context: [{ path: shared }]
+    const reader = (title) => call("create_worker", dispatchArgs(title, repo, {
+      sandbox: { mode: "read-only" },
+      owned_paths: [],
+      context: { files: [{ path: shared }] }
     }));
     const [a, b] = await Promise.all([reader("read-a"), reader("read-b")]);
     assert.ok(a.id, `the first reader was refused: ${JSON.stringify(a)}`);
     assert.ok(b.id, `reading the same input must not conflict: ${JSON.stringify(b)}`);
-    const live = await Promise.all([a, b].map((worker) => call("get_codex_worker_status", { task_id: worker.id })));
+    const live = await Promise.all([a, b].map((worker) => call("get_worker", { task_id: worker.id, include: ["status"] })));
     for (const [index, status] of live.entries()) {
       assert.equal(status.status, "running", `reader ${index + 1} must be running while the other one is: ${JSON.stringify(status)}`);
     }
-    for (const worker of [a, b]) await call("cancel_codex_worker", { task_id: worker.id });
+    for (const worker of [a, b]) await call("cancel_worker", { task_id: worker.id });
   });
 });
 
@@ -36,14 +38,15 @@ test("a research worker fetches with network and lands nothing", async () => {
   const { dir: repo } = await makeRepo(join(home, "repo"));
   const argsLog = join(home, "codex-args.jsonl");
   await withMcp({ SUPERVISOR_HOME: home, FAKE_CODEX_SCENARIO: "commit-in-worktree", FAKE_CODEX_ARGS_LOG: argsLog }, async ({ call }) => {
-    const worker = await call("create_codex_worker", dispatchArgs("research", repo, {
-      sandbox: "workspace-write", ownedPaths: [], networkAccess: true
+    const worker = await call("create_worker", dispatchArgs("research", repo, {
+      sandbox: { mode: "workspace-write", network_access: true },
+      owned_paths: []
     }));
     assert.ok(worker.id, `a no-land research worker must be dispatchable: ${JSON.stringify(worker)}`);
     // completed with exit_code null is an intermediate state; land also waits
     // for the run to be fully settled.
     await waitFor(call, worker.id, (task) => task.status === "completed" && task.exit_code !== null);
-    const landed = await call("land_codex_worker", { task_id: worker.id, commitMessage: "research notes" });
+    const landed = await call("land_worker", { task_id: worker.id, commit_message: "research notes" });
     assert.equal(landed.error, "outside_owned_paths", "nothing a no-land worker produced may be merged");
   });
   const run = (await argsLogRuns(argsLog)).find((entry) => entry.args.includes("--output-schema"));
@@ -56,11 +59,12 @@ test("the read-only sandbox is never asked for network it does not have", async 
   const home = await tempHome("supervisor-readonly-net-");
   const { dir: repo } = await makeRepo(join(home, "repo"));
   await withMcp({ SUPERVISOR_HOME: home }, async ({ call }) => {
-    const refused = await call("create_codex_worker", dispatchArgs("verify", repo, {
-      sandbox: "read-only", ownedPaths: [], networkAccess: true
+    const refused = await call("create_worker", dispatchArgs("verify", repo, {
+      sandbox: { mode: "read-only", network_access: true },
+      owned_paths: []
     }));
     assert.match(refused.message ?? "", /read-only sandbox has no network/);
-    assert.match(refused.message ?? "", /ownedPaths: \[\]/, "the message names the shape that does fetch");
+    assert.match(refused.message ?? "", /owned_paths: \[\]/, "the message names the shape that does fetch");
   });
 });
 
@@ -69,7 +73,7 @@ test("a read-only worker is told it cannot write and gets no command allowlist",
   const { dir: repo } = await makeRepo(join(home, "repo"));
   const argsLog = join(home, "codex-args.jsonl");
   await withMcp({ SUPERVISOR_HOME: home, FAKE_CODEX_ARGS_LOG: argsLog }, async ({ call }) => {
-    const worker = await call("create_codex_worker", dispatchArgs("review", repo, { sandbox: "read-only", ownedPaths: [] }));
+    const worker = await call("create_worker", dispatchArgs("review", repo, { sandbox: { mode: "read-only" }, owned_paths: [] }));
     await waitFor(call, worker.id, (task) => task.status === "completed");
   });
   const run = (await argsLogRuns(argsLog)).find((entry) => entry.args.includes("--output-schema"));

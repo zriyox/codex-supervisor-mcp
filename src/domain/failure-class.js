@@ -16,8 +16,8 @@ export function classifyFailure(task) {
   if (provider) return provider;
   if (/did not record the process exit/i.test(error)) return { source: "supervisor_process", code: "exit_unrecorded", retryable: true };
   if (attention === "start_failed") return { source: "supervisor_process", code: "start_failed", retryable: true };
-  if (/^workspaceSetup command failed:/i.test(error)) return { source: "workspace_setup", code: "setup_command_failed", retryable: true };
-  if (/^workspaceSetup link /i.test(error)) return { source: "workspace_setup", code: "setup_link_failed", retryable: true };
+  if (/^workspace\.setup command failed:/i.test(error)) return { source: "workspace_setup", code: "setup_command_failed", retryable: true };
+  if (/^workspace\.setup link /i.test(error)) return { source: "workspace_setup", code: "setup_link_failed", retryable: true };
   if (attention === "invalid_report" || /Invalid final worker report/i.test(error)) return { source: "model_output", code: "invalid_report", retryable: true };
   if (task.acceptance_results?.passed === false) return { source: "acceptance", code: "acceptance_failed", retryable: true };
   if (attention === "no_work" || attention === "two_stall") return { source: "worker_progress", code: attention, retryable: false };

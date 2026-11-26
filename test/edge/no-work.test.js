@@ -9,13 +9,13 @@ test("a write run with no new output or command is marked no_work even when its 
   const { dir } = await makeRepo(join(home, "repo"));
   let worker;
   await withMcp({ SUPERVISOR_HOME: home }, async ({ call }) => {
-    worker = await call("create_codex_worker", dispatchArgs("write work", dir, { sandbox: "workspace-write", ownedPaths: ["first.txt"] }));
+    worker = await call("create_worker", dispatchArgs("write work", dir, { sandbox: { mode: "workspace-write" }, owned_paths: ["first.txt"] }));
     await waitFor(call, worker.id, (row) => row.exit_code === 0);
   });
   await writeFile(join(worker.worktree_path, "first.txt"), "earlier work\n");
   git(worker.worktree_path, ["commit", "-q", "-am", "earlier result"]);
   await withMcp({ SUPERVISOR_HOME: home, FAKE_CODEX_SCENARIO: "echo-prompt" }, async ({ call }) => {
-    await call("resume_codex_worker", { task_id: worker.id, prompt: "make further progress" });
+    await call("resume_worker", { task_id: worker.id, prompt: "make further progress" });
     await waitFor(call, worker.id, (row) => row.exit_code === 0 && row.run_count === 2);
     const db = openStore(home);
     try {
@@ -26,13 +26,13 @@ test("a write run with no new output or command is marked no_work even when its 
       assert.equal(evidence.commands_run, 0);
       assert.equal(evidence.output_changed, false);
     } finally { db.close(); }
-    const result = await call("get_worker_result", { task_id: worker.id });
+    const result = await call("get_worker", { task_id: worker.id, include: ["result"] });
     assert.equal(result.verification.commands_run, 0, "previous commands cannot validate this run");
     assert.equal(result.attention_reason, "no_work");
     assert.equal(result.run_evidence.output_changed, false);
-    const overview = await call("get_orchestration_overview", {});
+    const overview = await call("poll_workers", {});
     assert.ok(overview.needs_attention.includes(worker.id));
-    const changes = await call("check_workers", {});
+    const changes = await call("poll_workers", { cursor: "observer" });
     assert.ok(changes.attention.some((entry) => entry.id === worker.id && entry.reason === "no_work"));
   });
 });
@@ -41,7 +41,7 @@ test("read-only research without editing or shell commands is not called no_work
   const home = await tempHome("supervisor-research-");
   const { dir } = await makeRepo(join(home, "repo"));
   await withMcp({ SUPERVISOR_HOME: home, FAKE_CODEX_SCENARIO: "echo-prompt" }, async ({ call }) => {
-    const worker = await call("create_codex_worker", dispatchArgs("research", dir, { ownedPaths: [] }));
+    const worker = await call("create_worker", dispatchArgs("research", dir, { owned_paths: [] }));
     await waitFor(call, worker.id, (row) => row.exit_code === 0);
     const db = openStore(home);
     try { assert.equal(db.prepare("SELECT attention_reason FROM tasks WHERE id=?").get(worker.id).attention_reason, null); }

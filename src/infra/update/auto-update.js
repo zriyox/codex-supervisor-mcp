@@ -24,13 +24,13 @@ export const logPath = join(dataDir, "auto-update.log");
 const workerEntry = join(dirname(fileURLToPath(import.meta.url)), "auto-update-worker.js");
 
 export function autoUpdateDisabled(env = process.env) {
-  return /^(1|true|yes)$/i.test(env.CODEX_SUPERVISOR_NO_AUTO_UPDATE?.trim() ?? "");
+  return /^(1|true|yes)$/i.test(env.AGENT_SUPERVISOR_NO_AUTO_UPDATE?.trim() ?? "");
 }
 
 // Pure. The reason not to install, or null when an install should start.
 export function autoUpdateBlocker(update, env = process.env) {
   if (!update) return "no update check result yet";
-  if (autoUpdateDisabled(env)) return "disabled by CODEX_SUPERVISOR_NO_AUTO_UPDATE";
+  if (autoUpdateDisabled(env)) return "disabled by AGENT_SUPERVISOR_NO_AUTO_UPDATE";
   if (env.CI) return "CI environment";
   if (update.disabled) return "update check is disabled";
   if (!update.update_available) return "already current";
@@ -71,7 +71,7 @@ async function launchWorker({ version, packageRoot, registry }) {
     const child = spawnProcess(process.execPath, args, {
       detached: true,
       stdio: ["ignore", log, log],
-      env: { ...process.env, CODEX_SUPERVISOR_NO_AUTO_UPDATE: "1" },
+      env: { ...process.env, AGENT_SUPERVISOR_NO_AUTO_UPDATE: "1" },
       windowsHide: true
     });
     child.unref();
@@ -116,7 +116,7 @@ async function decide(update, { env = process.env, launch = launchWorker } = {})
     const pid = await launch({
       version,
       packageRoot: update.installed.path,
-      registry: env.CODEX_SUPERVISOR_REGISTRY?.trim() || null
+      registry: env.AGENT_SUPERVISOR_REGISTRY?.trim() || null
     });
     record = { state: "started", version, pid, started_at: new Date().toISOString() };
   } catch (error) {

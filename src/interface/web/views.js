@@ -1,4 +1,5 @@
 // What the board shows: session and worker rows built from the store, read-only.
+import { branchOf } from "../../domain/worker-branch.js";
 import { ACTIVE_STATUSES } from "../../domain/status.js";
 import { supervisorRoot } from "../../infra/paths.js";
 import { listTaskEventKinds, readAgentMessages, readTaskEvents } from "../../infra/store/events.js";
@@ -40,7 +41,7 @@ function workerRow(task) {
     sandbox: task.sandbox,
     project_root: task.project_root,
     worktree_path: task.worktree_path ?? null,
-    branch: task.worktree_path ? `codex/${task.id}` : null,
+    branch: task.worktree_path ? branchOf(task) : null,
     base_commit: task.base_commit ?? null,
     owned_paths: task.owned_paths ?? [],
     depends_on: task.depends_on ?? [],

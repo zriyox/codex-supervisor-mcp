@@ -1,6 +1,7 @@
 // Reads what the cleanup policy needs to know about one worker's worktree.
+import { branchOf } from "../domain/worker-branch.js";
 import "./compose.js";
-import { ACTIVE_STATUSES, TERMINAL_STATUSES } from "../domain/status.js";
+import { ACTIVE_STATUSES, TERMINAL_STATUSES, runIsOver } from "../domain/status.js";
 import { gitSucceeds, runGit } from "../infra/git.js";
 import { worktreesDir } from "../infra/paths.js";
 import { isPidAlive } from "../infra/store/tasks.js";
@@ -14,8 +15,10 @@ const git = (cwd, args) => runGit(cwd, args, { timeout: 15000, noOptionalLocks: 
 const lines = (text) => text.split("\n").filter(Boolean);
 
 function activeReason(task) {
-  if (task.pid && isPidAlive(task.pid)) return "worker process is still active";
-  if (task.run_host_pid && isPidAlive(task.run_host_pid)) return "run host process is still active";
+  // Once the run is over its pids may belong to anyone.
+  const settled = runIsOver(task);
+  if (!settled && task.pid && isPidAlive(task.pid)) return "worker process is still active";
+  if (!settled && task.run_host_pid && isPidAlive(task.run_host_pid)) return "run host process is still active";
   const acceptance = task.acceptance_results;
   if (acceptance?.status === "running" || (acceptance?.supervisor_pid && isPidAlive(acceptance.supervisor_pid))) return "acceptance process is still active";
   return null;
@@ -32,7 +35,7 @@ async function identityProblem(task) {
     if (info.isSymbolicLink()) return "worktree is a symlink";
     if (await realpath(path) !== await realpath(managed)) return "worktree realpath is unexpected";
     const branch = git(path, ["symbolic-ref", "--short", "HEAD"]).trim();
-    if (branch !== `codex/${task.id}`) return "worktree branch ownership is unexpected";
+    if (branch !== branchOf(task)) return "worktree branch ownership is unexpected";
     const registered = git(task.project_root, ["worktree", "list", "--porcelain", "-z"]).split("\0").filter((line) => line.startsWith("worktree "));
     const own = await realpath(path);
     for (const line of registered) {

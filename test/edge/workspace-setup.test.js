@@ -11,7 +11,7 @@ function writableRoots(args) {
   return flag ? JSON.parse(flag.slice("sandbox_workspace_write.writable_roots=".length)) : [];
 }
 
-test("workspaceSetup links dependencies, runs prepare, and exposes the link source and cache roots", async () => {
+test("workspace.setup links dependencies, runs prepare, and exposes the link source and cache roots", async () => {
   const home = await tempHome("supervisor-workspace-setup-");
   const { dir } = await makeRepo(join(home, "repo"));
   await mkdir(join(dir, "node_modules"));
@@ -25,37 +25,37 @@ test("workspaceSetup links dependencies, runs prepare, and exposes the link sour
     commands: ["mkdir -p generated && printf setup > generated/prepared.txt"]
   };
   await withMcp({ SUPERVISOR_HOME: home, FAKE_CODEX_ARGS_LOG: argsLog }, async ({ call }) => {
-    const preflight = await call("preflight_codex_worker", {
+    const preflight = await call("preflight_worker", {
       title: "frontend",
       cwd: dir,
-      sandbox: "workspace-write",
-      ownedPaths: ["apps/web/src/page.vue"],
-      workspaceSetup: setup,
-      probeCommands: ["ls -la"]
+      sandbox: { mode: "workspace-write" },
+      owned_paths: ["apps/web/src/page.vue"],
+      workspace: { setup: setup },
+      probe_commands: ["ls -la"]
     });
     assert.ok(preflight.id, JSON.stringify(preflight));
     await waitFor(call, preflight.id, settled);
-    assert.equal((await call("get_worker_preflight", { task_id: preflight.id })).status, "passed");
-    const first = await call("get_codex_worker_status", { task_id: preflight.id });
+    assert.equal((await call("get_worker", { task_id: preflight.id, include: ["preflight"] })).status, "passed");
+    const first = await call("get_worker", { task_id: preflight.id, include: ["status"] });
     assert.equal(await readlink(join(first.worktree_path, "node_modules")), join(dir, "node_modules"));
     assert.equal(await readFile(join(first.worktree_path, "generated", "prepared.txt"), "utf8"), "setup");
 
-    const worker = await call("create_codex_worker", {
+    const worker = await call("create_worker", {
       ...dispatchArgs("frontend target", dir, {
-        sandbox: "workspace-write",
-        ownedPaths: ["apps/web/src/page.vue"],
-        workspaceSetup: setup
+        sandbox: { mode: "workspace-write" },
+        owned_paths: ["apps/web/src/page.vue"],
+        workspace: { setup: setup }
       }),
       preflight_id: preflight.id
     });
     assert.ok(worker.id, JSON.stringify(worker));
     await waitFor(call, worker.id, settled);
-    const second = await call("get_codex_worker_status", { task_id: worker.id });
+    const second = await call("get_worker", { task_id: worker.id, include: ["status"] });
     assert.equal(await readlink(join(second.worktree_path, "node_modules")), join(dir, "node_modules"));
 
     await mkdir(join(second.worktree_path, "apps", "web", "src"), { recursive: true });
     await writeFile(join(second.worktree_path, "apps", "web", "src", "page.vue"), "<template>ready</template>\n");
-    const landed = await call("land_codex_worker", { task_id: worker.id, commitMessage: "land owned frontend file" });
+    const landed = await call("land_worker", { task_id: worker.id, commit_message: "land owned frontend file" });
     assert.ok(!landed.error, JSON.stringify(landed));
     assert.equal(git(dir, ["show", "HEAD:apps/web/src/page.vue"]), "<template>ready</template>");
     const committed = git(dir, ["ls-tree", "-r", "--name-only", "HEAD"]).split("\n");
@@ -79,24 +79,24 @@ test("workspaceSetup links dependencies, runs prepare, and exposes the link sour
   });
 });
 
-test("workspaceSetup failure aborts dispatch and removes its worktree", async () => {
+test("workspace.setup failure aborts dispatch and removes its worktree", async () => {
   const home = await tempHome("supervisor-workspace-setup-fail-");
   const { dir } = await makeRepo(join(home, "repo"));
   await withMcp({ SUPERVISOR_HOME: home }, async ({ call }) => {
-    const refused = await call("create_codex_worker", {
+    const refused = await call("create_worker", {
       ...dispatchArgs("prepare failure", dir, {
-        sandbox: "workspace-write",
-        ownedPaths: ["src/result.txt"],
-        workspaceSetup: { commands: ["printf prepare-error >&2; exit 7"] }
+        sandbox: { mode: "workspace-write" },
+        owned_paths: ["src/result.txt"],
+        workspace: { setup: { commands: ["printf prepare-error >&2; exit 7"] } }
       })
     });
-    assert.match(refused.message ?? "", /workspaceSetup command failed/);
+    assert.match(refused.message ?? "", /workspace.setup command failed/);
     const entries = await readdir(join(home, "worktrees")).catch(() => []);
     assert.deepEqual(entries.filter((entry) => entry.startsWith("codex-")), []);
   });
 });
 
-test("workspaceSetup initializes submodules from the shared object store", async () => {
+test("workspace.setup initializes submodules from the shared object store", async () => {
   const home = await tempHome("supervisor-workspace-setup-submodule-");
   const { dir } = await makeRepo(join(home, "repo"));
   const proto = join(home, "proto");
@@ -104,40 +104,40 @@ test("workspaceSetup initializes submodules from the shared object store", async
   git(dir, ["-c", "protocol.file.allow=always", "submodule", "add", proto, "proto"]);
   git(dir, ["commit", "-q", "-m", "add proto submodule"]);
   await withMcp({ SUPERVISOR_HOME: home }, async ({ call }) => {
-    const worker = await call("create_codex_worker", {
+    const worker = await call("create_worker", {
       ...dispatchArgs("submodule setup", dir, {
-        sandbox: "workspace-write",
-        ownedPaths: ["src/result.txt"],
-        workspaceSetup: { submodules: true }
+        sandbox: { mode: "workspace-write" },
+        owned_paths: ["src/result.txt"],
+        workspace: { setup: { submodules: true } }
       })
     });
     assert.ok(worker.id, JSON.stringify(worker));
     await waitFor(call, worker.id, settled);
-    const row = await call("get_codex_worker_status", { task_id: worker.id });
+    const row = await call("get_worker", { task_id: worker.id, include: ["status"] });
     assert.equal((await readFile(join(row.worktree_path, "proto", "first.txt"), "utf8")).replaceAll("\r\n", "\n"), "one\n");
   });
 });
 
-test("workspaceSetup changes invalidate a preflight contract", async () => {
+test("workspace.setup changes invalidate a preflight contract", async () => {
   const home = await tempHome("supervisor-workspace-setup-contract-");
   const { dir } = await makeRepo(join(home, "repo"));
   await mkdir(join(dir, "node_modules"));
   await withMcp({ SUPERVISOR_HOME: home }, async ({ call }) => {
     const setup = { links: [{ path: "node_modules", source: "node_modules" }] };
-    const preflight = await call("preflight_codex_worker", {
+    const preflight = await call("preflight_worker", {
       title: "setup contract",
       cwd: dir,
-      sandbox: "workspace-write",
-      ownedPaths: ["src/result.txt"],
-      workspaceSetup: setup,
-      probeCommands: ["ls -la"]
+      sandbox: { mode: "workspace-write" },
+      owned_paths: ["src/result.txt"],
+      workspace: { setup: setup },
+      probe_commands: ["ls -la"]
     });
     await waitFor(call, preflight.id, settled);
-    const refused = await call("create_codex_worker", {
+    const refused = await call("create_worker", {
       ...dispatchArgs("changed setup", dir, {
-        sandbox: "workspace-write",
-        ownedPaths: ["src/result.txt"],
-        workspaceSetup: { ...setup, submodules: true }
+        sandbox: { mode: "workspace-write" },
+        owned_paths: ["src/result.txt"],
+        workspace: { setup: { ...setup, submodules: true } }
       }),
       preflight_id: preflight.id
     });
@@ -145,20 +145,19 @@ test("workspaceSetup changes invalidate a preflight contract", async () => {
   });
 });
 
-test("workspaceSetup is rejected outside git worktrees", async () => {
+test("workspace.setup is rejected outside git worktrees", async () => {
   const home = await tempHome("supervisor-workspace-setup-nongit-");
   const source = join(home, "source");
   await mkdir(source, { recursive: true });
   await withMcp({ SUPERVISOR_HOME: home }, async ({ call }) => {
-    const refused = await call("create_codex_worker", {
+    const refused = await call("create_worker", {
       title: "non git setup",
       task: "inspect",
       cwd: source,
-      workspaceKind: "read_only_in_place",
-      sandbox: "read-only",
-      ownedPaths: [],
-      goal: { objective: "inspect" },
-      workspaceSetup: { commands: ["true"] }
+      workspace: { kind: "read_only_in_place", setup: { commands: ["true"] } },
+      sandbox: { mode: "read-only" },
+      owned_paths: [],
+      goal: { objective: "inspect" }
     });
     assert.match(refused.message ?? "", /only supported for git_worktree/);
   });
@@ -171,12 +170,12 @@ test("JavaScript acceptance requires an explicit workspace setup", async () => {
   git(dir, ["add", "package.json"]);
   git(dir, ["commit", "-q", "-m", "add package manifest"]);
   await withMcp({ SUPERVISOR_HOME: home }, async ({ call }) => {
-    const refused = await call("create_codex_worker", dispatchArgs("missing setup", dir, {
-      sandbox: "workspace-write",
-      ownedPaths: ["src/result.txt"],
-      acceptance: ["npm test"]
+    const refused = await call("create_worker", dispatchArgs("missing setup", dir, {
+      sandbox: { mode: "workspace-write" },
+      owned_paths: ["src/result.txt"],
+      acceptance: { commands: ["npm test"] }
     }));
     assert.equal(refused.error, "workspace_setup_required", JSON.stringify(refused));
-    assert.match(refused.message ?? "", /workspaceSetup/);
+    assert.match(refused.message ?? "", /workspace.setup/);
   });
 });

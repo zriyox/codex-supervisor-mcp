@@ -1,3 +1,4 @@
+import { branchOf } from "../domain/worker-branch.js";
 import { ensureTaskWorktree } from "./restore-worktree.js";
 import "./compose.js";
 import { runGit } from "../infra/git.js";
@@ -84,7 +85,7 @@ export async function landOneWorkerTask(taskId, options = {}) {
         return { error: "acceptance_not_run", task_id: taskId };
       }
       git(task.project_root, ["merge-base", "--is-ancestor", task.landed_head, "HEAD"]);
-      return { task_id: taskId, title: task.title, status: task.status, branch: `codex/${task.id}`, skipped: "already_landed", landed_at: task.landed_at, landed_head: task.landed_head };
+      return { task_id: taskId, title: task.title, status: task.status, branch: branchOf(task), skipped: "already_landed", landed_at: task.landed_at, landed_head: task.landed_head };
     } catch {
       return { error: "landed_commit_unreachable", task_id: taskId, reason: "the removed ancestor worktree cannot be skipped without proving its landed commit is on the current target" };
     }
@@ -106,15 +107,15 @@ export async function landOneWorkerTask(taskId, options = {}) {
       task_id: taskId,
       title: task.title,
       status: task.status,
-      branch: `codex/${task.id}`,
+      branch: branchOf(task),
       ...outcome,
       skipped: "already_in_target",
       lifecycle_recorded: !alreadyRecorded && Boolean(outcome.matched_head)
     };
   }
-  if (outcome.error) return { task_id: taskId, title: task.title, status: task.status, branch: `codex/${task.id}`, ...outcome };
+  if (outcome.error) return { task_id: taskId, title: task.title, status: task.status, branch: branchOf(task), ...outcome };
   await recordWorkerLanded(task, { head: outcome.head, branch: outcome.onto, target: outcome.target, alreadyLanded: outcome.already_landed ?? [] });
-  return { task_id: taskId, title: task.title, status: task.status, branch: `codex/${task.id}`, ...outcome };
+  return { task_id: taskId, title: task.title, status: task.status, branch: branchOf(task), ...outcome };
 }
 
 export async function followupChainIds(taskId) {

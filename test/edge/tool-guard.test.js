@@ -103,8 +103,8 @@ test("a patch through the shell heredoc is judged exactly like the patch tool", 
     "*** End Patch",
     "EOF" + tail
   ].join("\n");
-  assert.equal(shell(heredoc("owned/notes.md")).allow, true, "a patch inside ownedPaths is an edit, not an undeclared command");
-  assert.match(shell(heredoc("outside/notes.md")).reason, /outside ownedPaths/);
+  assert.equal(shell(heredoc("owned/notes.md")).allow, true, "a patch inside owned_paths is an edit, not an undeclared command");
+  assert.match(shell(heredoc("outside/notes.md")).reason, /outside owned_paths/);
   assert.equal(shell(heredoc("owned/notes.md", { quote: "" })).allow, false, "an unquoted heredoc would expand $() in the body");
   assert.equal(shell(heredoc("owned/notes.md", { tail: " && rm -rf /" })).allow, false, "nothing may follow the closing delimiter");
   assert.equal(shell(heredoc("owned/notes.md", { tail: "; rm -rf /" })).allow, false);
@@ -141,18 +141,18 @@ test("a declared command prefix covers one command and cannot smuggle another", 
 
 test("the built-in stage checkpoint is allowed, but cannot smuggle another command", () => {
   const policy = { cwd: tmpdir(), sandbox: "workspace-write", ownedPaths: [tmpdir()],
-    allowedCommands: ['node "$CODEX_SUPERVISOR_STAGE_CLI"*'] };
+    allowedCommands: ['node "$AGENT_SUPERVISOR_STAGE_CLI"*'] };
   const shell = (command) => evaluateToolUse({ tool_name: "Bash", tool_input: { command } }, policy);
-  assert.equal(shell('node "$CODEX_SUPERVISOR_STAGE_CLI" "gate:s3"').allow, true);
-  assert.equal(shell('node "$CODEX_SUPERVISOR_STAGE_CLI" "gate:s3" && rm -rf /').allow, false);
+  assert.equal(shell('node "$AGENT_SUPERVISOR_STAGE_CLI" "gate:s3"').allow, true);
+  assert.equal(shell('node "$AGENT_SUPERVISOR_STAGE_CLI" "gate:s3" && rm -rf /').allow, false);
 });
 
 test("the built-in acceptance runner is allowed, but cannot smuggle another command", () => {
   const policy = { cwd: tmpdir(), sandbox: "workspace-write", ownedPaths: [tmpdir()],
-    allowedCommands: ['node "$CODEX_SUPERVISOR_ACCEPTANCE_CLI"*'] };
+    allowedCommands: ['node "$AGENT_SUPERVISOR_ACCEPTANCE_CLI"*'] };
   const shell = (command) => evaluateToolUse({ tool_name: "Bash", tool_input: { command } }, policy);
-  assert.equal(shell('node "$CODEX_SUPERVISOR_ACCEPTANCE_CLI"').allow, true);
-  assert.equal(shell('node "$CODEX_SUPERVISOR_ACCEPTANCE_CLI" && rm -rf /').allow, false);
+  assert.equal(shell('node "$AGENT_SUPERVISOR_ACCEPTANCE_CLI"').allow, true);
+  assert.equal(shell('node "$AGENT_SUPERVISOR_ACCEPTANCE_CLI" && rm -rf /').allow, false);
 });
 
 

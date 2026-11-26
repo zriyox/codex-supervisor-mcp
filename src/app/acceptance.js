@@ -44,7 +44,7 @@ async function readCheckEvidence(check, cwd, checkId, baseCommit) {
     const path = resolve(cwd, check.reportPath);
     const canonical = await realpath(path);
     const outside = relative(root, canonical);
-    if (outside === ".." || outside.startsWith(`..${process.platform === "win32" ? "\\" : "/"}`) || isAbsolute(outside)) throw new Error("reportPath escapes the worktree");
+    if (outside === ".." || outside.startsWith(`..${process.platform === "win32" ? "\\" : "/"}`) || isAbsolute(outside)) throw new Error("report_path escapes the worktree");
     const info = await lstat(path);
     if (!info.isFile() || info.isSymbolicLink() || info.size > 1024 * 1024) throw new Error("report must be a regular file of at most 1 MiB");
     const report = JSON.parse(await readFile(path, "utf8"));
@@ -221,9 +221,9 @@ export async function runAcceptance(commands, options = {}) {
     ...env,
     NO_COLOR: "1",
     CI: env.CI ?? "1",
-    CODEX_SUPERVISOR_TASK_ID: taskId ?? "",
-    CODEX_SUPERVISOR_BASE_COMMIT: baseCommit ?? "",
-    CODEX_SUPERVISOR_RUN: run == null ? "" : String(run)
+    AGENT_SUPERVISOR_TASK_ID: taskId ?? "",
+    AGENT_SUPERVISOR_BASE_COMMIT: baseCommit ?? "",
+    AGENT_SUPERVISOR_RUN: run == null ? "" : String(run)
   };
   for (const check of normalizeAcceptance(commands) ?? []) {
     const command = typeof check === "string" ? check : check.command;
@@ -233,7 +233,7 @@ export async function runAcceptance(commands, options = {}) {
     const checkId = randomUUID();
     const result = await runOne(command, {
       cwd,
-      env: { ...checkEnv, CODEX_SUPERVISOR_CHECK_ID: checkId },
+      env: { ...checkEnv, AGENT_SUPERVISOR_CHECK_ID: checkId },
       timeoutMs,
       onSpawn: (kill) => {
         control.kill = kill;

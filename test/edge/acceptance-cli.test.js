@@ -13,13 +13,13 @@ test("the worker acceptance CLI uses the stored supervisor contract", async () =
   const home = await tempHome("supervisor-accept-cli-");
   const { dir: repo } = await makeRepo(join(home, "repo"));
   await withMcp({ SUPERVISOR_HOME: home }, async ({ call }) => {
-    const created = await call("create_codex_worker", dispatchArgs("accept-cli", repo, {
-      acceptance: ['node -e "console.log(\'acceptance-cli-ok\')"']
+    const created = await call("create_worker", dispatchArgs("accept-cli", repo, {
+      acceptance: { commands: ['node -e "console.log(\'acceptance-cli-ok\')"'] }
     }));
     const final = await waitFor(call, created.id, (task) => task.exit_code === 0 && task.acceptance === "passed");
     const { stdout } = await exec(process.execPath, [join(repoRoot, "src", "interface", "bin", "acceptance-cli.js")], {
-      env: { ...process.env, SUPERVISOR_HOME: home, CODEX_SUPERVISOR_TASK_ID: created.id,
-        CODEX_SUPERVISOR_BASE_COMMIT: final.base_commit, CODEX_SUPERVISOR_RUN: String(final.run_count) },
+      env: { ...process.env, SUPERVISOR_HOME: home, AGENT_SUPERVISOR_TASK_ID: created.id,
+        AGENT_SUPERVISOR_BASE_COMMIT: final.base_commit, AGENT_SUPERVISOR_RUN: String(final.run_count) },
       cwd: final.worktree_path
     });
     const result = JSON.parse(stdout.trim());
@@ -37,8 +37,8 @@ test("the worker acceptance CLI reads a readonly supervisor store without writin
   let created;
   let final;
   await withMcp({ SUPERVISOR_HOME: home }, async ({ call }) => {
-    created = await call("create_codex_worker", dispatchArgs("accept-cli-readonly", repo, {
-      acceptance: ['node -e "console.log(\'readonly-store-ok\')"']
+    created = await call("create_worker", dispatchArgs("accept-cli-readonly", repo, {
+      acceptance: { commands: ['node -e "console.log(\'readonly-store-ok\')"'] }
     }));
     final = await waitFor(call, created.id, (task) => task.exit_code === 0 && task.acceptance === "passed");
   });
@@ -56,8 +56,8 @@ test("the worker acceptance CLI reads a readonly supervisor store without writin
   chmodSync(dataDir, 0o555);
   try {
     const { stdout } = await exec(process.execPath, [join(repoRoot, "src", "interface", "bin", "acceptance-cli.js")], {
-      env: { ...process.env, SUPERVISOR_HOME: home, CODEX_SUPERVISOR_TASK_ID: created.id,
-        CODEX_SUPERVISOR_BASE_COMMIT: final.base_commit, CODEX_SUPERVISOR_RUN: String(final.run_count) },
+      env: { ...process.env, SUPERVISOR_HOME: home, AGENT_SUPERVISOR_TASK_ID: created.id,
+        AGENT_SUPERVISOR_BASE_COMMIT: final.base_commit, AGENT_SUPERVISOR_RUN: String(final.run_count) },
       cwd: final.worktree_path
     });
     const result = JSON.parse(stdout.trim());

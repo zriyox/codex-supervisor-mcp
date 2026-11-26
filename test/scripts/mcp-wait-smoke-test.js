@@ -21,27 +21,28 @@ function parseTextResult(result) {
 try {
   await client.connect(transport);
   const created = parseTextResult(await client.callTool({
-    name: "create_codex_worker",
+    name: "create_worker",
     arguments: {
       title: "MCP wait smoke test",
       task: "Reply with one short sentence. Do not modify files.",
       cwd,
-      sandbox: "read-only",
-      reasoningEffort: "high",
-      ownedPaths: [cwd],
+      sandbox: { mode: "read-only" },
+      reasoning_effort: "high",
+      owned_paths: [cwd],
       goal: { objective: "MCP wait smoke test: reply with one sentence" }
     }
   }));
 
   const waited = parseTextResult(await client.callTool({
-    name: "wait_codex_workers",
+    name: "wait_workers",
     arguments: {
       task_ids: [created.id],
       mode: "all",
-      timeoutMs: 120000,
-      pollMs: 1000,
-      includeEvents: true,
-      eventLimit: 5
+      timeout_ms: 120000,
+      allow_long_wait: true,
+      poll_ms: 1000,
+      include_events: true,
+      event_limit: 5
     }
   }));
 

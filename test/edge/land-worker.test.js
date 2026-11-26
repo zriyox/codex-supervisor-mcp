@@ -1,4 +1,4 @@
-// land_codex_worker: the worker's commits arrive on the dispatch branch in
+// land_worker: the worker's commits arrive on the dispatch branch in
 // order with their messages, a dirty or wrongly-named target is refused
 // untouched, a conflict is reported and rolled back, and a worker without
 // commits lands nothing but says what it left uncommitted.
@@ -22,9 +22,9 @@ async function commitIn(wt, file, text, message) {
 
 before(async () => {
   await withMcp({ SUPERVISOR_HOME: home }, async ({ call }) => {
-    const created = await call("create_codex_worker", dispatchArgs("lander", repo, { ownedPaths: ["step.txt", "first.txt", "scratch.txt"] }));
+    const created = await call("create_worker", dispatchArgs("lander", repo, { owned_paths: ["step.txt", "first.txt", "scratch.txt"] }));
     worker = await waitFor(call, created.id, (t) => t.status === "completed" && t.exit_code === 0);
-    const second = await call("create_codex_worker", dispatchArgs("idle", repo, { ownedPaths: ["left.txt"] }));
+    const second = await call("create_worker", dispatchArgs("idle", repo, { owned_paths: ["left.txt"] }));
     idle = await waitFor(call, second.id, (t) => t.status === "completed" && t.exit_code === 0);
   });
   await commitIn(worker.worktree_path, "step.txt", "step one\n", "step 1: add step.txt");
@@ -37,7 +37,7 @@ test("a dirty target is refused and left alone", async () => {
   await writeFile(join(repo, "second.txt"), "two\nedited locally\n");
   try {
     await withMcp({ SUPERVISOR_HOME: home }, async ({ call }) => {
-      const result = await call("land_codex_worker", { task_id: worker.id });
+      const result = await call("land_worker", { task_id: worker.id });
       assert.equal(result.error, "dirty_target");
       assert.deepEqual(result.dirty_files, ["second.txt"]);
     });
@@ -48,7 +48,7 @@ test("a dirty target is refused and left alone", async () => {
 
 test("onto is a guard: a different branch name is refused, nothing is switched", async () => {
   await withMcp({ SUPERVISOR_HOME: home }, async ({ call }) => {
-    const result = await call("land_codex_worker", { task_id: worker.id, onto: "dev" });
+    const result = await call("land_worker", { task_id: worker.id, onto: "dev" });
     assert.equal(result.error, "wrong_branch");
     assert.equal(result.current_branch, "main");
     assert.equal(git(repo, ["symbolic-ref", "--short", "HEAD"]), "main");
@@ -58,7 +58,7 @@ test("onto is a guard: a different branch name is refused, nothing is switched",
 test("the worker's commits land in order with their messages; uncommitted edits are reported, not landed", async () => {
   const before = git(repo, ["rev-parse", "HEAD"]);
   await withMcp({ SUPERVISOR_HOME: home }, async ({ call }) => {
-    const result = await call("land_codex_worker", { task_id: worker.id, onto: "main" });
+    const result = await call("land_worker", { task_id: worker.id, onto: "main" });
     assert.equal(result.error, undefined, JSON.stringify(result).slice(0, 400));
     assert.equal(result.onto, "main");
     assert.equal(result.landed.length, 2);
@@ -75,11 +75,11 @@ test("the worker's commits land in order with their messages; uncommitted edits 
 
 test("a conflict is reported with the files and the target is rolled back", async () => {
   await withMcp({ SUPERVISOR_HOME: home }, async ({ call }) => {
-    const created = await call("create_codex_worker", dispatchArgs("conflicting", repo, { baseRef: "v-first", ownedPaths: ["first.txt"] }));
+    const created = await call("create_worker", dispatchArgs("conflicting", repo, { workspace: { base_ref: "v-first" }, owned_paths: ["first.txt"] }));
     const other = await waitFor(call, created.id, (t) => t.status === "completed" && t.exit_code === 0);
     await commitIn(other.worktree_path, "first.txt", "one\nsomething else\n", "step 3: clash on first.txt");
     const before = git(repo, ["rev-parse", "HEAD"]);
-    const result = await call("land_codex_worker", { task_id: other.id });
+    const result = await call("land_worker", { task_id: other.id });
     assert.equal(result.error, "conflict");
     assert.deepEqual(result.conflicts, ["first.txt"]);
     assert.equal(git(repo, ["rev-parse", "HEAD"]), before, "HEAD did not move");
@@ -89,11 +89,11 @@ test("a conflict is reported with the files and the target is rolled back", asyn
 
 test("a worker that committed nothing lands nothing and says how to land its edits", async () => {
   await withMcp({ SUPERVISOR_HOME: home }, async ({ call }) => {
-    const result = await call("land_codex_worker", { task_id: idle.id });
+    const result = await call("land_worker", { task_id: idle.id });
     assert.equal(result.error, "nothing_to_land");
     assert.deepEqual(result.uncommitted, ["left.txt"]);
-    assert.match(result.reason, /commitMessage/);
-    const missing = await call("land_codex_worker", { task_id: "codex-none" });
+    assert.match(result.reason, /commit_message/);
+    const missing = await call("land_worker", { task_id: "codex-none" });
     assert.equal(missing.error, "task_not_found");
   });
 });
@@ -113,10 +113,10 @@ test("a machine where git has no identity still lands, with a stand-in committer
     GIT_COMMITTER_EMAIL: ""
   };
   await withMcp(noIdentity, async ({ call }) => {
-    const created = await call("create_codex_worker", dispatchArgs("anonymous", repo, { ownedPaths: ["anon.txt"] }));
+    const created = await call("create_worker", dispatchArgs("anonymous", repo, { owned_paths: ["anon.txt"] }));
     const anon = await waitFor(call, created.id, (t) => t.status === "completed" && t.exit_code === 0);
     await writeFile(join(anon.worktree_path, "anon.txt"), "no identity here\n");
-    const result = await call("land_codex_worker", { task_id: anon.id, commitMessage: "step 5: add anon.txt" });
+    const result = await call("land_worker", { task_id: anon.id, commit_message: "step 5: add anon.txt" });
     assert.equal(result.error, undefined, JSON.stringify(result).slice(0, 400));
     assert.equal(result.landed.length, 1);
   });
@@ -124,10 +124,10 @@ test("a machine where git has no identity still lands, with a stand-in committer
   assert.equal(committer, "codex-supervisor <codex-supervisor@localhost>");
 });
 
-test("commitMessage commits a workspace-write worker's edits as one commit on its branch and lands it", async () => {
+test("commit_message commits a workspace-write worker's edits as one commit on its branch and lands it", async () => {
   const before = git(repo, ["rev-parse", "HEAD"]);
   await withMcp({ SUPERVISOR_HOME: home }, async ({ call }) => {
-    const result = await call("land_codex_worker", { task_id: idle.id, commitMessage: "step 4: add left.txt" });
+    const result = await call("land_worker", { task_id: idle.id, commit_message: "step 4: add left.txt" });
     assert.equal(result.error, undefined, JSON.stringify(result).slice(0, 300));
     assert.equal(result.landed.length, 1);
     assert.equal(result.landed[0].subject, "step 4: add left.txt");

@@ -7,7 +7,7 @@ For any agent working in this repository. CONTRIBUTING.md has the human version.
 Five layers and the run host; a layer imports only the ones below it. `docs/architecture.md` has the rules and the path of one dispatch. ESLint enforces them.
 
 ```
-src/interface/           MCP tools (mcp/tools, one module per job), CLIs (bin), board API (web)
+src/interface/           MCP tools (mcp/tools: the public schemas; mcp/handlers: the operations behind them), CLIs (bin), board API (web)
 src/run-host/            the detached process that owns one run: launch, streams, finalize
 src/app/                 use cases: dispatch, resume, followup, landing, rebase, cleanup-plan, acceptance, side-chat
 src/runners/codex/       the Codex CLI: arguments, event parsing, native goals, the tool guard

@@ -13,12 +13,16 @@ test("worker context excludes session peers and includes only scoped verified fa
   let peer;
   await withMcp({ SUPERVISOR_HOME: home, FAKE_CODEX_SCENARIO: "echo-prompt" }, async ({ call }) => {
     await call("describe_session", { session_id: "batch", objective: "SESSION_SECRET_OBJECTIVE" });
-    peer = await call("create_codex_worker", dispatchArgs("PEER_SECRET_TITLE", dir, {
-      session_id: "batch", task: "PEER_SECRET_TASK", ownedPaths: ["peer.txt"]
+    peer = await call("create_worker", dispatchArgs("PEER_SECRET_TITLE", dir, {
+      session: { id: "batch" },
+      task: "PEER_SECRET_TASK",
+      owned_paths: ["peer.txt"]
     }));
     await waitFor(call, peer.id, (row) => row.exit_code === 0);
-    target = await call("create_codex_worker", dispatchArgs("target", dir, {
-      session_id: "batch", task: "TARGET_TASK", ownedPaths: ["target.txt"]
+    target = await call("create_worker", dispatchArgs("target", dir, {
+      session: { id: "batch" },
+      task: "TARGET_TASK",
+      owned_paths: ["target.txt"]
     }));
     await waitFor(call, target.id, (row) => row.exit_code === 0);
   });
@@ -33,22 +37,22 @@ test("worker context excludes session peers and includes only scoped verified fa
   await recordFact({ workItemId: peerWork.id, scopeType: "work_item", scopeId: peerWork.id, key: "peer", value: { note: "PEER_FACT_MUST_NOT_INJECT" }, state: "verified", validForSha: target.base_commit });
 
   await withMcp({ SUPERVISOR_HOME: home, FAKE_CODEX_SCENARIO: "echo-prompt" }, async ({ call }) => {
-    await call("resume_codex_worker", { task_id: target.id, prompt: "continue target only" });
+    await call("resume_worker", { task_id: target.id, prompt: "continue target only" });
     await waitFor(call, target.id, (row) => row.run_count === 2 && row.exit_code === 0);
-    const result = await call("get_worker_result", { task_id: target.id, maxChars: 0 });
+    const result = await call("get_worker", { task_id: target.id, max_chars: 0, include: ["result"] });
     const prompt = result.reports[0];
     assert.match(prompt, /OWN_VERIFIED_FACT/);
-    assert.match(prompt, new RegExp(`branch: codex/${target.id}`));
+    assert.match(prompt, new RegExp(`branch: worker/${target.id}`));
     assert.match(prompt, /acceptance_source: no acceptance configured/);
     assert.doesNotMatch(prompt, /CANDIDATE_MUST_NOT_INJECT/);
     assert.doesNotMatch(prompt, /PEER_FACT_MUST_NOT_INJECT/);
     assert.doesNotMatch(prompt, /PEER_SECRET_TITLE|PEER_SECRET_TASK|SESSION_SECRET_OBJECTIVE/);
-    const snapshotMeta = await call("get_context_snapshot_meta", { task_id: target.id });
+    const snapshotMeta = await call("get_worker", { task_id: target.id, include: ["context"] });
     assert.ok(snapshotMeta.snapshot);
     assert.equal(snapshotMeta.snapshot.fact_ids.length, 1);
     assert.ok(snapshotMeta.snapshot.fact_ids.includes(ownFact.id));
     assert.equal("text" in snapshotMeta.snapshot, false);
-    const fact = await call("get_fact", { fact_id: ownFact.id });
+    const fact = await call("facts", { fact_id: ownFact.id, action: "get" });
     assert.equal(fact.fact.value.note, "OWN_VERIFIED_FACT");
   });
   const snapshot = await latestContextSnapshotForTask(target.id);
@@ -66,16 +70,17 @@ test("searching another repository does not expire the original work's verified 
   git(secondRepo, ["add", "second-only.txt"]);
   git(secondRepo, ["commit", "-q", "-m", "make second repository distinct"]);
   await withMcp({ SUPERVISOR_HOME: home }, async ({ call }) => {
-    const first = await call("create_codex_worker", dispatchArgs("first repo", firstRepo, {
-      acceptance: "node -e \"process.exit(0)\"", ownedPaths: ["first.txt"]
+    const first = await call("create_worker", dispatchArgs("first repo", firstRepo, {
+      acceptance: { commands: "node -e \"process.exit(0)\"" },
+      owned_paths: ["first.txt"]
     }));
     await waitFor(call, first.id, (row) => row.exit_code === 0);
     const db = openStore(home);
     const fact = db.prepare("SELECT id FROM facts WHERE work_item_id = (SELECT id FROM work_items WHERE task_id = ?) AND state = 'verified'").get(first.id);
     assert.ok(fact);
-    const second = await call("create_codex_worker", dispatchArgs("second repo", secondRepo, { ownedPaths: ["second.txt"] }));
+    const second = await call("create_worker", dispatchArgs("second repo", secondRepo, { owned_paths: ["second.txt"] }));
     await waitFor(call, second.id, (row) => row.exit_code === 0);
-    await call("search_worker_facts", { task_id: second.id });
+    await call("facts", { task_id: second.id, action: "search" });
     assert.equal(db.prepare("SELECT state FROM facts WHERE id = ?").get(fact.id).state, "verified");
     db.close();
   });
@@ -86,8 +91,9 @@ test("concurrent searches append at most one expiry version for the same fact", 
   const { dir } = await makeRepo(join(home, "repo"));
   let worker;
   await withMcp({ SUPERVISOR_HOME: home }, async ({ call }) => {
-    worker = await call("create_codex_worker", dispatchArgs("expiry race", dir, {
-      acceptance: "node -e \"process.exit(0)\"", ownedPaths: ["first.txt"]
+    worker = await call("create_worker", dispatchArgs("expiry race", dir, {
+      acceptance: { commands: "node -e \"process.exit(0)\"" },
+      owned_paths: ["first.txt"]
     }));
     await waitFor(call, worker.id, (row) => row.exit_code === 0);
   });
@@ -96,8 +102,8 @@ test("concurrent searches append at most one expiry version for the same fact", 
   db.prepare("UPDATE facts SET expires_at = ? WHERE id = ?").run("2000-01-01T00:00:00.000Z", original.id);
   await withMcp({ SUPERVISOR_HOME: home }, async ({ call: first }) => withMcp({ SUPERVISOR_HOME: home }, async ({ call: second }) => {
     const results = await Promise.all([
-      first("search_worker_facts", { task_id: worker.id }),
-      second("search_worker_facts", { task_id: worker.id })
+      first("facts", { task_id: worker.id, action: "search" }),
+      second("facts", { task_id: worker.id, action: "search" })
     ]);
     for (const result of results) assert.equal(result.facts.some((fact) => fact.id === original.id), false);
   }));
@@ -123,8 +129,8 @@ test("a canonical remote shares path-matched repo facts across isolated checkout
   let first;
   let second;
   await withMcp({ SUPERVISOR_HOME: home, FAKE_CODEX_SCENARIO: "echo-prompt" }, async ({ call }) => {
-    first = await call("create_codex_worker", dispatchArgs("first checkout", firstRepo, { ownedPaths: ["shared.txt"] }));
-    second = await call("create_codex_worker", dispatchArgs("second checkout", secondRepo, { ownedPaths: ["shared.txt"] }));
+    first = await call("create_worker", dispatchArgs("first checkout", firstRepo, { owned_paths: ["shared.txt"] }));
+    second = await call("create_worker", dispatchArgs("second checkout", secondRepo, { owned_paths: ["shared.txt"] }));
     await waitFor(call, first.id, (row) => row.exit_code === 0);
     await waitFor(call, second.id, (row) => row.exit_code === 0);
   });
@@ -142,11 +148,11 @@ test("a canonical remote shares path-matched repo facts across isolated checkout
   `).run(candidate.id, firstWork.id, `run-${first.id}-1`, JSON.stringify({ note: "CROSS_CHECKOUT_CANONICAL_FACT" }), JSON.stringify([join(firstRepo, "shared.txt")]), first.base_commit, new Date().toISOString());
   db.close();
   await withMcp({ SUPERVISOR_HOME: home, FAKE_CODEX_SCENARIO: "echo-prompt" }, async ({ call }) => {
-    const promoted = await call("promote_worker_fact", { fact_id: candidate.id, scope: "repo_verified", watchedPaths: [join(firstRepo, "shared.txt")] });
+    const promoted = await call("facts", { fact_id: candidate.id, scope: "repo_verified", watched_paths: [join(firstRepo, "shared.txt")], action: "promote" });
     assert.deepEqual(promoted.fact.watched_paths, ["shared.txt"]);
-    await call("resume_codex_worker", { task_id: second.id, prompt: "read matching verified repository fact" });
+    await call("resume_worker", { task_id: second.id, prompt: "read matching verified repository fact" });
     await waitFor(call, second.id, (row) => row.run_count === 2 && row.exit_code === 0);
-    const result = await call("get_worker_result", { task_id: second.id, maxChars: 0 });
+    const result = await call("get_worker", { task_id: second.id, max_chars: 0, include: ["result"] });
     assert.match(result.reports[0], /CROSS_CHECKOUT_CANONICAL_FACT/);
   });
 });
@@ -157,9 +163,9 @@ test("a verified watched-path fact expires when a resumed worker rebases across 
   let worker;
   let originalFactId;
   await withMcp({ SUPERVISOR_HOME: home, FAKE_CODEX_SCENARIO: "echo-prompt" }, async ({ call }) => {
-    worker = await call("create_codex_worker", dispatchArgs("watched", dir, {
-      ownedPaths: ["watched.txt"],
-      acceptance: "node -e \"process.exit(0)\""
+    worker = await call("create_worker", dispatchArgs("watched", dir, {
+      owned_paths: ["watched.txt"],
+      acceptance: { commands: "node -e \"process.exit(0)\"" }
     }));
     await waitFor(call, worker.id, (row) => row.exit_code === 0);
     const db = openStore(home);
@@ -171,13 +177,13 @@ test("a verified watched-path fact expires when a resumed worker rebases across 
   git(dir, ["commit", "-q", "-m", "change watched path"]);
 
   await withMcp({ SUPERVISOR_HOME: home, FAKE_CODEX_SCENARIO: "echo-prompt" }, async ({ call }) => {
-    await call("resume_codex_worker", { task_id: worker.id, prompt: "recheck on new base", rebaseOnto: "main" });
+    await call("resume_worker", { task_id: worker.id, prompt: "recheck on new base", rebase_onto: "main" });
     await waitFor(call, worker.id, (row) => row.run_count === 2 && row.exit_code === 0);
-    const original = await call("get_fact", { fact_id: originalFactId });
+    const original = await call("facts", { fact_id: originalFactId, action: "get" });
     assert.equal(original.fact.state, "verified");
     assert.equal(original.effective_state, "expired");
-    await call("search_worker_facts", { task_id: worker.id });
-    await call("search_worker_facts", { task_id: worker.id });
+    await call("facts", { task_id: worker.id, action: "search" });
+    await call("facts", { task_id: worker.id, action: "search" });
   });
   const db = new (await import("node:sqlite")).DatabaseSync(join(home, "data", "supervisor.sqlite"));
   const facts = db.prepare("SELECT state, key FROM facts WHERE work_item_id = (SELECT id FROM work_items WHERE task_id = ?) ORDER BY created_at").all(worker.id);

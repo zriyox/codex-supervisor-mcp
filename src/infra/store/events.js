@@ -1,3 +1,4 @@
+import { branchOf } from "../../domain/worker-branch.js";
 import { ensureControlRecords, ensureFilesystem, openDb, runIdFor, runWithRetry, workItemIdForTask } from "./db.js";
 import { extractAgentMessage } from "./runner-readers.js";
 import { createHash } from "node:crypto";
@@ -24,7 +25,7 @@ export async function ensureRunRecord(task, attempt) {
       attempt,
       codex_thread_id: task.thread_id ?? null,
       worktree_path: task.worktree_path ?? null,
-      branch: task.worktree_path ? `codex/${task.id}` : null,
+      branch: task.worktree_path ? branchOf(task) : null,
       base_sha: task.base_commit ?? null,
       started_at: now
     });

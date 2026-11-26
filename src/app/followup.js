@@ -1,3 +1,4 @@
+import { branchOf } from "../domain/worker-branch.js";
 import "./compose.js";
 import { readTaskEvents } from "../infra/store/events.js";
 import { getTask } from "../infra/store/tasks.js";
@@ -10,10 +11,10 @@ import { resolveCommit } from "./worktree-setup.js";
 function followupBaseRef(parent, baseRef) {
   if (baseRef || parent.landed_at || !parent.project_root || !parent.worktree_path) return baseRef ?? null;
   try {
-    resolveCommit(parent.project_root, `codex/${parent.id}`);
-    return `codex/${parent.id}`;
+    resolveCommit(parent.project_root, branchOf(parent));
+    return branchOf(parent);
   } catch {
-    const error = new Error(`parent checkpoint codex/${parent.id} is unavailable; restore it or choose an explicit baseRef`);
+    const error = new Error(`parent checkpoint ${branchOf(parent)} is unavailable; restore it or choose an explicit workspace.base_ref`);
     error.code = "followup_checkpoint_missing";
     throw error;
   }
@@ -90,7 +91,7 @@ export async function createFollowupWorker(options) {
     workspaceSetup: workspaceSetup ?? parent.workspace_metadata?.setup ?? null,
     baseRef: inheritedBaseRef,
     // Inherited unless given; the follow-up runs in a fresh worktree cut
-    // from the parent's codex/<parent> branch, so checks that depend on the
+    // from the parent's branch, so checks that depend on the
     // parent checkpoint are valid before the parent has landed on the target.
     acceptance: acceptance === undefined ? inheritedAcceptance : acceptance,
     acceptanceTimeoutMs: acceptanceTimeoutMs ?? parent.acceptance_timeout_ms ?? null

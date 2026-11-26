@@ -1,4 +1,4 @@
-import { TERMINAL_STATUSES } from "../../domain/status.js";
+import { runIsOver, TERMINAL_STATUSES } from "../../domain/status.js";
 import { parseWorkerReportForRun } from "../../domain/worker-report.js";
 import { decodeJson, openDb, runIdFor } from "./db.js";
 import { appendTaskEvent, completeRunRecord, readTaskEvents } from "./events.js";
@@ -102,8 +102,9 @@ function recoveredRow(task, recoveredEvidence, now) {
 // not evidence that the worker vanished. Acceptance keeps its own verdict;
 // recovering the worker completion must never imply that checks passed.
 async function recoverTerminalTurn(task) {
-  if (task.exit_code != null || task.signal || !task.started_at
-    || isPidAlive(task.pid) || isPidAlive(task.run_host_pid)) return false;
+  if (task.exit_code != null || task.signal || !task.started_at) return false;
+  // Once the run is over its pids may belong to anyone.
+  if (!runIsOver(task) && (isPidAlive(task.pid) || isPidAlive(task.run_host_pid))) return false;
   const runId = runIdFor(task.id, task.run_count);
   const events = openDb().prepare(`
     SELECT payload FROM task_events WHERE task_id = ? AND run_id = ? ORDER BY seq

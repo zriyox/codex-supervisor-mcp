@@ -61,7 +61,8 @@ export async function withMcp(env, fn) {
     command: process.execPath,
     args: [join(repoRoot, "src", "mcp-server.js")],
     cwd: repoRoot,
-    env: { ...process.env, CODEX_BIN: fakeCodex, CODEX_SUPERVISOR_NO_UPDATE_CHECK: "1", ...env },
+    // The suite exercises every tool, the optional ones included.
+    env: { ...process.env, CODEX_BIN: fakeCodex, AGENT_SUPERVISOR_NO_UPDATE_CHECK: "1", AGENT_SUPERVISOR_TOOLS: "all", ...env },
     stderr: "pipe"
   });
   const client = new Client({ name: "edge", version: "1.0.0" });
@@ -86,7 +87,7 @@ export async function waitFor(call, taskId, predicate, timeoutMs = 20000) {
   const deadline = Date.now() + timeoutMs;
   let last = null;
   while (Date.now() < deadline) {
-    last = await call("get_codex_worker_status", { task_id: taskId });
+    last = await call("get_worker", { task_id: taskId, include: ["status"] });
     if (predicate(last)) return last;
     await new Promise((resolve) => setTimeout(resolve, 60));
   }
@@ -115,16 +116,26 @@ export async function waitForRunHostExit(home, taskId, timeoutMs = 20000) {
   }
 }
 
+// Dispatch arguments merged group by group, so a test can override one field
+// of sandbox or workspace without restating the rest.
+const GROUPS = ["sandbox", "workspace", "context", "acceptance", "limits", "session", "goal"];
+export function mergeDispatch(base, extra = {}) {
+  const merged = { ...base, ...extra };
+  for (const group of GROUPS) {
+    if (base[group] && extra[group] && typeof extra[group] === "object") merged[group] = { ...base[group], ...extra[group] };
+  }
+  return merged;
+}
+
 export function dispatchArgs(title, cwd, extra = {}) {
-  return {
+  return mergeDispatch({
     title,
     task: `Task ${title}`,
     cwd,
-    sandbox: "read-only",
-    ownedPaths: [`/tmp/edge/${title.replace(/\W+/g, "-")}`],
-    goal: { objective: `objective for ${title}` },
-    ...extra
-  };
+    sandbox: { mode: "read-only" },
+    owned_paths: [`/tmp/edge/${title.replace(/\W+/g, "-")}`],
+    goal: { objective: `objective for ${title}` }
+  }, extra);
 }
 
 // A registry that answers like registry.npmjs.org for one package. `plan`
@@ -170,7 +181,7 @@ export async function fakeRegistry(plan) {
 export async function startWebServer(env) {
   const { spawn } = await import("node:child_process");
   const child = spawn(process.execPath, [join(repoRoot, "src", "interface", "bin", "web-server.js")], {
-    env: { ...process.env, CODEX_BIN: fakeCodex, CODEX_SUPERVISOR_NO_UPDATE_CHECK: "1", ...env, SUPERVISOR_WEB_PORT: "0" },
+    env: { ...process.env, CODEX_BIN: fakeCodex, AGENT_SUPERVISOR_NO_UPDATE_CHECK: "1", ...env, SUPERVISOR_WEB_PORT: "0" },
     stdio: ["ignore", "pipe", "pipe"]
   });
   let output = "";
@@ -212,4 +223,12 @@ export function openStore(home) {
   const db = new DatabaseSync(join(home, "data", "supervisor.sqlite"));
   db.exec("PRAGMA busy_timeout=15000");
   return db;
+}
+
+// Every worker as its status view. The table from poll_workers is compact on
+// purpose, so a test that checks a row's fields reads each worker in full.
+export async function listWorkers(call, { status, activeOnly = false } = {}) {
+  const table = await call("poll_workers", { limit: 200, ...(status ? { status } : {}) });
+  const rows = await Promise.all((table.workers ?? []).map((row) => call("get_worker", { task_id: row.id, include: ["status"] })));
+  return activeOnly ? rows.filter((row) => ["queued", "running"].includes(row.status)) : rows;
 }

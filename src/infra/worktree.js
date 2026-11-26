@@ -10,6 +10,7 @@
 // of five workers all did exactly that and reported no changed files at all -
 // so the committed part is read as `git diff --name-only <base> HEAD`, where
 // base is the commit the worktree was created from.
+import { branchOf } from "../domain/worker-branch.js";
 import { runGit } from "./git.js";
 import { existsSync, readFileSync, lstatSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
@@ -48,7 +49,7 @@ function nonEmptyLines(output) {
 
 // The commit the worker started from. Rows written by this version carry it
 // as base_commit. Older rows do not, but the branch reflog still has it: the
-// oldest reflog entry of `codex/<id>` is the branch's creation point.
+// oldest reflog entry of the worker's branch is its creation point.
 export function resolveWorktreeBase(worktreePath, { baseCommit = null, branch = null } = {}) {
   if (baseCommit) return baseCommit;
   if (!branch) return null;
@@ -86,7 +87,7 @@ export function readWorktreeChanges(worktreePath, { baseCommit = null, branch = 
 // git does not track yet. This is the main thread's ground truth for "what
 // did it do", as opposed to what the worker says it did.
 //
-// `maxChars` bounds the whole answer. Files are served in git's order; a
+// `max_chars` bounds the whole answer. Files are served in git's order; a
 // file that does not fit is cut in the middle (truncated: true), and files
 // after the budget is spent come back without a patch so the list of what
 // changed is still complete.
@@ -272,7 +273,7 @@ export function mergeChangedFiles(existing, discovered) {
 export function worktreeRef(task) {
   return {
     baseCommit: task.base_commit ?? null,
-    branch: task.worktree_path ? `codex/${task.id}` : null
+    branch: task.worktree_path ? branchOf(task) : null
   };
 }
 

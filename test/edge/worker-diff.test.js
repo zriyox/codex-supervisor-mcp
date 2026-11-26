@@ -18,14 +18,14 @@ before(async () => {
   git(repo, ["add", "multi.txt"]);
   git(repo, ["commit", "-q", "-m", "large searchable baseline"]);
   await withMcp({ SUPERVISOR_HOME: home }, async ({ call }) => {
-    const created = await call("create_codex_worker", dispatchArgs("diffable", repo));
+    const created = await call("create_worker", dispatchArgs("diffable", repo));
     worker = await waitFor(call, created.id, (t) => t.status === "completed");
     const plain = join(home, "not-a-repo");
     await mkdir(plain, { recursive: true });
-    const createdPlain = await call("create_codex_worker", dispatchArgs("in-place", plain, {
-      sandbox: "read-only",
-      ownedPaths: [],
-      workspaceKind: "read_only_in_place"
+    const createdPlain = await call("create_worker", dispatchArgs("in-place", plain, {
+      sandbox: { mode: "read-only" },
+      owned_paths: [],
+      workspace: { kind: "read_only_in_place" }
     }));
     inPlace = await waitFor(call, createdPlain.id, (t) => t.status === "completed");
   });
@@ -47,9 +47,9 @@ before(async () => {
 
 test("committed, uncommitted and untracked changes are all there, with patches", async () => {
   await withMcp({ SUPERVISOR_HOME: home }, async ({ call }) => {
-    const diff = await call("get_worker_diff", { task_id: worker.id, maxChars: 60000 });
+    const diff = await call("get_worker_diff", { task_id: worker.id, max_chars: 60000 });
     assert.equal(diff.error, undefined, JSON.stringify(diff).slice(0, 300));
-    assert.equal(diff.branch, `codex/${worker.id}`);
+    assert.equal(diff.branch, `worker/${worker.id}`);
     assert.equal(diff.base_commit, worker.base_commit ?? diff.base_commit);
     const byPath = Object.fromEntries(diff.files.map((f) => [f.path, f]));
     assert.deepEqual(Object.keys(byPath).sort(), ["big.txt", "first.txt", "lib/a.txt", "multi.txt", "second.txt", "新文件.txt"]);
@@ -76,21 +76,21 @@ test("the default read is a file and hunk index, and one file is paged by hunk",
     assert.equal(multi.hunk_count, 2);
     assert.equal("patch" in multi, false);
 
-    const first = await call("get_worker_diff", { task_id: worker.id, file: "multi.txt", pageSize: 1 });
+    const first = await call("get_worker_diff", { task_id: worker.id, file: "multi.txt", page_size: 1 });
     assert.equal(first.hunks.length, 1);
     assert.match(first.hunks[0].patch, /changed near the top/);
     assert.ok(first.next_cursor);
-    const second = await call("get_worker_diff", { task_id: worker.id, file: "multi.txt", cursor: first.next_cursor, pageSize: 1 });
+    const second = await call("get_worker_diff", { task_id: worker.id, file: "multi.txt", cursor: first.next_cursor, page_size: 1 });
     assert.equal(second.hunks.length, 1);
     assert.match(second.hunks[0].patch, /changed near the bottom/);
     assert.equal(second.next_cursor, null);
-    assert.ok(first.hunks[0].patch.length < (await call("get_worker_diff", { task_id: worker.id, maxChars: 1000000 })).files.find((entry) => entry.path === "multi.txt").patch.length);
+    assert.ok(first.hunks[0].patch.length < (await call("get_worker_diff", { task_id: worker.id, max_chars: 1000000 })).files.find((entry) => entry.path === "multi.txt").patch.length);
   });
 });
 
 test("the budget cuts patches, never the file list", async () => {
   await withMcp({ SUPERVISOR_HOME: home }, async ({ call }) => {
-    const diff = await call("get_worker_diff", { task_id: worker.id, maxChars: 600 });
+    const diff = await call("get_worker_diff", { task_id: worker.id, max_chars: 600 });
     assert.equal(diff.total_files, 6, "every changed file is still listed");
     assert.ok(diff.truncated_files >= 1);
     const served = diff.files.filter((f) => f.patch !== null);
@@ -113,7 +113,7 @@ test("a worker that ran in place has no worktree to diff, and says where to look
   await withMcp({ SUPERVISOR_HOME: home }, async ({ call }) => {
     const diff = await call("get_worker_diff", { task_id: inPlace.id });
     assert.equal(diff.error, "no_worktree");
-    assert.match(diff.reason, /get_worker_result/);
+    assert.match(diff.reason, /get_worker with include/);
     const missing = await call("get_worker_diff", { task_id: "codex-nope" });
     assert.equal(missing.error, "task_not_found");
   });

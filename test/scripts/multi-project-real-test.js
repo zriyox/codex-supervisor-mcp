@@ -52,7 +52,7 @@ const transport = new StdioClientTransport({
   command: process.execPath,
   args: [join(projectRoot, "src", "mcp-server.js")],
   cwd: projectRoot,
-  env: { ...process.env, SUPERVISOR_HOME: home, CODEX_SUPERVISOR_NO_UPDATE_CHECK: "1" },
+  env: { ...process.env, SUPERVISOR_HOME: home, AGENT_SUPERVISOR_NO_UPDATE_CHECK: "1" },
   stderr: "pipe"
 });
 const client = new Client({ name: "supervisor-multi-project-real", version: "1.0.0" });
@@ -65,7 +65,7 @@ async function waitFor(taskId, predicate, timeoutMs = 420000) {
   const deadline = Date.now() + timeoutMs;
   let last = null;
   while (Date.now() < deadline) {
-    last = await call("get_codex_worker_status", { task_id: taskId });
+    last = await call("get_worker", { task_id: taskId, include: ["status"] });
     if (predicate(last)) return last;
     await sleep(250);
   }
@@ -87,22 +87,20 @@ try {
   ];
   const chineseProbe = "head -n 1 资料/说明.txt | grep 中文";
 
-  const preflights = await Promise.all(projects.map((project) => call("preflight_codex_worker", {
+  const preflights = await Promise.all(projects.map((project) => call("preflight_worker", {
     title: project.name,
     cwd: project.repo,
-    sandbox: "workspace-write",
-    reasoningEffort: "low",
-    ownedPaths: [project.file],
-    allowedCommands: ["sleep 5"],
-    workspaceSetup: setup,
-    baseRef: "HEAD",
-    probeCommands: [...probes, chineseProbe]
+    sandbox: { mode: "workspace-write", allowed_commands: ["sleep 5"] },
+    reasoning_effort: "low",
+    owned_paths: [project.file],
+    workspace: { setup: setup, base_ref: "HEAD" },
+    probe_commands: [...probes, chineseProbe]
   })));
   for (const [index, receipt] of preflights.entries()) {
     assert.ok(receipt.id, JSON.stringify(receipt));
     const result = await waitFor(receipt.id, (task) => task.status !== "running" && task.status !== "queued", 240000);
     assert.ok(["completed", "failed", "lost"].includes(result.status), JSON.stringify(result));
-    const verdict = await call("get_worker_preflight", { task_id: receipt.id });
+    const verdict = await call("get_worker", { task_id: receipt.id, include: ["preflight"] });
     assert.equal(verdict.status, "passed", JSON.stringify({ index, verdict, result }));
     projects[index].preflightId = receipt.id;
     console.log(`preflight ${projects[index].name}: passed`);
@@ -111,20 +109,17 @@ try {
   const sessionId = `multi-project-${Date.now()}`;
   const dispatched = await Promise.all(projects.map((project) => {
     const acceptance = `node -e "const fs=require('fs');if(fs.readFileSync('${project.file}','utf8').trim()!=='${project.label} ready')process.exit(1);console.log('${project.label} acceptance passed')"`;
-    return call("create_codex_worker", {
+    return call("create_worker", {
       title: `${project.name} real worker`,
-      session_id: sessionId,
-      session_title: "multi-project real smoke",
-      task: `Create ${project.file} with exactly the line "${project.label} ready" using apply_patch. Before editing, run node "$CODEX_SUPERVISOR_STAGE_CLI" "gate:${project.label}" --detail "dependencies ready", then run sleep 5 exactly. Do not touch any other file. Follow the supervisor final JSON report format exactly.`,
+      session: { id: sessionId, title: "multi-project real smoke" },
+      task: `Create ${project.file} with exactly the line "${project.label} ready" using apply_patch. Before editing, run node "$AGENT_SUPERVISOR_STAGE_CLI" "gate:${project.label}" --detail "dependencies ready", then run sleep 5 exactly. Do not touch any other file. Follow the supervisor final JSON report format exactly.`,
       cwd: project.repo,
-      sandbox: "workspace-write",
-      reasoningEffort: "low",
-      ownedPaths: [project.file],
-      allowedCommands: ["sleep 5"],
-      workspaceSetup: setup,
-      baseRef: "HEAD",
+      sandbox: { mode: "workspace-write", allowed_commands: ["sleep 5"] },
+      reasoning_effort: "low",
+      owned_paths: [project.file],
+      workspace: { setup: setup, base_ref: "HEAD" },
       preflight_id: project.preflightId,
-      acceptance: [acceptance],
+      acceptance: { commands: [acceptance] },
       goal: { objective: `In ${project.name}, prove isolated dependencies and create ${project.file}` }
     });
   }));
@@ -144,7 +139,7 @@ try {
     const project = projects[index];
     let settled = final;
     if (settled.attention_reason === "invalid_report") {
-      await call("resume_codex_worker", {
+      await call("resume_worker", {
         task_id: dispatched[index].id,
         prompt: `Keep ${project.file} unchanged. Rerun the declared acceptance and return the required final JSON report with closed objects and arrays.`
       });
@@ -163,9 +158,9 @@ try {
     const diffIndex = await call("get_worker_diff", { task_id: dispatched[index].id });
     assert.equal(diffIndex.summary_only, true);
     assert.ok(diffIndex.files.some((entry) => entry.path === project.file));
-    const page = await call("get_worker_diff", { task_id: dispatched[index].id, file: project.file, pageSize: 1 });
+    const page = await call("get_worker_diff", { task_id: dispatched[index].id, file: project.file, page_size: 1 });
     assert.match(page.hunks[0].patch, new RegExp(`${project.label} ready`));
-    const landed = await call("land_codex_worker", { task_id: dispatched[index].id, commitMessage: `Land ${project.file}` });
+    const landed = await call("land_worker", { task_id: dispatched[index].id, commit_message: `Land ${project.file}` });
     assert.ok(!landed.error, JSON.stringify(landed));
     assert.equal((await readFile(join(project.repo, project.file), "utf8")).trim(), `${project.label} ready`);
     assert.equal(execFileSync("git", ["status", "--porcelain"], { cwd: project.repo, encoding: "utf8" }).trim(), "");
@@ -173,7 +168,7 @@ try {
   }
 
   assert.equal(observedStages.size >= 1, true, `live stage was never observed: ${[...observedStages]}`);
-  const session = await call("get_session_works", { session_id: sessionId });
+  const session = await call("find_works", { session_id: sessionId });
   assert.equal(session.count, 2);
   console.log(`live stages observed: ${[...observedStages].join(", ")}`);
   console.log(`multi-project real smoke passed (state dir: ${home})`);

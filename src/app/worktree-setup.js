@@ -1,3 +1,4 @@
+import { newWorkerBranch } from "../domain/worker-branch.js";
 import { gitBin, runGit } from "../infra/git.js";
 import { worktreesDir } from "../infra/paths.js";
 import { runToExit } from "../infra/process.js";
@@ -30,15 +31,15 @@ export function resolveCommit(cwd, ref) {
 }
 
 export function invalidBaseRefError(cwd, baseRef) {
-  const error = new Error(`baseRef "${baseRef}" does not resolve to a commit in ${cwd}`);
+  const error = new Error(`workspace.base_ref "${baseRef}" does not resolve to a commit in ${cwd}`);
   error.code = "invalid_base_ref";
   return error;
 }
 
-// The worktree is cut from baseRef when given, else from the repository's
+// The worktree is cut from workspace.base_ref when given, else from the repository's
 // HEAD. The resolved commit is recorded on the task: it is what
 // readWorktreeChanges diffs against, so committed work stays visible. An
-// explicit baseRef that does not resolve is an error, not a silent fallback
+// explicit workspace.base_ref that does not resolve is an error, not a silent fallback
 // to HEAD - the caller asked for a specific baseline for a reason.
 export async function ensureWorktree(cwd, taskId, baseRef = null) {
   const taskWorktreeDir = join(worktreesDir, taskId);
@@ -61,7 +62,7 @@ export async function ensureWorktree(cwd, taskId, baseRef = null) {
   }
   try {
     await rm(taskWorktreeDir, { recursive: true, force: true });
-    const branch = `codex/${taskId}`;
+    const branch = newWorkerBranch(taskId);
     await runToExit(gitBin(), ["-C", cwd, "worktree", "add", "--detach", taskWorktreeDir, baseCommit]);
     await runToExit(gitBin(), ["-C", taskWorktreeDir, "switch", "-c", branch]);
     return { path: taskWorktreeDir, baseCommit };
@@ -79,16 +80,16 @@ function insidePath(parent, child) {
 
 export function normalizeWorkspaceSetup(value, projectRoot) {
   if (value == null) return null;
-  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("workspaceSetup must be an object");
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("workspace.setup must be an object");
   const links = (value.links ?? []).map((entry) => {
     if (!entry || typeof entry.path !== "string" || !entry.path.trim()
-      || typeof entry.source !== "string" || !entry.source.trim()) throw new Error("workspaceSetup.links requires path and source");
+      || typeof entry.source !== "string" || !entry.source.trim()) throw new Error("workspace.setup.links requires path and source");
     const path = entry.path.trim();
-    if (isAbsolute(path) || path.split(/[\\/]/).includes("..")) throw new Error(`workspaceSetup link path must stay inside the worktree: ${path}`);
+    if (isAbsolute(path) || path.split(/[\\/]/).includes("..")) throw new Error(`workspace.setup link path must stay inside the worktree: ${path}`);
     return { path, source: resolve(projectRoot, entry.source.trim()) };
   });
   const commands = (value.commands ?? []).map((command) => String(command).trim()).filter(Boolean);
-  if (links.length > 20 || commands.length > 20) throw new Error("workspaceSetup accepts at most 20 links and 20 commands");
+  if (links.length > 20 || commands.length > 20) throw new Error("workspace.setup accepts at most 20 links and 20 commands");
   const submodules = value.submodules === true;
   return links.length || submodules || commands.length ? { links, submodules, commands } : null;
 }
@@ -99,7 +100,7 @@ export function requireDependencySetup({ kind, projectRoot, setup, commands }) {
   if (kind !== "git_worktree" || setup || !existsSync(join(projectRoot, "package.json"))) return;
   const commandText = (commands ?? []).map((check) => typeof check === "string" ? check : check?.command).filter(Boolean).join("\n");
   if (!JS_DEPENDENCY_COMMAND.test(commandText)) return;
-  const error = new Error("workspace_setup_required: this JavaScript acceptance uses local project tooling, but the new worktree has no node_modules or generated prepare files; pass workspaceSetup with dependency links and prepare commands (the same setup must be used by preflight)");
+  const error = new Error("workspace_setup_required: this JavaScript acceptance uses local project tooling, but the new worktree has no node_modules or generated prepare files; pass workspace.setup with dependency links and prepare commands (the same setup must be used by preflight)");
   error.code = "workspace_setup_required";
   throw error;
 }
@@ -107,15 +108,15 @@ export function requireDependencySetup({ kind, projectRoot, setup, commands }) {
 export async function prepareWorktreeWorkspace(setup, projectRoot, worktreePath, taskId) {
   if (!setup) return;
   for (const link of setup.links) {
-    if (!existsSync(link.source)) throw new Error(`workspaceSetup link source does not exist: ${link.source}`);
+    if (!existsSync(link.source)) throw new Error(`workspace.setup link source does not exist: ${link.source}`);
     const destination = resolve(worktreePath, link.path);
-    if (!insidePath(worktreePath, destination)) throw new Error(`workspaceSetup link escapes the worktree: ${link.path}`);
+    if (!insidePath(worktreePath, destination)) throw new Error(`workspace.setup link escapes the worktree: ${link.path}`);
     await mkdir(dirname(destination), { recursive: true });
     if (existsSync(destination)) {
       const existing = await lstat(destination);
-      if (!existing.isSymbolicLink()) throw new Error(`workspaceSetup link destination already exists: ${link.path}`);
+      if (!existing.isSymbolicLink()) throw new Error(`workspace.setup link destination already exists: ${link.path}`);
       const [actual, expected] = await Promise.all([realpath(destination), realpath(link.source)]);
-      if (actual !== expected) throw new Error(`workspaceSetup link destination points elsewhere: ${link.path}`);
+      if (actual !== expected) throw new Error(`workspace.setup link destination points elsewhere: ${link.path}`);
       continue;
     }
     const sourceInfo = await stat(link.source);
@@ -131,7 +132,7 @@ export async function prepareWorktreeWorkspace(setup, projectRoot, worktreePath,
     const result = await runAcceptance(setup.commands, { cwd: worktreePath, taskId, timeoutMs: DEFAULT_ACCEPTANCE_TIMEOUT_MS });
     if (!result.passed) {
       const failing = result.checks.find((check) => !check.passed);
-      throw new Error(`workspaceSetup command failed: ${failing?.command ?? "unknown"}${failing?.output_tail ? `\n${failing.output_tail}` : ""}`);
+      throw new Error(`workspace.setup command failed: ${failing?.command ?? "unknown"}${failing?.output_tail ? `\n${failing.output_tail}` : ""}`);
     }
   }
 }

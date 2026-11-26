@@ -24,16 +24,16 @@ const CACHE_TTL_MS = 60 * 60 * 1000;
 const cachePath = join(dataDir, "update-check.json");
 
 function registryUrl() {
-  return (process.env.CODEX_SUPERVISOR_REGISTRY?.trim() || DEFAULT_REGISTRY).replace(/\/+$/, "");
+  return (process.env.AGENT_SUPERVISOR_REGISTRY?.trim() || DEFAULT_REGISTRY).replace(/\/+$/, "");
 }
 
 function timeoutMs() {
-  const raw = Number(process.env.CODEX_SUPERVISOR_UPDATE_TIMEOUT_MS ?? 4000);
+  const raw = Number(process.env.AGENT_SUPERVISOR_UPDATE_TIMEOUT_MS ?? 4000);
   return Number.isFinite(raw) && raw > 0 ? raw : 4000;
 }
 
 export function updateCheckDisabled() {
-  return /^(1|true|yes)$/i.test(process.env.CODEX_SUPERVISOR_NO_UPDATE_CHECK?.trim() ?? "");
+  return /^(1|true|yes)$/i.test(process.env.AGENT_SUPERVISOR_NO_UPDATE_CHECK?.trim() ?? "");
 }
 
 // "1.2.3" -> [1,2,3]; a prerelease tag sorts below the release it precedes.

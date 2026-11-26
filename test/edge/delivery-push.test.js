@@ -16,21 +16,21 @@ test("land and remote push verification are distinct delivery states", async () 
 
   let worker;
   await withMcp({ SUPERVISOR_HOME: home, FAKE_CODEX_SCENARIO: "commit-in-worktree" }, async ({ call }) => {
-    worker = await call("create_codex_worker", dispatchArgs("delivery", dir, {
-      sandbox: "workspace-write",
-      ownedPaths: ["committed.txt", "uncommitted.txt"],
-      acceptance: ["node -e \"process.exit(0)\""]
+    worker = await call("create_worker", dispatchArgs("delivery", dir, {
+      sandbox: { mode: "workspace-write" },
+      owned_paths: ["committed.txt", "uncommitted.txt"],
+      acceptance: { commands: ["node -e \"process.exit(0)\""] }
     }));
     await waitFor(call, worker.id, (task) => task.status === "completed" && task.exit_code === 0);
-    const landed = await call("land_codex_worker", { task_id: worker.id, commitMessage: "land delivery draft" });
+    const landed = await call("land_worker", { task_id: worker.id, commit_message: "land delivery draft" });
     assert.ok(!landed.error, JSON.stringify(landed));
-    const beforePush = await call("verify_delivery_push", { task_id: worker.id });
+    const beforePush = await call("verify_push", { task_id: worker.id });
     assert.equal(beforePush.error, "not_pushed");
     git(dir, ["push", "-q", "origin", "main"]);
-    const verified = await call("verify_delivery_push", { task_id: worker.id });
+    const verified = await call("verify_push", { task_id: worker.id });
     assert.ok(verified.push_verified_at, JSON.stringify(verified));
     assert.match(verified.artifact_id, /^[a-f0-9-]{36}$/);
-    const evidence = await call("get_worker_evidence", { task_id: worker.id });
+    const evidence = await call("get_worker", { task_id: worker.id, include: ["evidence"] });
     const proof = evidence.artifacts.find((artifact) => artifact.id === verified.artifact_id);
     assert.equal(proof.type, "push_proof");
     const artifact = await call("get_artifact", { artifact_id: verified.artifact_id });

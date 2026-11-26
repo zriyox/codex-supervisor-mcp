@@ -2,7 +2,7 @@ const DEFAULT_HANDOFF_TOKEN_THRESHOLD = 300000;
 const LONG_THREAD_RATIO = 0.75;
 
 export function handoffTokenThreshold(env = process.env) {
-  const raw = env.CODEX_SUPERVISOR_HANDOFF_TOKEN_THRESHOLD;
+  const raw = env.AGENT_SUPERVISOR_HANDOFF_TOKEN_THRESHOLD;
   if (raw == null || raw === "") return DEFAULT_HANDOFF_TOKEN_THRESHOLD;
   const value = Number(raw);
   if (!Number.isFinite(value) || value < 0) return DEFAULT_HANDOFF_TOKEN_THRESHOLD;
@@ -18,7 +18,7 @@ export function threadHealth(task, { threshold = handoffTokenThreshold() } = {})
       state: "handoff_recommended",
       threshold,
       tokens_used: tokens,
-      next_step: "Start a fresh 1000-1500-token handoff with create_codex_followup_worker; keep this thread as evidence"
+      next_step: "Start a fresh 1000-1500-token handoff with create_worker with followup_of; keep this thread as evidence"
     };
   }
   if (tokens >= Math.floor(threshold * LONG_THREAD_RATIO)) {

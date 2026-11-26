@@ -1,11 +1,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { tempHome, withMcp, openStore } from "./helpers.js";
+import { tempHome, withMcp, openStore, listWorkers } from "./helpers.js";
 
 test("twenty active workers with Windows paths and Chinese descriptions fit 7000 bytes", async () => {
   const home = await tempHome("supervisor-overview-budget-");
   await withMcp({ SUPERVISOR_HOME: home }, async ({ call }) => {
-    await call("list_codex_workers", {});
+    await listWorkers(call, { activeOnly: true });
     const db = openStore(home);
     const statement = db.prepare(`INSERT INTO tasks
       (id,title,worker,status,phase,cwd,project_root,sandbox,prompt,created_at,updated_at,run_log,pid,goal_objective,current_action,owned_paths)
@@ -17,7 +17,7 @@ test("twenty active workers with Windows paths and Chinese descriptions fit 7000
         `这是第${i}个worker的很长的目标描述，用来压测概览接口的预算控制能力`, "正在开始执行工作任务", JSON.stringify([path]));
     }
     db.close();
-    const overview = await call("get_orchestration_overview", {});
+    const overview = await call("poll_workers", {});
     assert.equal(overview.workers.length, 20);
     assert.ok(Buffer.byteLength(JSON.stringify(overview), "utf8") <= 7000);
     assert.notEqual(overview.budget_exceeded, true);

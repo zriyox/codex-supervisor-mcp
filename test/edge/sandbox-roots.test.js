@@ -120,7 +120,7 @@ test("every writable root a worker receives is symlink-free", async () => {
   // on Windows.
   const cacheEnv = isWindows ? { LOCALAPPDATA: cache } : { XDG_CACHE_HOME: cache };
   await withMcp({ SUPERVISOR_HOME: home, ...cacheEnv, FAKE_CODEX_ARGS_LOG: argsLog }, async ({ call }) => {
-    const worker = await call("create_codex_worker", dispatchArgs("cache-roots", repo, {}));
+    const worker = await call("create_worker", dispatchArgs("cache-roots", repo, {}));
     await waitFor(call, worker.id, (task) => task.status === "completed" && task.exit_code != null);
   });
   const runs = (await readFile(argsLog, "utf8")).trim().split("\n").map((line) => JSON.parse(line).args);
@@ -138,24 +138,28 @@ test("a declared root is stored and passed resolved, and unusable ones are refus
   const argsLog = join(home, "codex-args.jsonl");
   const { dir: repo } = await makeRepo(join(home, "repo"));
   await withMcp({ SUPERVISOR_HOME: home, FAKE_CODEX_ARGS_LOG: argsLog }, async ({ call }) => {
-    const worker = await call("create_codex_worker", dispatchArgs("extra-root", repo, {
-      sandbox: "workspace-write", ownedPaths: [repo], writableRoots: [custom]
+    const worker = await call("create_worker", dispatchArgs("extra-root", repo, {
+      sandbox: { mode: "workspace-write", writable_roots: [custom] },
+      owned_paths: [repo]
     }));
     assert.ok(worker.id, JSON.stringify(worker).slice(0, 300));
     await waitFor(call, worker.id, (task) => task.status === "completed" && task.exit_code != null);
-    const relative = await call("create_codex_worker", dispatchArgs("bad-root", repo, {
-      sandbox: "workspace-write", ownedPaths: [repo], writableRoots: ["relative/cache"]
+    const relative = await call("create_worker", dispatchArgs("bad-root", repo, {
+      sandbox: { mode: "workspace-write", writable_roots: ["relative/cache"] },
+      owned_paths: [repo]
     }));
     assert.match(relative.message ?? "", /absolute paths/, "a relative root is refused");
-    const missing = await call("create_codex_worker", dispatchArgs("missing-root", repo, {
-      sandbox: "workspace-write", ownedPaths: [repo], writableRoots: [join(home, "nope")]
+    const missing = await call("create_worker", dispatchArgs("missing-root", repo, {
+      sandbox: { mode: "workspace-write", writable_roots: [join(home, "nope")] },
+      owned_paths: [repo]
     }));
     assert.match(missing.message ?? "", /unusable/, "a root that does not exist is refused before dispatch");
     if (!isWindows) {
       const link = join(home, "linked-root");
       await symlink(custom, link, "dir");
-      const viaLink = await call("create_codex_worker", dispatchArgs("link-root", repo, {
-        sandbox: "workspace-write", ownedPaths: [repo], writableRoots: [link]
+      const viaLink = await call("create_worker", dispatchArgs("link-root", repo, {
+        sandbox: { mode: "workspace-write", writable_roots: [link] },
+        owned_paths: [repo]
       }));
       assert.ok(viaLink.id, JSON.stringify(viaLink).slice(0, 300));
       await waitFor(call, viaLink.id, (task) => task.status === "completed" && task.exit_code != null);

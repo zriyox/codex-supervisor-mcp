@@ -7,14 +7,9 @@ import { runIdFor } from "../../../infra/store/db.js";
 import { clip, errorResult, textResult } from "../result.js";
 import { z } from "zod";
 
-export const getContextSnapshotMetaTool = [
-  "get_context_snapshot_meta",
-  {
-    title: "Get worker context snapshot metadata",
-    description: "Read the latest worker-only context snapshot metadata for one task. Returns fact IDs, token estimate and excluded categories, never the capsule text or raw history.",
-    inputSchema: { task_id: z.string().min(1) }
-  },
-  async ({ task_id }) => {
+export const getContextSnapshotMetaOp = {
+  input: z.object({ task_id: z.string().min(1) }),
+  handler: async ({ task_id }) => {
     const task = await getTask(task_id);
     if (!task) return textResult({ error: "task_not_found", task_id });
     const snapshot = await latestContextSnapshotForTask(task_id);
@@ -34,49 +29,34 @@ export const getContextSnapshotMetaTool = [
       }
     });
   }
-];
+};
 
-export const getFactTool = [
-  "get_fact",
-  {
-    title: "Get one verified or candidate fact",
-    description: "Read one fact by ID for audit. Facts are never automatically expanded into the main thread's context.",
-    inputSchema: { fact_id: z.string().uuid() }
-  },
-  async ({ fact_id }) => {
+export const getFactOp = {
+  input: z.object({ fact_id: z.string().uuid() }),
+  handler: async ({ fact_id }) => {
     const fact = await getFact(fact_id);
     if (!fact) return textResult({ error: "fact_not_found", fact_id });
     return textResult({ fact, effective_state: await getFactEffectiveState(fact_id) ?? fact.state });
   }
-];
+};
 
-export const getArtifactTool = [
-  "get_artifact",
-  {
-    title: "Get one retained evidence artifact",
-    description: "Read one supervisor-managed artifact by ID for audit. This is explicit evidence retrieval and never expands a worker context capsule into the main thread.",
-    inputSchema: { artifact_id: z.string().uuid(), maxChars: z.number().int().min(0).max(100000).default(12000) }
-  },
-  async ({ artifact_id, maxChars }) => {
+export const getArtifactOp = {
+  input: z.object({ artifact_id: z.string().uuid(), maxChars: z.number().int().min(0).max(100000).default(12000) }),
+  handler: async ({ artifact_id, maxChars }) => {
     const artifact = await getArtifact(artifact_id);
     if (!artifact) return textResult({ error: "artifact_not_found", artifact_id });
     return textResult({ artifact: await readArtifact(artifact_id, maxChars) });
   }
-];
+};
 
-export const promoteWorkerFactTool = [
-  "promote_worker_fact",
-  {
-    title: "Promote a candidate worker fact",
-    description: "Explicitly promote one candidate fact after main-thread review. The worker cannot call this: promotion writes a new verified fact with an audit event; repo scope requires watched paths.",
-    inputSchema: {
+export const promoteWorkerFactOp = {
+  input: z.object({
       fact_id: z.string().uuid(),
       scope: z.enum(["work_item", "repo_verified"]).default("work_item"),
       watchedPaths: z.array(z.string().min(1)).max(100).optional(),
       expiresAt: z.string().datetime().optional()
-    }
-  },
-  async ({ fact_id, scope, watchedPaths, expiresAt }) => {
+    }),
+  handler: async ({ fact_id, scope, watchedPaths, expiresAt }) => {
     try {
       const source = await getFact(fact_id);
       if (!source) return textResult({ error: "fact_not_found", fact_id });
@@ -99,16 +79,11 @@ export const promoteWorkerFactTool = [
       return errorResult(error);
     }
   }
-];
+};
 
-export const revokeWorkerFactTool = [
-  "revoke_worker_fact",
-  {
-    title: "Revoke a candidate or verified worker fact",
-    description: "Explicitly revoke one candidate or verified fact after audit. Revoked facts are excluded from search and worker capsules; the revocation is appended to the worker event log.",
-    inputSchema: { fact_id: z.string().uuid(), reason: z.string().min(1).max(2000) }
-  },
-  async ({ fact_id, reason }) => {
+export const revokeWorkerFactOp = {
+  input: z.object({ fact_id: z.string().uuid(), reason: z.string().min(1).max(2000) }),
+  handler: async ({ fact_id, reason }) => {
     try {
       const source = await getFact(fact_id);
       if (!source) return textResult({ error: "fact_not_found", fact_id });
@@ -123,16 +98,11 @@ export const revokeWorkerFactTool = [
       return errorResult(error);
     }
   }
-];
+};
 
-export const getWorkerEvidenceTool = [
-  "get_worker_evidence",
-  {
-    title: "Get a worker evidence index",
-    description: "Return bounded event metadata and retained artifact IDs for one worker. It does not return raw history, prompts or a worker context capsule; use get_artifact or get_codex_worker_events for a selected item.",
-    inputSchema: { task_id: z.string().min(1), limit: z.number().int().min(1).max(100).default(30) }
-  },
-  async ({ task_id, limit }) => {
+export const getWorkerEvidenceOp = {
+  input: z.object({ task_id: z.string().min(1), limit: z.number().int().min(1).max(100).default(30) }),
+  handler: async ({ task_id, limit }) => {
     const task = await getTask(task_id);
     if (!task) return textResult({ error: "task_not_found", task_id });
     const events = await readTaskEventRecords(task_id, limit);
@@ -149,7 +119,7 @@ export const getWorkerEvidenceTool = [
       }))
     });
   }
-];
+};
 
 function decodeFactCursor(cursor, taskId, query) {
   if (!cursor) return 0;
@@ -178,19 +148,14 @@ function factFreshForTask(task, fact) {
   }
 }
 
-export const searchWorkerFactsTool = [
-  "search_worker_facts",
-  {
-    title: "Search verified worker facts in scope",
-    description: "Search only verified facts relevant to one task: its own work, explicit dependencies and path-matched repository facts. Returns compact summaries, coverage and a cursor; never raw events, reports, prompts or worker capsules.",
-    inputSchema: {
+export const searchWorkerFactsOp = {
+  input: z.object({
       task_id: z.string().min(1),
       query: z.string().max(500).default(""),
       limit: z.number().int().min(1).max(50).default(20),
       cursor: z.string().min(1).optional()
-    }
-  },
-  async ({ task_id, query, limit, cursor }) => {
+    }),
+  handler: async ({ task_id, query, limit, cursor }) => {
     const task = await getTask(task_id);
     if (!task) return textResult({ error: "task_not_found", task_id });
     try {
@@ -236,4 +201,4 @@ export const searchWorkerFactsTool = [
       return errorResult(error);
     }
   }
-];
+};

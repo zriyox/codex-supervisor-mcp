@@ -22,12 +22,12 @@ codex-supervisor-mcp 是一个 MCP server。主线程（Claude Code、Codex 或�
 
 | 问题 | 做法 |
 |---|---|
-| 几个 worker 互相踩文件 | 一个 worker 一个 worktree，`ownedPaths` 在派单前查冲突 |
+| 几个 worker 互相踩文件 | 一个 worker 一个 worktree，`owned_paths` 在派单前查冲突 |
 | worker 的输出塞爆主线程 | 事件写 JSONL，主线程只读压缩过的概览（全部 worker 不超过 7000 字节） |
-| 重启或换会话后接不上 | 每个 work 一行 SQLite，带 `thread_id`；`resume_codex_worker` 接回同一个 Codex 会话 |
+| 重启或换会话后接不上 | 每个 work 一行 SQLite，带 `thread_id`；`resume_worker` 接回同一个 Codex 会话 |
 | 分不清跑失败还是进程没了 | 状态机把 `failed` 和 `lost` 分开，失败带来源和错误码 |
 | worker 说做完了其实没有 | 派单带 `acceptance` 验收命令，supervisor 在 worker 退出后自己跑，不过就拒绝合入 |
-| 改动留在本地没上线 | `land_codex_worker` 合回主分支，`verify_delivery_push` 核对远端真有这笔提交 |
+| 改动留在本地没上线 | `land_worker` 合回主分支，`verify_push` 核对远端真有这笔提交 |
 | worktree 越堆越多 | 已合入或没有改动的在轮询时自动清；没合入的留 7 天，删之前先把未提交的改动存进它的分支。分支和证据不删 |
 
 worker 跑的是 `codex exec`，`model` 透传。主线程留在 Claude，worker 挂 DeepSeek 或别的 provider，账单分开算。
@@ -56,15 +56,15 @@ Claude Desktop、Cursor、Windsurf 这类 GUI 客户端要自己改 MCP 配置�
 skill 会带着主线程走完这几步：
 
 ```
-preflight_codex_worker   先在同样的环境里跑一遍 probe
-create_codex_worker ×3   每路带 session_id、ownedPaths、goal
-wait_codex_workers       一次最多等 60 秒，没完接着等
-get_worker_result ×3     每路的汇报，带它真跑过的命令和退出码
-get_worker_diff ×3       它实际改了什么
-land_codex_worker ×3     核过了，代它提交并合入
+preflight_worker     先在同样的环境里跑一遍 probe
+create_worker ×3     每路带 session、owned_paths、goal
+wait_workers         一次最多等 60 秒，没完接着等
+get_worker ×3        每路的汇报，带它真跑过的命令和退出码
+get_worker_diff ×3   它实际改了什么
+land_worker ×3       核过了，代它提交并合入
 ```
 
-worker 自己不提交。它的改动留在 `codex/<taskId>` 分支，等主线程看过 diff 再合。
+worker 自己不提交。它的改动留在 `worker/<taskId>` 分支，等主线程看过 diff 再合。
 
 想看着它们跑，开看板：
 
@@ -92,7 +92,7 @@ codex-supervisor-web     # 或 npx -p codex-supervisor-mcp codex-supervisor-web
 【背景】  这一块为什么做，上一块留下了什么
 【先读】  哪几份文档的哪几节，说法冲突时以哪份为准
 【做什么】照任务书第几节那张表做，表里没有的不做
-【派活】  先 search_works 查重；整批同一个 session_id；
+【派活】  先 find_works 查重；整批同一个 session.id；
           写入范围不重叠才并行；验证命令同时填 acceptance；
           worker 说过了不算，你看到 diff 才算
 【红线】  不改什么，不推什么，不读什么
@@ -101,37 +101,26 @@ codex-supervisor-web     # 或 npx -p codex-supervisor-mcp codex-supervisor-web
 
 ## 工具
 
-39 个。入参和边界见[参考手册](docs/reference.md#工具)。
+默认 14 个。入参和边界见[参考手册](docs/reference.md#工具)。
 
 | 阶段 | 工具 | 干什么 |
 |---|---|---|
-| 派单前 | `check_acceptance` | 先把验收命令真跑一遍，看它本身对不对 |
-| | `preflight_codex_worker` / `get_worker_preflight` | 用和目标 worker 相同的环境起一个短 probe，再读它的结果 |
-| 派单 | `create_codex_worker` | 派一路。必填 `ownedPaths` 和 `goal` |
-| | `create_codex_followup_worker` | 新会话接着父任务的成果干 |
-| | `resume_codex_worker` | 同一个 Codex 会话继续跑，可先 rebase 到主线新头 |
-| | `cancel_codex_worker` | 终止一路 |
-| 盯进度 | `overview_delta` | 默认轮询入口，只返回上次之后的变化 |
-| | `check_workers` | 报新结束的和出故障的，死掉的第一轮自动恢复一次 |
-| | `wait_codex_workers` | 等到有结果，单次最多 60 秒 |
-| | `get_orchestration_overview` / `list_codex_workers` | 全部 worker 的状态表 |
-| | `get_codex_worker_status` / `get_codex_worker_events` | 单路的状态细节和原始事件 |
-| 收活 | `get_worker_result` / `get_worker_summary` | worker 的汇报，长版和一段话版 |
+| 派单前 | `preflight_worker` | 用和目标 worker 相同的环境起一个短 probe，或者先把验收命令真跑一遍 |
+| 派单 | `create_worker` | 派一路。带 `followup_of` 就是接着另一路的成果干 |
+| | `resume_worker` | 同一个会话继续跑，可先 rebase 到主线新头 |
+| | `cancel_worker` | 终止一路 |
+| 盯进度 | `poll_workers` | 不带 cursor 给全表；带 cursor 只给上次之后的变化，顺带恢复死掉的第一轮、清掉可清的 worktree |
+| | `wait_workers` | 等到有结果，单次最多 60 秒 |
+| 收活 | `get_worker` | 读一路：摘要、汇报、状态、事件、goal，要哪块取哪块 |
 | | `get_worker_diff` | 实际改动，按文件和 hunk 分页 |
-| | `get_worker_goal` | 派单时的 goal 和 Codex 原生 goal 的用量 |
-| | `ask_codex_worker` | 旁路问它一句，只读，不动它的线程 |
-| | `land_codex_worker` | 代提交并 cherry-pick 到集成分支，验收没过就拒 |
-| 交付 | `verify_delivery_push` | 证明合入的提交已经在远端。只验证，不替你 push |
-| | `cleanup_plan` / `apply_cleanup` / `cleanup_history` | 看每个 worktree 是 SAFE、REVIEW 还是 BLOCKED 以及原因；SAFE 项平时自动清，也可以手动立刻清 |
-| session | `get_session_works` / `search_works` | 找回一批活，或按关键字搜历史 |
+| | `ask_worker` | 旁路问它一句，只读，不动它的线程 |
+| 交付 | `land_worker` | 代提交并 cherry-pick 到集成分支，验收没过就拒 |
+| | `verify_push` | 证明合入的提交已经在远端。只验证，不替你 push |
+| | `cleanup` | 看某个 worktree 为什么还在，或立刻清掉。平时是自动清的 |
+| 批次 | `find_works` | 找回一批活，或按关键字搜历史 |
 | | `describe_session` | 给一批活记标题、目标、默认验收和审批状态 |
-| 事实 | `search_worker_facts` / `get_fact` | 查已验证的事实和它的版本 |
-| | `promote_worker_fact` / `revoke_worker_fact` | 主线程把候选事实升为已验证，或撤销 |
-| | `get_context_snapshot_meta` | worker 开工时拿到了哪些上下文 |
-| | `get_worker_evidence` / `get_artifact` | 证据索引和单份证据 |
-| 复核 | `create_independent_verifier` | 起一个只读、断网的 verifier 重新检查 |
-| | `record_independent_finding` / `resolve_independent_finding` / `get_independent_review` | 记结论，记怎么收口，查整条记录 |
-| 其他 | `check_for_update` | 问 registry 有没有新版 |
+
+另有 3 个默认不注册，设 `AGENT_SUPERVISOR_TOOLS=all` 才出现：`facts`（已验证事实的台账）、`review`（起一个只读 verifier 独立复核）、`get_artifact`（读留存的证据）。日常派活用不到，不注册能省下每个会话的上下文。
 
 ## 和 Claude Code 的 subagent 有什么区别
 
@@ -141,8 +130,8 @@ subagent 自己也能开 worktree，所以文件隔离不算差别。差别在�
 |---|---|---|
 | 能跑什么模型 | 只能选 Claude | Codex CLI 配了 provider 的都行 |
 | 干活的是谁 | Claude Code 自己 | 独立的 `codex exec` 进程 |
-| 两路写同一个文件 | 没有路径声明 | 派单前查 `ownedPaths` 交集，重叠直接拒 |
-| 主线程挂了 | 收不回来 | worker 和验收照常跑完，新窗口用 `session_id` 收 |
+| 两路写同一个文件 | 没有路径声明 | 派单前查 `owned_paths` 交集，重叠直接拒 |
+| 主线程挂了 | 收不回来 | worker 和验收照常跑完，新窗口用 `find_works` 找回 |
 | 谁能驱动 | 只有 Claude Code | 任何 MCP 客户端 |
 | 看过程 | 只有它返回的结论 | 原始 JSONL 和网页看板 |
 
@@ -155,7 +144,7 @@ subagent 自己也能开 worktree，所以文件隔离不算差别。差别在�
 | `SUPERVISOR_HOME` | `~/.codex-supervisor` | 状态根目录。MCP 和看板要指同一个 |
 | `CODEX_BIN` | `codex` | Codex CLI 路径。GUI 客户端的 `PATH` 里常常没有它 |
 | `SUPERVISOR_WEB_PORT` | `7877` | 看板端口 |
-| `CODEX_SUPERVISOR_NO_AUTO_UPDATE` | 未设 | `1` 关掉后台自动更新，只提醒 |
+| `AGENT_SUPERVISOR_NO_AUTO_UPDATE` | 未设 | `1` 关掉后台自动更新，只提醒 |
 
 其余变量、worker 的六种状态、沙箱默认放开哪些缓存目录，都在[参考手册](docs/reference.md)。
 
@@ -178,9 +167,9 @@ rm -rf ~/.claude/skills/codex-supervisor ~/.agents/skills/codex-supervisor ~/.co
 | worker 一起来就 `failed`，`spawn codex ENOENT` | 进程 `PATH` 里没有 codex | 设 `CODEX_BIN` |
 | `codex only resolved to a shell shim` | Windows 只找到 `.cmd`，包入口没了 | 重装 `@openai/codex`，或 `CODEX_BIN` 指到 `codex.js` |
 | `Cannot find module 'node:sqlite'` | Node 低于 22.13.0 | 升 Node |
-| worker `lost` | worker 或它的运行进程被杀了 | 查事件，`resume_codex_worker` 接回 |
-| `git add` 报 `index.lock: Operation not permitted` | 沙箱把 `.git` 设成只读，这是正常边界 | 让 `land_codex_worker` 带 `commitMessage` 代提交 |
-| `ownedPaths overlap with active worker(s)` | 两路认领了同一片路径 | 改拆法，或取消占着的那路 |
+| worker `lost` | worker 或它的运行进程被杀了 | 查事件，`resume_worker` 接回 |
+| `git add` 报 `index.lock: Operation not permitted` | 沙箱把 `.git` 设成只读，这是正常边界 | 让 `land_worker` 带 `commit_message` 代提交 |
+| `owned_paths overlap with active worker(s)` | 两路认领了同一片路径 | 改拆法，或取消占着的那路 |
 | 看板是空的 | 看板和 MCP 的 `SUPERVISOR_HOME` 不一样 | 两边指同一个目录 |
 | `port 7877 ... is already in use` | 已经有一个看板在跑 | 直接开它，或换 `SUPERVISOR_WEB_PORT` |
 
@@ -190,8 +179,8 @@ rm -rf ~/.claude/skills/codex-supervisor ~/.agents/skills/codex-supervisor ~/.co
 - 只隔离工作目录。临时目录、数据库、端口是共用的。
 - 守卫拦直接写文件，但它不是文件沙箱。你声明放行的脚本可以有清单外的副作用，要靠 land 前的 diff 检查兜住。
 - `acceptance` 里写了什么就查什么，没写的不会替你查。剩下的靠主线程看 diff。
-- 客户端的 MCP 超时是硬墙，一次 `wait_codex_workers` 等不到底，只能反复调。
-- `search_works` 是子串匹配，几百条够用。向量检索不打算做。
+- 客户端的 MCP 超时是硬墙，一次 `wait_workers` 等不到底，只能反复调。
+- `find_works` 是子串匹配，几百条够用。向量检索不打算做。
 
 ## 开发
 

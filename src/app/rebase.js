@@ -182,7 +182,7 @@ function popOntoNewBase({ cwd, base, head }, ontoCommit) {
     const popError = restoreStash(cwd, true);
     return {
       error: "stash_conflict",
-      reason: `the worker's uncommitted edits conflict with ${ontoCommit.slice(0, 12)}; the worktree is back as it was${popError ? " (but its stash could not be restored: run git stash pop there)" : ""}. Commit them first (land_codex_worker with commitMessage) so the conflict is in a commit that can be resolved, or redispatch from the new commit with baseRef`,
+      reason: `the worker's uncommitted edits conflict with ${ontoCommit.slice(0, 12)}; the worktree is back as it was${popError ? " (but its stash could not be restored: run git stash pop there)" : ""}. Commit them first (land_worker with commit_message) so the conflict is in a commit that can be resolved, or redispatch from the new commit with workspace.base_ref`,
       files,
       git: tail,
       base_commit: base,

@@ -50,7 +50,7 @@ export async function findOwnershipConflicts(ownedPaths, { excludeTaskId = null 
 
 export function ownershipConflictError(conflicts) {
   const owners = conflicts.map((conflict) => conflict.task_id).join(", ");
-  const error = new Error(`ownedPaths overlap with active worker(s): ${owners}`);
+  const error = new Error(`owned_paths overlap with active worker(s): ${owners}`);
   error.code = "ownership_conflict";
   error.conflicts = conflicts;
   return error;

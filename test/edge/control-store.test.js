@@ -9,7 +9,7 @@ test("a tracked worker has durable repo, work-item, run and event provenance", a
   const { dir } = await makeRepo(join(home, "repo"));
   let worker;
   await withMcp({ SUPERVISOR_HOME: home }, async ({ call }) => {
-    worker = await call("create_codex_worker", dispatchArgs("provenance", dir));
+    worker = await call("create_worker", dispatchArgs("provenance", dir));
     assert.ok(worker.id, JSON.stringify(worker));
     await waitFor(call, worker.id, (task) => task.status === "completed" && task.exit_code !== null);
   });

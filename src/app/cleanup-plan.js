@@ -2,6 +2,7 @@
 // safe, review or blocked; applying one removes only safe worktrees, after
 // saving any uncommitted edits as a checkpoint commit on the worker's branch.
 // Branches, task rows, events, logs and artifacts are never removed.
+import { branchOf } from "../domain/worker-branch.js";
 import "./compose.js";
 import { cleanupVerdict, holdMsFrom } from "../domain/cleanup-policy.js";
 import { gitSucceeds, runGit } from "../infra/git.js";
@@ -22,7 +23,7 @@ export const CLEANUP_POLICY = "keep_branch_and_evidence_checkpoint_before_remova
 const RETAINED = ["branch", "task", "events", "jsonl", "artifacts"];
 
 const git = (cwd, args, options = {}) => runGit(cwd, args, { timeout: 15000, noOptionalLocks: true, ...options });
-const holdMs = () => holdMsFrom(process.env.CODEX_SUPERVISOR_CLEANUP_HOLD_DAYS);
+const holdMs = () => holdMsFrom(process.env.AGENT_SUPERVISOR_CLEANUP_HOLD_DAYS);
 
 function directoryBytes(path) {
   try {
@@ -126,7 +127,7 @@ export async function recordRemoval(task, { actor, planId = null, itemId = null,
     removed_at: removedAt,
     reasons,
     checkpoint_commit: checkpoint,
-    branch: `codex/${task.id}`,
+    branch: branchOf(task),
     retained: RETAINED
   }, { runId: runIdFor(task.id, task.run_count ?? 1), actor });
   return removedAt;

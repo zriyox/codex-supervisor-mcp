@@ -1,4 +1,4 @@
-// get_worker_result: clipped by default with a way back to the whole report,
+// get_worker (include result): clipped by default with a way back to the whole report,
 // files as a count unless asked (or unless there is no worktree to diff), and
 // verification that exposes what the worker actually ran.
 import { test } from "node:test";
@@ -11,53 +11,53 @@ test("a long report is clipped head-and-tail by default and comes back whole on 
   const home = await tempHome("supervisor-result-");
   const { dir } = await makeRepo(join(home, "repo"));
   await withMcp({ SUPERVISOR_HOME: home, FAKE_CODEX_MESSAGE_LEN: "20000" }, async ({ call }) => {
-    const created = await call("create_codex_worker", dispatchArgs("long-report", dir));
+    const created = await call("create_worker", dispatchArgs("long-report", dir));
     await waitFor(call, created.id, (t) => t.status === "completed" && t.exit_code !== null);
-    const clipped = await call("get_worker_result", { task_id: created.id });
+    const clipped = await call("get_worker", { task_id: created.id, include: ["result"] });
     assert.equal(clipped.truncated, true);
     assert.equal(clipped.report_bytes.length, 1);
     assert.ok(clipped.report_bytes[0] >= 20000, "the full size is reported");
-    assert.ok(Buffer.byteLength(clipped.reports[0], "utf8") < 6200, "the report is clipped to about maxChars");
+    assert.ok(Buffer.byteLength(clipped.reports[0], "utf8") < 6200, "the report is clipped to about max_chars");
     assert.match(clipped.reports[0], /chars truncated/);
-    assert.match(clipped.next_step, new RegExp(`maxChars: ${clipped.report_bytes[0]}`), "next_step names the size to ask for");
+    assert.match(clipped.next_step, new RegExp(`max_chars: ${clipped.report_bytes[0]}`), "next_step names the size to ask for");
     const head = clipped.reports[0].indexOf("\n…");
     assert.ok(head > 3500, "most of the budget goes to the head of the report");
 
-    const whole = await call("get_worker_result", { task_id: created.id, maxChars: 0 });
+    const whole = await call("get_worker", { task_id: created.id, max_chars: 0, include: ["result"] });
     assert.equal(whole.truncated, false);
     assert.equal(whole.next_step, null);
     assert.equal(Buffer.byteLength(whole.reports[0], "utf8"), whole.report_bytes[0]);
   });
 });
 
-test("files are a count by default, a list with includeFiles, and always a list for a worker without a worktree", async () => {
+test("files are a count by default, a list with include_files, and always a list for a worker without a worktree", async () => {
   const home = await tempHome("supervisor-result-");
   const { dir } = await makeRepo(join(home, "repo"));
   await withMcp({ SUPERVISOR_HOME: home }, async ({ call }) => {
-    const inRepo = await call("create_codex_worker", dispatchArgs("with-worktree", dir));
+    const inRepo = await call("create_worker", dispatchArgs("with-worktree", dir));
     await waitFor(call, inRepo.id, (t) => t.status === "completed" && t.exit_code !== null);
-    const bare = await call("get_worker_result", { task_id: inRepo.id });
+    const bare = await call("get_worker", { task_id: inRepo.id, include: ["result"] });
     assert.equal(bare.changed_files, undefined);
     assert.equal(typeof bare.changed_file_count, "number");
-    const listed = await call("get_worker_result", { task_id: inRepo.id, includeFiles: true });
+    const listed = await call("get_worker", { task_id: inRepo.id, include_files: true, include: ["result"] });
     assert.ok(Array.isArray(listed.changed_files));
     assert.equal(listed.changed_files.length, listed.changed_file_count);
 
     const plain = join(home, "in-place");
     await mkdir(plain, { recursive: true });
-    const inPlace = await call("create_codex_worker", dispatchArgs("in-place", plain, {
-      sandbox: "read-only",
-      ownedPaths: [],
-      workspaceKind: "read_only_in_place"
+    const inPlace = await call("create_worker", dispatchArgs("in-place", plain, {
+      sandbox: { mode: "read-only" },
+      owned_paths: [],
+      workspace: { kind: "read_only_in_place" }
     }));
     assert.equal(inPlace.worktree_path, null, "an explicit read_only_in_place worker has no worktree");
     await waitFor(call, inPlace.id, (t) => t.status === "completed" && t.exit_code !== null);
-    const result = await call("get_worker_result", { task_id: inPlace.id });
+    const result = await call("get_worker", { task_id: inPlace.id, include: ["result"] });
     assert.deepEqual(result.changed_files, ["/tmp/fake/one.ts", "/tmp/fake/two.ts"], "event-sourced files are the only record and are never hidden");
     assert.equal(result.changed_file_count, 2);
     const diff = await call("get_worker_diff", { task_id: inPlace.id });
     assert.equal(diff.error, "no_worktree");
-    assert.match(diff.reason, /includeFiles: true/);
+    assert.match(diff.reason, /include_files: true/);
   });
 });
 
@@ -65,9 +65,9 @@ test("verification shows a failing check behind a report that claims success", a
   const home = await tempHome("supervisor-result-");
   const { dir } = await makeRepo(join(home, "repo"));
   await withMcp({ SUPERVISOR_HOME: home, FAKE_CODEX_SCENARIO: "failing-command" }, async ({ call }) => {
-    const created = await call("create_codex_worker", dispatchArgs("liar", dir));
+    const created = await call("create_worker", dispatchArgs("liar", dir));
     await waitFor(call, created.id, (t) => t.status === "completed" && t.exit_code !== null);
-    const result = await call("get_worker_result", { task_id: created.id });
+    const result = await call("get_worker", { task_id: created.id, include: ["result"] });
     assert.match(result.reports[0], /All tests pass/);
     const v = result.verification;
     assert.equal(v.runs, 1);
@@ -89,9 +89,9 @@ test("verification on a worker that ran nothing says so", async () => {
   const home = await tempHome("supervisor-result-");
   const { dir } = await makeRepo(join(home, "repo"));
   await withMcp({ SUPERVISOR_HOME: home, FAKE_CODEX_SCENARIO: "echo-prompt" }, async ({ call }) => {
-    const created = await call("create_codex_worker", dispatchArgs("no-commands", dir));
+    const created = await call("create_worker", dispatchArgs("no-commands", dir));
     await waitFor(call, created.id, (t) => t.status === "completed" && t.exit_code !== null);
-    const { verification } = await call("get_worker_result", { task_id: created.id });
+    const { verification } = await call("get_worker", { task_id: created.id, include: ["result"] });
     assert.equal(verification.commands_run, 0);
     assert.equal(verification.last_exit_code, null);
     assert.equal(verification.last_command_failed, false);
