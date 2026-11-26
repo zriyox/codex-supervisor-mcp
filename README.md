@@ -18,6 +18,8 @@ codex-supervisor-mcp 是一个 MCP server。主线程（Claude Code、Codex 或�
 
 *30 秒真跑：派 3 个 worker，各自 worktree 并行，主线程收 3 份 diff 合成一次 commit。*
 
+> **从 0.x 升级到 1.x**：工具从 39 个收成 14 个，名字和参数都换了，旧名不留别名。升级前先把在跑的 worker 收完，升级后重开会话让新 skill 生效。对照表在[参考手册](docs/reference.md)，变更说明在 [1.0.0 release](https://github.com/zriyox/codex-supervisor-mcp/releases/tag/v1.0.0)。
+
 ## 解决什么
 
 | 问题 | 做法 |

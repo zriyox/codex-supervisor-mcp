@@ -18,6 +18,8 @@ codex-supervisor-mcp is an MCP server. A main thread (Claude Code, Codex, or any
 
 *30 seconds, recorded live: three workers in their own worktrees in parallel, then the main thread collects three diffs and makes one commit.*
 
+> **Upgrading from 0.x to 1.x**: 39 tools became 14, with new names and arguments and no aliases for the old ones. Finish the workers in flight first, then reopen the session after upgrading so the new skill loads. The tool table is in the [reference](docs/reference.en.md); what changed is in the [1.0.0 release](https://github.com/zriyox/codex-supervisor-mcp/releases/tag/v1.0.0).
+
 ## What it solves
 
 | Problem | What it does |

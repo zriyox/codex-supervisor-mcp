@@ -3,7 +3,7 @@
   "version": "1.1.0",
   "mcpName": "io.github.zriyox/codex-supervisor-mcp",
   "type": "module",
-  "description": "MCP server that dispatches and supervises parallel Codex CLI workers, one isolated Git worktree each, with a persisted work state machine.",
+  "description": "MCP server that runs parallel Codex CLI workers from Claude Code, Codex or any MCP client: one Git worktree each, 14 tools to dispatch, track, check, land and clean up, state on disk.",
   "homepage": "https://codex-supervisor.zriyo.com",
   "license": "MIT",
   "repository": {

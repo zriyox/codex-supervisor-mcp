@@ -1,7 +1,7 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.zriyox/codex-supervisor-mcp",
-  "description": "Parallel Codex CLI workers from any MCP client: one git worktree each, state in SQLite, web board.",
+  "description": "Parallel Codex CLI workers from any MCP client: one git worktree each, 14 tools, state in SQLite.",
   "repository": {
     "url": "https://github.com/zriyox/codex-supervisor-mcp",
     "source": "github"
