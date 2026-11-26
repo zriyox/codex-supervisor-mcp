@@ -84,3 +84,16 @@ test("installSkill with force overwrites without a backup", async () => {
   assert.equal(after, before, "force must not add a backup");
   assert.equal(await readFile(claudeSkill, "utf8"), source);
 });
+
+// The package was codex-supervisor-mcp. Its skill describes tools that are
+// gone; left in place a session would load both skills.
+test("installing the skill retires the one installed under the package's former name, and loses nothing", async () => {
+  const root = join(home, "renamed", "skills");
+  const former = join(root, "codex-supervisor");
+  await mkdir(former, { recursive: true });
+  await writeFile(join(former, "SKILL.md"), "the former skill, with a note the user added\n");
+  await installSkill({ id: "claude", label: "Claude Code", skillRoot: root });
+  assert.equal(await readFile(join(root, "agent-supervisor", "SKILL.md"), "utf8"), source);
+  assert.equal(existsSync(join(former, "SKILL.md")), false, "a directory without SKILL.md is no longer a skill");
+  assert.equal(await readFile(join(former, "SKILL.md.retired"), "utf8"), "the former skill, with a note the user added\n");
+});
