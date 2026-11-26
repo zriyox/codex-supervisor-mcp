@@ -32,7 +32,9 @@ codex-supervisor-mcp is an MCP server. A main thread (Claude Code, Codex, or any
 | Changes sit on a local branch | `land_worker` merges into the integration branch; `verify_push` proves the commit is on the remote |
 | Worktrees pile up | Landed or unchanged ones are removed during polling. Unlanded work is kept for 7 days, and its uncommitted edits are committed to its branch before the worktree goes. Branches and evidence stay |
 
-A worker is a `codex exec` process and `model` is passed straight through. Keep the main thread on Claude, put the workers on DeepSeek or another provider, and the bills stay separate.
+A worker is a `codex exec` process by default and `model` is passed straight through. Keep the main thread on Claude, put the workers on DeepSeek or another provider, and the bills stay separate.
+
+A worker can also be Claude Code: pass `runner: "claude"` to `create_worker`. It has no OS sandbox, so it runs only in a git worktree or read-only, and it has no side chat (`ask_worker`); dispatch, acceptance, resume, landing and cleanup are the same. To add another CLI, see [docs/runner.md](docs/runner.md).
 
 ## Five minutes to a running batch
 

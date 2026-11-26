@@ -8,8 +8,8 @@ Fourteen by default; three more are registered only with `AGENT_SUPERVISOR_TOOLS
 
 | Tool | Arguments | What it does |
 |---|---|---|
-| `preflight_worker` | `cwd`, `probe_commands`, `acceptance`, `owned_paths`, `title`, `model`, `reasoning_effort`, `workspace`, `sandbox`, `context`, `limits` | With `probe_commands`: starts a short probe under the target worker's workspace, sandbox and guard and returns its id. With only `acceptance`: runs those commands in `cwd` now and returns the results; no worker is created |
-| `create_worker` | `task`, `cwd`, **`owned_paths`**, **`goal`**, `title`, `followup_of`, `depends_on`, `preflight_id`, `model`, `reasoning_effort`, `session`, `workspace`, `sandbox`, `context`, `acceptance`, `limits` | Dispatches one worker. With `followup_of` it continues that worker from its branch and inherits what is not given; `cwd`, `owned_paths` and `goal` may then be left out |
+| `preflight_worker` | `cwd`, `probe_commands`, `acceptance`, `owned_paths`, `title`, `runner`, `model`, `reasoning_effort`, `workspace`, `sandbox`, `context`, `limits` | With `probe_commands`: starts a short probe under the target worker's workspace, sandbox and guard and returns its id. With only `acceptance`: runs those commands in `cwd` now and returns the results; no worker is created |
+| `create_worker` | `task`, `cwd`, **`owned_paths`**, **`goal`**, `title`, `followup_of`, `depends_on`, `preflight_id`, `runner`, `model`, `reasoning_effort`, `session`, `workspace`, `sandbox`, `context`, `acceptance`, `limits` | Dispatches one worker. With `followup_of` it continues that worker from its branch and inherits what is not given; `cwd`, `owned_paths` and `goal` may then be left out `runner` picks the CLI: `codex` (default) or `claude`; what each can do is in [runner.md](runner.md) |
 | `resume_worker` | `task_id`, `prompt`, `rebase_onto`, `context_files`, `acceptance` | Continues the same session. `rebase_onto` first moves the worktree onto a newer commit; a conflict is returned and no worker starts |
 | `cancel_worker` | `task_id` | Stops a worker or its running acceptance. The worktree and its changes stay |
 | `poll_workers` | `cursor`, `status`, `limit` | Without `cursor`: the status table of every worker (capped at 7000 bytes) and a `next_cursor`; a plain read. With `cursor`: only what changed since, and it also recovers a dead first run once and removes worktrees that are safe to remove |
@@ -169,6 +169,8 @@ A terminal state lands in two steps: `turn.completed` sets `completed`, the proc
 | `SUPERVISOR_HOME` | `~/.codex-supervisor` | State root. The MCP and the board must point at the same one |
 | `CODEX_HOME` | `~/.codex` | Read-only: the native `goals_1.sqlite` and the MCP config |
 | `CODEX_BIN` | `codex` | Path to the Codex CLI. The Windows `.cmd` shim is bypassed |
+| `CLAUDE_BIN` | `claude` | Path to Claude Code, for workers with `runner: "claude"` |
+| `AGENT_SUPERVISOR_RUNNER_<NAME>` | none | A runner file to load for `runner: "<name>"`. See [runner.md](runner.md) |
 | `GIT_BIN` | `git` | Path to git |
 | `SUPERVISOR_WEB_PORT` / `SUPERVISOR_WEB_HOST` | `7877` / `127.0.0.1` | Board address |
 | `AGENT_SUPERVISOR_NO_UPDATE_CHECK` | unset | `1` disables the update check |

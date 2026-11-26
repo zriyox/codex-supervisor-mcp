@@ -32,7 +32,9 @@ codex-supervisor-mcp 是一个 MCP server。主线程（Claude Code、Codex 或�
 | 改动留在本地没上线 | `land_worker` 合回主分支，`verify_push` 核对远端真有这笔提交 |
 | worktree 越堆越多 | 已合入或没有改动的在轮询时自动清；没合入的留 7 天，删之前先把未提交的改动存进它的分支。分支和证据不删 |
 
-worker 跑的是 `codex exec`，`model` 透传。主线程留在 Claude，worker 挂 DeepSeek 或别的 provider，账单分开算。
+worker 默认跑 `codex exec`，`model` 透传。主线程留在 Claude，worker 挂 DeepSeek 或别的 provider，账单分开算。
+
+worker 也可以是 Claude Code：`create_worker` 带 `runner: "claude"`。它没有系统级沙箱，所以只能在 git worktree 或只读模式下跑，也不支持旁问（`ask_worker`）；其余派单、验收、续跑、合入、清理都一样。想接别的 CLI，看 [docs/runner.md](docs/runner.md)。
 
 ## 五分钟跑起来
 

@@ -8,8 +8,8 @@
 
 | 工具 | 入参 | 作用 |
 |---|---|---|
-| `preflight_worker` | `cwd`, `probe_commands`, `acceptance`, `owned_paths`, `title`, `model`, `reasoning_effort`, `workspace`, `sandbox`, `context`, `limits` | 带 `probe_commands`：用和目标 worker 相同的 workspace、sandbox、守卫起一个短 probe，返回它的 id。只带 `acceptance`：立刻在 `cwd` 里跑这些验收命令并返回结果，不建 worker |
-| `create_worker` | `task`, `cwd`, **`owned_paths`**, **`goal`**, `title`, `followup_of`, `depends_on`, `preflight_id`, `model`, `reasoning_effort`, `session`, `workspace`, `sandbox`, `context`, `acceptance`, `limits` | 派一路。带 `followup_of` 时从那路的分支接着干，没给的参数沿用它的，此时 `cwd`、`owned_paths`、`goal` 可省 |
+| `preflight_worker` | `cwd`, `probe_commands`, `acceptance`, `owned_paths`, `title`, `runner`, `model`, `reasoning_effort`, `workspace`, `sandbox`, `context`, `limits` | 带 `probe_commands`：用和目标 worker 相同的 workspace、sandbox、守卫起一个短 probe，返回它的 id。只带 `acceptance`：立刻在 `cwd` 里跑这些验收命令并返回结果，不建 worker |
+| `create_worker` | `task`, `cwd`, **`owned_paths`**, **`goal`**, `title`, `followup_of`, `depends_on`, `preflight_id`, `runner`, `model`, `reasoning_effort`, `session`, `workspace`, `sandbox`, `context`, `acceptance`, `limits` | 派一路。带 `followup_of` 时从那路的分支接着干，没给的参数沿用它的，此时 `cwd`、`owned_paths`、`goal` 可省。`runner` 选 CLI：`codex`（默认）或 `claude`，各自能力见 [runner.md](runner.md) |
 | `resume_worker` | `task_id`, `prompt`, `rebase_onto`, `context_files`, `acceptance` | 接同一个会话继续跑。`rebase_onto` 先把 worktree 挪到新的提交上，冲突原样退回、不起 worker |
 | `cancel_worker` | `task_id` | 终止 worker 或它正在跑的验收。worktree 和已有改动保留 |
 | `poll_workers` | `cursor`, `status`, `limit` | 不带 `cursor`：全部 worker 的状态表（封顶 7000 字节）加一个 `next_cursor`，只读。带 `cursor`：只返回这之后的变化，并顺带恢复一次已死的第一轮、清掉可清的 worktree |
@@ -181,6 +181,8 @@ node "$AGENT_SUPERVISOR_STAGE_CLI" "gate:s3" --detail "integration queue"
 | `SUPERVISOR_HOME` | `~/.codex-supervisor` | 状态根目录。MCP 和看板要指同一个 |
 | `CODEX_HOME` | `~/.codex` | 只读，读 Codex 原生的 `goals_1.sqlite` 和 MCP 配置 |
 | `CODEX_BIN` | `codex` | Codex CLI 路径。Windows 上 `.cmd` shim 自动绕开 |
+| `CLAUDE_BIN` | `claude` | Claude Code 路径，`runner: "claude"` 的 worker 用 |
+| `AGENT_SUPERVISOR_RUNNER_<NAME>` | 无 | 指向一个 runner 文件，`runner: "<name>"` 时加载。写法见 [runner.md](runner.md) |
 | `GIT_BIN` | `git` | Git 路径 |
 | `SUPERVISOR_WEB_PORT` / `SUPERVISOR_WEB_HOST` | `7877` / `127.0.0.1` | 看板监听地址 |
 | `AGENT_SUPERVISOR_NO_UPDATE_CHECK` | 未设 | `1` 关闭更新检查 |

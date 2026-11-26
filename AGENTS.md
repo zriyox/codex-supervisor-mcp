@@ -10,6 +10,7 @@ Five layers and the run host; a layer imports only the ones below it. `docs/arch
 src/interface/           MCP tools (mcp/tools: the public schemas; mcp/handlers: the operations behind them), CLIs (bin), board API (web)
 src/run-host/            the detached process that owns one run: launch, streams, finalize
 src/app/                 use cases: dispatch, resume, followup, landing, rebase, cleanup-plan, acceptance, side-chat
+src/runners/             one directory per CLI (codex, claude); contract.js is the interface, registry.js finds a runner by name
 src/runners/codex/       the Codex CLI: arguments, event parsing, native goals, the tool guard
 src/infra/               store/ (SQLite, one module per record), git.js, process.js, worktree.js, update/
 src/domain/              pure rules: status, ownership, worker report, prompt, truncation

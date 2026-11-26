@@ -35,7 +35,7 @@ Two more rules sit on top of the table:
 
 **app.** One module per use case. `dispatch.js` creates a worker, `resume.js` continues one, `followup.js` starts a successor, `landing.js` and `land-chain.js` bring commits onto the integration branch, `rebase.js` moves a worktree to a newer base, `cleanup-plan.js` decides which worktrees may go, `acceptance.js` runs the dispatcher's checks, `side-chat.js` answers questions on a fork of the worker's thread. `compose.js` is the composition root: it registers the runner with the layers that may not import it, and every entry point imports it first.
 
-**runners.** `runners/codex/` is the Codex CLI: `adapter.js` (arguments, spawning, cancelling), `event-parser.js` (its JSON events to row changes), `goal-store.js` (its native goal database), `tool-guard.js` (the PreToolUse hook installed in each worker), `chat-chunks.js` and `mcp-config.js`.
+**runners.** A runner is a plugin: the core finds it by the name on the worker's row (`registry.js`) and asks it only what `contract.js` lists, reading a capability before using an optional feature. `runners/codex/` is the Codex CLI: `adapter.js` (arguments, spawning, cancelling), `event-parser.js` (events to row changes), `goal-store.js` (its native goal database), `tool-guard.js` (the PreToolUse hook), `chat-chunks.js` and `mcp-config.js` (side chat). `runners/claude/` is Claude Code in headless mode: `events.js` translates its stream-json into the supervisor's event vocabulary, `tool-guard.js` is its hook. Stored events are in that one vocabulary whichever CLI produced them. `docs/runner.md` is the guide to writing one.
 
 **infra.** `store/` is SQLite: `schema.js`, `db.js` (connection and migrations), then one module per record: `tasks`, `events`, `sessions`, `facts`, `records` (artifacts, reviews, cleanup plans) and `reconcile`. `git.js` is the single git runner. `process.js` is the single door to child processes. `worktree.js` reads what a worker changed.
 
@@ -46,8 +46,8 @@ Two more rules sit on top of the table:
 1. `interface/mcp/tools/dispatch.js` receives `create_worker`, maps its grouped arguments onto the dispatch operation in `interface/mcp/handlers/dispatch.js`, which calls `createCodexWorker`.
 2. `app/dispatch.js` validates the input, claims a workspace (`infra/workspace-kind.js`), checks path ownership (`app/ownership.js`), reads the session policy (`infra/store/sessions.js`), cuts the worktree (`app/worktree-setup.js` through `infra/git.js`), builds the guard and runtime contract (`domain/worker-preflight.js`) and reserves the paths with the task row in one transaction (`infra/store/tasks.js`).
 3. `app/start-run.js` compiles the worker's context (`app/context-compiler.js`) and starts `run-host/entry.js` detached. The IPC channel carries only the startup handshake.
-4. `run-host/track.js` asks the runner how to launch (`run-host/launch.js`, `runners/codex/adapter.js`), spawns the worker, and writes the running row.
-5. `run-host/streams.js` turns each stdout line into a stored event (`infra/store/events.js`) and a row change (`runners/codex/event-parser.js`).
+4. `run-host/track.js` asks the runner how to launch (`run-host/launch.js`, the worker's runner), spawns the worker, and writes the running row.
+5. `run-host/streams.js` turns each stdout line into a stored event (`infra/store/events.js`) and a row change (the runner's `toEvents` and `parseEvent`).
 6. When the worker closes, `run-host/finalize.js` picks the terminal status, records what changed (`infra/worktree.js`), runs acceptance (`app/acceptance.js`) and writes the final row and facts.
 7. The main thread reads it back through `get_worker` and `get_worker_diff`, then `land_worker` calls `app/land-chain.js` and `app/landing.js`.
 
