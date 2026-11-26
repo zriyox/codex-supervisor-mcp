@@ -19,7 +19,8 @@ function activeReason(task) {
   const settled = runIsOver(task);
   if (!settled && task.pid && isPidAlive(task.pid)) return "worker process is still active";
   if (!settled && task.run_host_pid && isPidAlive(task.run_host_pid)) return "run host process is still active";
-  if (!settled && isGroupAlive(task.run_host_pid)) return "a process of the worker's run is still active";
+  // A lost run can leave a process behind that still writes in the worktree; only a recorded exit rules that out.
+  if (task.exit_code == null && isGroupAlive(task.run_host_pid)) return "a process of the worker's run is still active";
   const acceptance = task.acceptance_results;
   if (acceptance?.status === "running" || (acceptance?.supervisor_pid && isPidAlive(acceptance.supervisor_pid))) return "acceptance process is still active";
   return null;
