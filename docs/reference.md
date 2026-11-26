@@ -153,9 +153,10 @@ node "$AGENT_SUPERVISOR_STAGE_CLI" "gate:s3" --detail "integration queue"
 | `queued` | 已派单，未启动 |
 | `running` | 运行中。`phase`：`starting → thinking → command → editing → reporting` |
 | `completed` | 成功 |
-| `failed` | 非零退出码、`turn.failed`、spawn 失败 |
+| `failed` | 非零退出码、`turn.failed`、spawn 失败。`failure.source` / `failure.code` / `failure.retryable` 给出原因；进程非零退出时按 stderr 归到 `auth`、`provider`、`runner_config` 或 `worker_process`，`failure.detail` 是 stderr 最后一行 |
 | `cancelled` | 被 `cancel_worker` 中断 |
 | `lost` | worker 被外部信号杀掉、运行进程失踪、或者行写了但进程从没起来。`resume_worker` 接回 |
+| `timed_out` | `limits.max_run_ms` 或 `limits.max_total_ms` 用完，supervisor 主动停掉。不会自动重试。单轮超时可以 `resume_worker`（每轮重新计时）；总预算用完只能用 `create_worker` 的 `followup_of` 带新 `limits` 接续 |
 
 终态分两步落盘：`turn.completed` 先把 status 置成 completed，进程退出后才写 `exit_code`；`wait_workers` 等到 `exit_code` 落了才返回。Windows 没有信号，外部 kill 只报 `failed` 加退出码。Codex 原生 goal 的 `paused` / `blocked` 算 `running` 并进 `needs_attention`，`usageLimited` / `budgetLimited` 算 `failed`。
 
@@ -166,7 +167,8 @@ node "$AGENT_SUPERVISOR_STAGE_CLI" "gate:s3" --detail "integration queue"
 | 文件 | 内容 |
 |---|---|
 | `data/supervisor.sqlite` | `tasks`（一行一个 work）、`task_events`、`sessions`、`side_sessions` / `side_turns`（旁问） |
-| `data/runs/<taskId>.jsonl` | Codex `--json` 的原始输出 |
+| `data/crash.log` | MCP 进程、run host、看板的未捕获异常，一行一条 JSON。工具突然全部 `Connection closed` 时先看这里 |
+| `data/runs/<taskId>.jsonl` | Codex `--json` 的原始输出。超过 2KB 的事件（主要是命令输出）全文只在这里，`task_events` 里是截断摘要；`get_worker` 读 `events` 不带 `max_chars` 时从这里取回全文，文件没了就返回摘要并标 `supervisor_clipped.missing` |
 | `data/update-check.json`、`auto-update.json` | 更新检查和后台更新的记录 |
 | `worktrees/<taskId>/` | 该 worker 的 Git worktree |
 

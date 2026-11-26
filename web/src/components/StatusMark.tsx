@@ -23,7 +23,7 @@ export function StatusText({ status, phase, className = "" }: { status: Status; 
 }
 
 export function StatusBar({ counts, total, height = 4 }: { counts: Partial<Record<Status, number>>; total: number; height?: number }) {
-  const order: Status[] = ["running", "queued", "completed", "failed", "lost", "cancelled"];
+  const order: Status[] = ["running", "queued", "completed", "failed", "timed_out", "lost", "cancelled"];
   return (
     <span className="flex w-full overflow-hidden rounded-full bg-fill" style={{ height }}>
       {order.map((status) => {

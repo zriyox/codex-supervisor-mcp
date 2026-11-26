@@ -1,3 +1,4 @@
+import { TERMINAL_STATUSES } from "./status.js";
 import { createHash } from "node:crypto";
 import { resolve } from "node:path";
 import { commandFailed } from "./command-outcome.js";
@@ -117,7 +118,7 @@ export function readPreflightResult(task) {
       passed: Boolean(result) && !commandFailed(result)
     };
   });
-  const terminal = ["completed", "failed", "cancelled", "lost"].includes(task.status);
+  const terminal = TERMINAL_STATUSES.has(task.status);
   const failedCommands = commands.filter(commandFailed);
   const probesPassed = probes.every((probe) => probe.passed);
   const exitConfirmed = task.status === "completed" && task.exit_code === 0;

@@ -4,13 +4,16 @@
 // phase   = what the worker is doing right now. Only meaningful while
 //           status === "running"; NULL once the work reaches a terminal status.
 
-export const TASK_STATUSES = ["queued", "running", "completed", "failed", "cancelled", "lost"];
+// timed_out is a worker the supervisor stopped because its time budget ran
+// out. It is not lost: nothing vanished, and re-running it unchanged would
+// only run out of time again.
+export const TASK_STATUSES = ["queued", "running", "completed", "failed", "cancelled", "lost", "timed_out"];
 
 export const PHASES = ["starting", "thinking", "command", "editing", "reporting"];
 
 export const ACTIVE_STATUSES = new Set(["queued", "running"]);
 
-export const TERMINAL_STATUSES = new Set(["completed", "failed", "cancelled", "lost"]);
+export const TERMINAL_STATUSES = new Set(["completed", "failed", "cancelled", "lost", "timed_out"]);
 
 // Codex native thread goal status -> work status.
 // Storage uses snake_case ("usage_limited"); the RPC layer uses camelCase
@@ -37,10 +40,11 @@ export function isGoalNeedingAttention(nativeStatus) {
 }
 
 // True once nothing of a worker's last run can still be running: its exit
-// code is recorded (the last thing a run host writes), or the row was marked
+// code or the signal that ended it is recorded (the last thing a run host
+// writes), or the row was marked
 // lost (done only after both processes were seen gone). From then on the pids
 // on the row are history. The system hands them to other processes, on
 // Windows within seconds, and a live stranger must not read as a live worker.
 export function runIsOver(task) {
-  return task.status === "lost" || (TERMINAL_STATUSES.has(task.status) && task.exit_code != null);
+  return task.status === "lost" || (TERMINAL_STATUSES.has(task.status) && (task.exit_code != null || task.signal != null));
 }

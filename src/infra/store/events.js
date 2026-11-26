@@ -1,7 +1,7 @@
 import { branchOf } from "../../domain/worker-branch.js";
 import { ensureControlRecords, ensureFilesystem, openDb, runIdFor, runWithRetry, workItemIdForTask } from "./db.js";
+import { storedForm } from "./event-body.js";
 import { extractAgentMessage } from "./runner-readers.js";
-import { createHash } from "node:crypto";
 
 export async function ensureRunRecord(task, attempt) {
   await ensureFilesystem();
@@ -51,7 +51,10 @@ export async function completeRunRecord(task, attempt) {
   }));
 }
 
-export async function appendTaskEvents(taskId, events, { runId = null, actor = "supervisor" } = {}) {
+// bodyInLog: each event is already in the run log (the caller waited for the
+// write), so a large one need not be kept whole here as well. logOffsets says
+// where each line starts.
+export async function appendTaskEvents(taskId, events, { runId = null, actor = "supervisor", bodyInLog = false, logOffsets = [] } = {}) {
   await ensureFilesystem();
   if (!Array.isArray(events) || events.length === 0) return [];
   const dbInstance = openDb();
@@ -65,9 +68,8 @@ export async function appendTaskEvents(taskId, events, { runId = null, actor = "
       `);
       const createdAt = new Date().toISOString();
       const records = events.map((event, index) => {
-        const payload = JSON.stringify(event);
-        const result = insert.run(taskId, runId, nextSeqRow.seq + index, createdAt, actor, event.type ?? "unknown", payload,
-          createHash("sha256").update(payload).digest("hex"));
+        const stored = storedForm(event, { bodyInLog, offset: logOffsets[index] ?? null });
+        const result = insert.run(taskId, runId, nextSeqRow.seq + index, createdAt, actor, event.type ?? "unknown", stored.payload, stored.sha256);
         return { id: Number(result.lastInsertRowid), run_id: runId, actor };
       });
       dbInstance.exec("COMMIT");

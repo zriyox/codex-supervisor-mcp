@@ -3,11 +3,12 @@ import { gitBin, runGit } from "../infra/git.js";
 import { worktreesDir } from "../infra/paths.js";
 import { runToExit } from "../infra/process.js";
 import { resolveWritableRoot } from "../infra/sandbox-roots.js";
+import { isPidAlive } from "../infra/store/tasks.js";
 import { DEFAULT_ACCEPTANCE_TIMEOUT_MS, runAcceptance } from "./acceptance.js";
 import { WORKTREE_LOCK_TIMEOUT_MS } from "./run-state.js";
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
-import { lstat, mkdir, realpath, rm, stat, symlink } from "node:fs/promises";
+import { lstat, mkdir, readFile, realpath, rename, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 
 export function splitLines(buffer, chunk) {
@@ -155,6 +156,44 @@ function sleep(ms) {
   return new Promise((resolvePromise) => setTimeout(resolvePromise, ms));
 }
 
+// A lock whose holder died would otherwise stay for good: nothing else
+// removes it, and every later dispatch into that repository would time out.
+// The holder writes its pid into the lock; a waiter that finds the pid dead
+// takes the lock away by renaming it, which only one waiter can win.
+const LOCK_UNCLAIMED_MS = 10000;
+
+async function lockIsAbandoned(lockPath) {
+  let owner;
+  try {
+    owner = Number(await readFile(join(lockPath, "owner"), "utf8"));
+  } catch (error) {
+    // Only a missing file means "not written yet"; anything else is a lock we cannot judge.
+    if (error.code !== "ENOENT") return false;
+    owner = 0;
+  }
+  if (owner) return !isPidAlive(owner);
+  // No owner yet: either the holder is between mkdir and its write, or it
+  // died there. Age tells them apart.
+  const info = await stat(lockPath).catch(() => null);
+  return Boolean(info) && Date.now() - info.mtimeMs > LOCK_UNCLAIMED_MS;
+}
+
+async function breakAbandonedLock(lockPath) {
+  const aside = `${lockPath}.${process.pid}.${Date.now()}.stale`;
+  try {
+    await rename(lockPath, aside);
+  } catch {
+    return; // someone else broke it, or the holder released it
+  }
+  // Between the check and the rename another waiter may have broken the lock
+  // and taken a fresh one, which is then what was moved. It goes back.
+  if (!await lockIsAbandoned(aside)) {
+    await rename(aside, lockPath).catch(() => {});
+    return;
+  }
+  await rm(aside, { recursive: true, force: true }).catch(() => {});
+}
+
 export async function withWorktreeCreationLock(cwd, work) {
   const lockName = `create-${createHash("sha256").update(resolve(cwd)).digest("hex").slice(0, 24)}.lock`;
   const lockPath = join(worktreesDir, lockName);
@@ -166,10 +205,12 @@ export async function withWorktreeCreationLock(cwd, work) {
       break;
     } catch (error) {
       if (error.code !== "EEXIST" || Date.now() >= deadline) throw new Error(`worktree creation lock timed out for ${cwd}`, { cause: error });
-      await sleep(100);
+      if (await lockIsAbandoned(lockPath)) await breakAbandonedLock(lockPath);
+      else await sleep(100);
     }
   }
   try {
+    await writeFile(join(lockPath, "owner"), String(process.pid));
     return await work();
   } finally {
     await rm(lockPath, { recursive: true, force: true }).catch(() => {});

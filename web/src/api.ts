@@ -1,6 +1,6 @@
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 
-export type Status = "queued" | "running" | "completed" | "failed" | "cancelled" | "lost";
+export type Status = "queued" | "running" | "completed" | "failed" | "cancelled" | "lost" | "timed_out";
 export type Phase = "starting" | "thinking" | "command" | "editing" | "reporting" | null;
 
 export interface NowLine {

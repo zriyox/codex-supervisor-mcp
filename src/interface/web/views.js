@@ -2,6 +2,7 @@
 import { branchOf } from "../../domain/worker-branch.js";
 import { ACTIVE_STATUSES } from "../../domain/status.js";
 import { supervisorRoot } from "../../infra/paths.js";
+import { restoreEventBodies } from "../../infra/store/event-body.js";
 import { listTaskEventKinds, readAgentMessages, readTaskEvents } from "../../infra/store/events.js";
 import { reconcileDetachedActiveTasks } from "../../infra/store/reconcile.js";
 import { readSessions } from "../../infra/store/sessions.js";
@@ -221,5 +222,6 @@ export async function worker(taskId) {
 export async function events(taskId, url) {
   const limit = Math.min(1000, Math.max(1, Number(url.searchParams.get("limit") ?? 150)));
   const kinds = url.searchParams.get("kinds")?.split(",").filter(Boolean) ?? null;
-  return { task_id: taskId, events: await readTaskEvents(taskId, limit, kinds) };
+  const task = await getTask(taskId);
+  return { task_id: taskId, events: await restoreEventBodies(await readTaskEvents(taskId, limit, kinds), task?.run_log ?? null) };
 }

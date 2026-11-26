@@ -24,6 +24,7 @@
   --color-yellow: #ffcc00;
   --color-gray: #8e8e93;
   --color-indigo: #5856d6;
+  --color-purple: #af52de;
 
   --radius-card: 10px;
   --shadow-panel: 0 0 0 1px rgb(0 0 0 / 0.04), 0 8px 24px rgb(0 0 0 / 0.08);
@@ -47,6 +48,7 @@
     --color-red: #ff453a;
     --color-yellow: #ffd60a;
     --color-indigo: #5e5ce6;
+    --color-purple: #bf5af2;
     --shadow-panel: 0 0 0 1px rgb(255 255 255 / 0.06), 0 8px 24px rgb(0 0 0 / 0.5);
   }
 }

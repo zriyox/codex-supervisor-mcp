@@ -6,7 +6,7 @@ import { ACTIVE_STATUSES, runIsOver } from "../domain/status.js";
 import { buildHandoff } from "../infra/handoff.js";
 import { appendTaskEvent } from "../infra/store/events.js";
 import { getSession } from "../infra/store/sessions.js";
-import { claimTaskRun, getTask, readTasks, releaseTaskRun, upsertTask } from "../infra/store/tasks.js";
+import { claimTaskRun, getTask, isGroupAlive, readTasks, releaseTaskRun, upsertTask } from "../infra/store/tasks.js";
 import { codexRunner } from "../runners/codex/adapter.js";
 import { readNativeGoalState } from "../runners/codex/goal-store.js";
 import { DEFAULT_ACCEPTANCE_TIMEOUT_MS, normalizeAcceptance } from "./acceptance.js";
@@ -159,7 +159,11 @@ export async function recoverEligibleRuns() {
       || /401|403|unauthori[sz]ed|not logged|permission denied|approval|rate.?limit|429/i.test(task.error ?? "")
       || /time_limit|quota/.test(`${task.attention_reason ?? ""} ${task.error ?? ""}`)
       // Once the run is over its pids may belong to anyone.
-      || (!runIsOver(task) && (await isPidAlive(task.pid) || await isPidAlive(task.run_host_pid)))) continue;
+      || (!runIsOver(task) && (await isPidAlive(task.pid) || await isPidAlive(task.run_host_pid)))
+      // Something of the dead run is still alive and holds the session;
+      // resuming now fails with "already has an active writer". A later poll retries.
+      // A recorded exit is the one thing that rules a survivor out.
+      || (task.exit_code == null && isGroupAlive(task.run_host_pid))) continue;
     const session = task.session_id ? await getSession(task.session_id) : null;
     if (session?.approval_state === "waiting_user") continue;
     try {

@@ -27,6 +27,8 @@ function terminalStatus(run, stored, code, signal) {
   if (stored && TERMINAL_STATUSES.has(stored.status) && stored.status !== live.status) return stored.status;
   if (run.terminalEvent && TERMINAL_STATUSES.has(live.status)) return live.status;
   if (cancelRequested) return "cancelled";
+  // The supervisor stopped it for running out of time; the signal was its own.
+  if (run.quotaReason) return "timed_out";
   // Killed by a signal nobody asked for: the worker did not fail, it
   // vanished. Re-running is the fix, so it is reported as lost.
   if (signal) return "lost";
@@ -117,8 +119,13 @@ async function attachEvidence(run, next) {
   })).digest("hex");
 }
 
-function flagAttention(run, next, status, code) {
+// "The evidence could not be read" outranks what the evidence would have
+// said: no_work and invalid_report are both conclusions drawn from it.
+const UNVERIFIED = new Set(["external_output_unverified", "workspace_manifest_unverified"]);
+
+export function flagAttention(run, next, status, code) {
   const { live } = run;
+  if (UNVERIFIED.has(next.attention_reason)) return;
   if (status === "completed" && code === 0 && live.sandbox !== "read-only"
     && !next.run_evidence.output_changed && next.run_evidence.output_changed !== null
     && live.commands.length === 0 && !run.reportOnlyRecovery) {

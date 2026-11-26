@@ -45,5 +45,7 @@ if (!process.env.SUPERVISOR_HOME?.trim()) {
 
 // paths.js reads SUPERVISOR_HOME when it is first imported, so the import
 // has to come after the detection above.
+const { installCrashGuard } = await import("../../infra/crash-guard.js");
+installCrashGuard("web");
 const { startWebServer } = await import("../web/app.js");
 startWebServer({ storeOrigin });

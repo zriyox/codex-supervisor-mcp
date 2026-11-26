@@ -3,6 +3,7 @@ import { ACTIVE_STATUSES } from "../../../domain/status.js";
 import { truncateEventStrings } from "../../../domain/truncate.js";
 import { getSession, upsertSession } from "../../../infra/store/sessions.js";
 import { getTask, readTasksBySession, searchTasks } from "../../../infra/store/tasks.js";
+import { restoreEventBodies } from "../../../infra/store/event-body.js";
 import { listTaskEventKinds, readTaskEvents } from "../../../infra/store/events.js";
 import { errorResult, textResult } from "../result.js";
 import { acceptanceCheck } from "../schemas.js";
@@ -91,7 +92,9 @@ export const getCodexWorkerEventsOp = {
   handler: async ({ task_id, limit, maxChars, kinds }) => {
     const task = await getTask(task_id);
     if (!task) return textResult({ error: "task_not_found", task_id });
-    const events = await readTaskEvents(task_id, limit, kinds ?? null);
+    const stored = await readTaskEvents(task_id, limit, kinds ?? null);
+    // Large bodies live in the run log only; max_chars then cuts the whole event, as it always did.
+    const events = await restoreEventBodies(stored, task.run_log);
     const trimmed = maxChars === undefined ? events : events.map((event) => truncateEventStrings(event, maxChars));
     return textResult({
       task_id,

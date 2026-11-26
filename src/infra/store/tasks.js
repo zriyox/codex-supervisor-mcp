@@ -46,6 +46,20 @@ export function isPidAlive(pid) {
   }
 }
 
+// The run host leads its own process group and the worker runs inside it. A
+// worker CLI is often a launcher around the real binary, so the recorded pid
+// can be gone while the binary is still writing to the session. True while
+// anything in the group is left. Windows has no process groups.
+export function isGroupAlive(leaderPid) {
+  if (!leaderPid || process.platform === "win32") return false;
+  try {
+    process.kill(-leaderPid, 0);
+    return true;
+  } catch (error) {
+    return error.code === "EPERM";
+  }
+}
+
 export async function readTasks() {
   await ensureFilesystem();
   const rows = openDb().prepare("SELECT * FROM tasks ORDER BY created_at ASC").all();
