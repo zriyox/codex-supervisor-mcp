@@ -34,7 +34,3 @@ test("a lock left by a dead process is taken over, a live holder's is waited for
   await Promise.all([hold(), hold(), hold()]);
   assert.equal(most, 1);
 });
-  const second = withWorktreeCreationLock(repo, async () => order.push("second in"));
-  await Promise.all([first, second]);
-  assert.deepEqual(order, ["first in", "first out", "second in"]);
-});
