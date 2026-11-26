@@ -1,6 +1,13 @@
 import { runSync, spawnProcess } from "../../infra/process.js";
 import { defaultBinDirs, findBinaryPath, resolveCommand, shimMessage } from "../../infra/bin-resolver.js";
+import { workerReportSchemaPath } from "../../domain/worker-report.js";
+import { chunksFor } from "./chat-chunks.js";
 import { applyCodexEvent } from "./event-parser.js";
+import { readNativeGoal, readNativeGoalState } from "./goal-store.js";
+import { codexConfigText, disableMcpServerArgs, supervisorMcpDisableArgs } from "./mcp-config.js";
+import { fileURLToPath } from "node:url";
+
+const quoteCommand = (path) => process.platform === "win32" ? `"${path.replace(/"/g, '""')}"` : `'${path.replace(/'/g, "'\\''")}'`;
 
 const CODEX_NPM_ENTRY = { pkg: "@openai/codex", bin: "bin/codex.js" };
 
@@ -8,6 +15,56 @@ export class CodexRunnerAdapter {
   constructor({ env = process.env } = {}) {
     this.env = env;
     this.name = "codex";
+    this.capabilities = { os_sandbox: true, resume: true, side_chat: true, tool_guard: true, structured_report: true, native_goal: true };
+    // The read-only fork a side question runs in.
+    this.sideChat = {
+      forkArgs: (options) => this.forkSideArgs(options),
+      // Config overrides go before the thread id and the stdin marker.
+      withConfig: (args, configArgs) => [...args.slice(0, -2), ...configArgs, ...args.slice(-2)],
+      configText: codexConfigText,
+      disableMcpServerArgs,
+      chunksFor,
+      deleteArgs: (threadId) => ["delete", "--force", threadId]
+    };
+  }
+
+  // Adds what installs the guard hook, the report schema and the sandbox
+  // settings to the arguments of a start or a resume.
+  launchArgs({ args, record, outputSchema, writableRoots }) {
+    const guard = fileURLToPath(new URL("./tool-guard.js", import.meta.url));
+    const hookCommand = `${quoteCommand(process.execPath)} ${quoteCommand(guard)}`;
+    const configArgs = [...(outputSchema ? ["--output-schema", workerReportSchemaPath] : []), "--dangerously-bypass-hook-trust", "-c",
+      `hooks.PreToolUse=[{matcher="Bash|apply_patch|create_goal",hooks=[{type="command",command=${JSON.stringify(hookCommand)}}]}]`];
+    // A worker may use its explicitly configured business MCP servers, but it
+    // must not inherit this supervisor and create a second orchestration tree.
+    configArgs.push(...supervisorMcpDisableArgs());
+    configArgs.push("-c", `sandbox_workspace_write.network_access=${record.guard_policy?.networkAccess === true}`);
+    if (writableRoots.length) configArgs.push("-c", `sandbox_workspace_write.writable_roots=${JSON.stringify(writableRoots)}`);
+    // Before the prompt/session positional argument that ends exec and resume.
+    return [...args.slice(0, -1), ...configArgs, args.at(-1)];
+  }
+
+  // Codex already prints the supervisor's event vocabulary.
+  toEvents(line) {
+    return [JSON.parse(line)];
+  }
+
+  nativeGoal(threadId) {
+    return readNativeGoal(threadId);
+  }
+
+  nativeGoalState(threadId) {
+    return readNativeGoalState(threadId);
+  }
+
+  // Only a thread with no native goal, or one explicitly stored as complete,
+  // can safely resume with a structured output schema. Paused, blocked,
+  // usage-limited and budget-limited goals are not complete; Codex can still
+  // activate their goal turn and reject the incompatible schema.
+  resumeAllowsOutputSchema(threadId) {
+    const goalRead = readNativeGoalState(threadId);
+    return ["missing_goal", "missing_database"].includes(goalRead.state)
+      || (goalRead.state === "available" && goalRead.goal?.storage_status === "complete");
   }
 
   resolveTarget() {

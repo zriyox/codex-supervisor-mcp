@@ -9,7 +9,7 @@ import { join, resolve } from "node:path";
 
 export function rowToTask(row) {
   if (!row) return null;
-  const nativeGoal = readNativeGoal(row.thread_id);
+  const nativeGoal = readNativeGoal(row.thread_id, row.worker);
   return {
     ...row,
     workspace_kind: row.workspace_kind ?? "legacy",

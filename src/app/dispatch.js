@@ -11,7 +11,8 @@ import { resolveWritableRoot } from "../infra/sandbox-roots.js";
 import { getSession, upsertSession } from "../infra/store/sessions.js";
 import { getTask, reserveTaskOwnership, taskRunPath, upsertTask } from "../infra/store/tasks.js";
 import { isGitCheckout, prepareWorkspace } from "../infra/workspace-kind.js";
-import { codexRunner } from "../runners/codex/adapter.js";
+import { assertWorkspaceAllowed } from "../runners/contract.js";
+import { DEFAULT_RUNNER, loadRunner } from "../runners/registry.js";
 import { DEFAULT_ACCEPTANCE_TIMEOUT_MS, isArtifactOnlyAcceptance, normalizeAcceptance } from "./acceptance.js";
 import { findOwnershipConflicts, normalizeOwnedPaths, ownershipConflictError } from "./ownership.js";
 import { allowedReasoningEfforts } from "./run-state.js";
@@ -88,14 +89,11 @@ async function validateDependencies(dependsOn, projectRoot, baseCommit) {
 }
 
 function coded(code, message, details = undefined) {
-  const error = new Error(message);
-  error.code = code;
-  if (details !== undefined) error.details = details;
-  return error;
+  return Object.assign(new Error(message), { code }, details === undefined ? {} : { details });
 }
 
 const DISPATCH_DEFAULTS = {
-  sessionId: null, sessionTitle: null, sessionNote: null, sandbox: "workspace-write", model: null, reasoningEffort: "high",
+  runner: DEFAULT_RUNNER, sessionId: null, sessionTitle: null, sessionNote: null, sandbox: "workspace-write", model: null, reasoningEffort: "high",
   skipGitRepoCheck: true, dependsOn: [], followupOf: null, workspaceKind: null, inPlaceAuthorization: null, workspaceSetup: null,
   baseRef: null, preflightId: null, preflight: null, acceptance: null, acceptanceTimeoutMs: null, forbid: [], allowedCommands: [],
   context: [], contracts: [], externalOutputs: [], networkAccess: false, writableRoots: [], maxRunMs: null, maxTotalMs: null
@@ -174,6 +172,7 @@ async function claimWorkspace(input, id, acceptanceCommands) {
   const normalizedOwnedPaths = normalizeOwnedPaths([...ownedPaths, ...externalOutputs.map((entry) => entry.path)], projectRoot);
   const normalizedWorkspaceSetup = normalizeWorkspaceSetup(workspaceSetup, projectRoot);
   if (normalizedWorkspaceSetup && workspace.kind !== "git_worktree") throw new Error("workspace.setup is only supported for git_worktree workers");
+  assertWorkspaceAllowed(input.runner, input.confined, workspace.kind);
   const conflicts = await findOwnershipConflicts(normalizedOwnedPaths);
   if (conflicts.length > 0) throw ownershipConflictError(conflicts);
   return { workspace, projectRoot, normalizedOwnedPaths, normalizedWorkspaceSetup };
@@ -246,7 +245,7 @@ function buildGuard(input, place, worktree, resolvedWritableRoots) {
     contracts,
     workspaceSetup: normalizedWorkspaceSetup,
     workspaceKind: workspace.kind,
-    workspaceManifestSha256: workspace.beforeManifest?.sha256 ?? null
+    workspaceManifestSha256: workspace.beforeManifest?.sha256 ?? null, runner: input.runner
   });
   const preflightMetadata = preflight
     ? createPreflightMetadata(runtimeContract, preflight.probeCommands)
@@ -263,7 +262,7 @@ function buildRecord(input, parts) {
   const record = {
     id,
     title: title || task.split("\n").find(Boolean)?.slice(0, 80) || "Codex worker",
-    worker: "codex",
+    worker: input.runner,
     status: "queued",
     phase: null,
     cwd: effectiveCwd,
@@ -358,9 +357,10 @@ async function admitWorker(record, { dependsOn, preflightId }, { workspace, proj
 }
 
 export async function createCodexWorker(rawInput) {
-  const input = withDispatchDefaults(rawInput);
+  const runner = await loadRunner(rawInput.runner ?? DEFAULT_RUNNER);
+  const input = { ...withDispatchDefaults(rawInput), runner: runner.name, confined: runner.capabilities.os_sandbox };
   const { acceptanceCommands, validatedGoal, resolvedWritableRoots } = await validateDispatch(input);
-  const id = `codex-${Date.now()}-${randomUUID().slice(0, 8)}`;
+  const id = `${runner.name}-${Date.now()}-${randomUUID().slice(0, 8)}`;
   const place = await claimWorkspace(input, id, acceptanceCommands);
   const { session, combinedAcceptance } = await sessionPolicy(input, acceptanceCommands);
   requireDependencySetup({ kind: place.workspace.kind, projectRoot: place.projectRoot, setup: place.normalizedWorkspaceSetup,
@@ -372,14 +372,14 @@ export async function createCodexWorker(rawInput) {
   await admitWorker(record, input, { ...place, worktree, runtimeContract: guard.runtimeContract });
 
   const { sandbox, model, reasoningEffort, skipGitRepoCheck, task } = input;
-  const args = codexRunner.startArgs({ cwd: effectiveCwd, sandbox, model, reasoningEffort, skipGitRepoCheck });
+  const args = runner.startArgs({ cwd: effectiveCwd, sandbox, model, reasoningEffort, skipGitRepoCheck });
   const job = {
     record,
     args,
     prompt: frameWorkerPrompt(task, {
       objective: validatedGoal.objective,
       tokenBudget: validatedGoal.tokenBudget
-    }, { acceptance: combinedAcceptance, outputSchema: true }),
+    }, { acceptance: combinedAcceptance, outputSchema: true, nativeGoal: runner.capabilities.native_goal }),
     logPath: record.run_log,
     outputSchema: true,
     // --cd tells Codex where the agent works. The shell/tool process must also

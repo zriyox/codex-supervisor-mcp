@@ -7,11 +7,18 @@ import { getTask, recordTerminalChangedFiles } from "../../../infra/store/tasks.
 import { readAgentMessages } from "../../../infra/store/events.js";
 import { baseBehind, readTaskChanges, readWorktreeDiff, splitPatchHunks, workspaceSetupIgnorePaths, worktreeRef } from "../../../infra/worktree.js";
 import { summarizeVerification } from "../../../runners/codex/event-parser.js";
-import { readNativeGoal, readNativeGoalState } from "../../../runners/codex/goal-store.js";
+import { readNativeGoal } from "../../../infra/store/runner-readers.js";
+import { loadRunner } from "../../../runners/registry.js";
 import { textResult } from "../result.js";
 import { buildWorkerSummary, externalOutputView, reportView, runEvidenceView } from "../views/overview.js";
 import { acceptanceView } from "../views/task.js";
 import { z } from "zod";
+
+// A runner with no native goal, or one this process cannot load, has none to read.
+async function nativeGoalRead(task) {
+  const runner = await loadRunner(task.worker).catch(() => null);
+  return runner?.capabilities.native_goal ? runner.nativeGoalState(task.thread_id) : { state: "unsupported", goal: null };
+}
 
 export const getWorkerGoalOp = {
   input: z.object({
@@ -28,8 +35,8 @@ export const getWorkerGoalOp = {
       token_budget: task.goal_token_budget,
       goal_status: task.goal_status,
       needs_attention: isGoalNeedingAttention(task.goal_status),
-      native_goal: readNativeGoal(task.thread_id),
-      native_goal_read: readNativeGoalState(task.thread_id)
+      native_goal: readNativeGoal(task.thread_id, task.worker),
+      native_goal_read: await nativeGoalRead(task)
     });
   }
 };
@@ -41,7 +48,7 @@ export const getWorkerSummaryOp = {
   handler: async ({ task_id }) => {
     const task = await getTask(task_id);
     if (!task) return textResult({ error: "task_not_found", task_id });
-    const summary = buildWorkerSummary(task, readNativeGoal(task.thread_id));
+    const summary = buildWorkerSummary(task, readNativeGoal(task.thread_id, task.worker));
     // Cache the worktree diff on the row once the worker is done, so the
     // overview's count stops lagging. A running row is the runner's to write.
     if (TERMINAL_STATUSES.has(task.status) && summary.changed_files.length !== (task.changed_files ?? []).length) {

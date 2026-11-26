@@ -5,7 +5,7 @@
 // reconcile every read does. web-server.js is the entry that decides which
 // store to open and then calls startWebServer().
 import "../../app/compose.js";
-import { attachToTurn, endSideSession, runSideTurn, sideSessionState, stopSideTurn } from "../../app/side-chat.js";
+import { attachToTurn, endSideSession, runSideTurn, sideSessionState, stopSideTurn, supportsSideChat } from "../../app/side-chat.js";
 import { supervisorRoot } from "../../infra/paths.js";
 import { getTask } from "../../infra/store/tasks.js";
 import { checkForUpdate } from "../../infra/update/update-check.js";
@@ -148,7 +148,7 @@ async function route(req, res) {
       attachToTurn(taskId, res);
       return undefined;
     }
-    if (req.method === "GET" && !action) return json(res, 200, { task_id: taskId, can_ask: Boolean(task.thread_id), worker_status: task.status, ...(await sideSessionState(taskId)) });
+    if (req.method === "GET" && !action) return json(res, 200, { task_id: taskId, can_ask: Boolean(task.thread_id) && supportsSideChat(task), worker_status: task.status, ...(await sideSessionState(taskId)) });
     if (req.method === "DELETE" && !action) return json(res, 200, { task_id: taskId, ...(await endSideSession(taskId)) });
     if (req.method === "POST" && action === "stop") return json(res, 200, { task_id: taskId, ...stopSideTurn(taskId) });
     if (req.method === "POST" && !action) {

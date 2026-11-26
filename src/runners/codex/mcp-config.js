@@ -11,6 +11,10 @@ export function configuredMcpServers(configText) {
   return names;
 }
 
+// The key path is written bare: `-c mcp_servers.name.enabled=false`. A
+// quoted name (`mcp_servers."name".enabled`) is taken by codex as a new
+// server literally called "name", quotes included, with no transport, and
+// the whole config then fails to load.
 export function disableMcpServerArgs(configText, names = null) {
   const configured = configuredMcpServers(configText);
   const selected = names ? [...configured].filter((name) => names.has(name)) : [...configured];

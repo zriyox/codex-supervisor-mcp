@@ -10,6 +10,7 @@ Five layers and the run host; a layer imports only the ones below it. `docs/arch
 src/interface/           MCP tools (mcp/tools: the public schemas; mcp/handlers: the operations behind them), CLIs (bin), board API (web)
 src/run-host/            the detached process that owns one run: launch, streams, finalize
 src/app/                 use cases: dispatch, resume, followup, landing, rebase, cleanup-plan, acceptance, side-chat
+src/runners/             one directory per CLI (codex, claude); contract.js is the interface, registry.js finds a runner by name
 src/runners/codex/       the Codex CLI: arguments, event parsing, native goals, the tool guard
 src/infra/               store/ (SQLite, one module per record), git.js, process.js, worktree.js, update/
 src/domain/              pure rules: status, ownership, worker report, prompt, truncation
@@ -34,6 +35,7 @@ npm run web:build        # runs by itself before npm publish
 ## Rules
 
 - `npm test` green before every commit. Never `npm version` or `npm publish` while CI is red or still running; check `gh run list` first.
+- A server started by a test runs with `AGENT_SUPERVISOR_SKIP_SKILL_SYNC=1`. Without it the server copies the checkout's skill into the real `~/.claude`, `~/.codex` and `~/.agents` skill directories of whoever runs the tests.
 - Tests use a temp `SUPERVISOR_HOME` and `CODEX_BIN=test/fixtures/fake-codex.js`. No real Codex, no network, no git identity, no writable `/tmp` assumed. CI's Linux and Windows runners have none of those.
 - Never run `npm i -g` or `codex-supervisor-setup` against the user's machine unless asked.
 - A tool, argument or behaviour change is done when the skill, both READMEs (tool table and count), both `docs/reference*.md` (arguments and edge cases) and a test say the same thing. The skill ships inside the package: a skill change reaches users only with a release.

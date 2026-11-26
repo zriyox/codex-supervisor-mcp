@@ -25,7 +25,8 @@ execFileSync("git", ["add", "README.md"], { cwd: workspace });
 execFileSync("git", ["-c", "user.name=regression", "-c", "user.email=regression@example.invalid", "commit", "-q", "-m", "fixture"], { cwd: workspace });
 
 const THREAD_ID = "01a0fd0a-54a3-7a91-b37c-1f540e80e164";
-const baseEnv = { SUPERVISOR_HOME: home, CODEX_BIN: fakeCodex, FAKE_CODEX_THREAD_ID: THREAD_ID };
+// Skill sync is off: a server under test must not write into the skill directories of whoever runs it.
+const baseEnv = { SUPERVISOR_HOME: home, CODEX_BIN: fakeCodex, FAKE_CODEX_THREAD_ID: THREAD_ID, AGENT_SUPERVISOR_SKIP_SKILL_SYNC: "1" };
 
 let failures = 0;
 let passed = 0;

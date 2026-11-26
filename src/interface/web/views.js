@@ -8,7 +8,7 @@ import { reconcileDetachedActiveTasks } from "../../infra/store/reconcile.js";
 import { readSessions } from "../../infra/store/sessions.js";
 import { getTask, readTasks } from "../../infra/store/tasks.js";
 import { readTaskChanges } from "../../infra/worktree.js";
-import { readNativeGoal } from "../../runners/codex/goal-store.js";
+import { readNativeGoal } from "../../infra/store/runner-readers.js";
 
 const NO_SESSION = "none";
 
@@ -211,7 +211,7 @@ export async function worker(taskId) {
     changed_files: readTaskChanges(task),
     commands,
     reports: reports.length > 0 ? reports : task.last_message ? [task.last_message] : [],
-    native_goal: readNativeGoal(task.thread_id),
+    native_goal: readNativeGoal(task.thread_id, task.worker),
     usage,
     notices: task.notices ?? null,
     run_log: task.run_log ?? null,

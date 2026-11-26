@@ -31,6 +31,7 @@ export function dispatchOptions(args) {
   const { sandbox = {}, workspace = {}, context = {}, acceptance, limits = {}, session = {}, goal } = args;
   return {
     title: args.title,
+    runner: args.runner,
     cwd: args.cwd,
     model: args.model,
     reasoningEffort: args.reasoning_effort,

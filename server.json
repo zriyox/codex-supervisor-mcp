@@ -1,18 +1,18 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.zriyox/codex-supervisor-mcp",
-  "description": "Parallel Codex CLI workers from any MCP client: one git worktree each, 14 tools, state in SQLite.",
+  "description": "Parallel Codex CLI or Claude Code workers from any MCP client: one git worktree each, 14 tools.",
   "repository": {
     "url": "https://github.com/zriyox/codex-supervisor-mcp",
     "source": "github"
   },
   "websiteUrl": "https://codex-supervisor.zriyo.com",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "packages": [
     {
       "registryType": "npm",
       "identifier": "codex-supervisor-mcp",
-      "version": "1.1.0",
+      "version": "1.2.0",
       "transport": {
         "type": "stdio"
       },

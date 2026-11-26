@@ -2,7 +2,7 @@
 // task row forward, stderr keeps a tail on the row.
 import { splitLines } from "../app/worktree-setup.js";
 import { appendTaskEvents } from "../infra/store/events.js";
-import { codexRunner } from "../runners/codex/adapter.js";
+import { runnerOf } from "../runners/registry.js";
 import { persist } from "./live-run.js";
 
 const STDERR_KEEP = 64 * 1024;
@@ -21,13 +21,16 @@ function logLine(run, text) {
 }
 
 async function handleLines(run, lines) {
+  const runner = runnerOf(run.record);
   const events = [];
   const logged = [];
   for (const line of lines) {
     try {
-      const event = JSON.parse(line);
-      logged.push(logLine(run, `${JSON.stringify(event)}\n`));
-      events.push(event);
+      // One line of the CLI's output is zero or more events in the supervisor's vocabulary.
+      for (const event of runner.toEvents(line)) {
+        logged.push(logLine(run, `${JSON.stringify(event)}\n`));
+        events.push(event);
+      }
     } catch (error) {
       logLine(run, `${JSON.stringify({ type: "supervisor.parse_error", line, error: error.message })}\n`);
     }
@@ -37,7 +40,7 @@ async function handleLines(run, lines) {
   // whole of it, so the log comes first and a failed write keeps the event whole.
   const inLog = (await Promise.all(logged.map((entry) => entry.written))).every(Boolean) && !run.logFailed;
   const storedEvents = await appendTaskEvents(run.record.id, events, {
-    runId: run.runId, actor: "codex", bodyInLog: inLog, logOffsets: logged.map((entry) => entry.offset)
+    runId: run.runId, actor: runner.name, bodyInLog: inLog, logOffsets: logged.map((entry) => entry.offset)
   });
   let next = run.live;
   for (const [index, event] of events.entries()) {
@@ -46,7 +49,7 @@ async function handleLines(run, lines) {
       run.rawReportEventId = storedEvents[index].id;
     }
     if (["turn.completed", "turn.failed"].includes(event.type)) run.terminalEvent = true;
-    next = codexRunner.parseEvent(next, event);
+    next = runner.parseEvent(next, event);
   }
   await persist(run, next);
 }

@@ -2,6 +2,7 @@
 // write path that keeps the task row in step with it. Every write goes through
 // one chain so concurrent stdout/stderr callbacks cannot persist out of order.
 import { terminateChild } from "../app/cancel.js";
+import { runnerOf } from "../runners/registry.js";
 import { runIdFor } from "../infra/store/db.js";
 import { appendTaskEvent } from "../infra/store/events.js";
 import { upsertTask } from "../infra/store/tasks.js";
@@ -50,7 +51,7 @@ export function watchQuota(run, now) {
     if (run.quotaReason) return;
     if (maxRunMs && Date.now() - Date.parse(now) >= maxRunMs) run.quotaReason = "run_time_limit";
     else if (maxTotalMs && Date.now() - Date.parse(run.record.created_at) >= maxTotalMs) run.quotaReason = "total_time_limit";
-    if (run.quotaReason) terminateChild(run.child);
+    if (run.quotaReason) terminateChild(run.child, runnerOf(run.record));
   }, 250);
 }
 

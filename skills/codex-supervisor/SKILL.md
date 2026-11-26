@@ -37,7 +37,7 @@ description: 用 Codex CLI 并行做可独立验收的功能包，每路一个 G
 
 ## create_worker 的参数
 
-顶层：`task`、`cwd`、`owned_paths`、`goal`、`title`、`followup_of`、`depends_on`、`preflight_id`、`model`、`reasoning_effort`。其余按组放进对象：
+顶层：`task`、`cwd`、`owned_paths`、`goal`、`title`、`followup_of`、`depends_on`、`preflight_id`、`runner`、`model`、`reasoning_effort`。其余按组放进对象：
 
 ```json
 {
@@ -73,6 +73,7 @@ description: 用 Codex CLI 并行做可独立验收的功能包，每路一个 G
 | `acceptance.commands` | worker 退出后由 supervisor 在 worktree 里执行，全部退出 0 才算过。worker 自查统一跑 `node "$AGENT_SUPERVISOR_ACCEPTANCE_CLI"`，不要手抄命令 |
 | `depends_on` | 上游 task id。上游必须已结算、验收通过并 land，且本路 base 包含它 |
 | `followup_of` | 接着一路已结束的 worker 干：从它的分支切新 worktree，没给的参数沿用它的 |
+| `runner` | 用哪个 CLI 当 worker：`codex`（默认）或 `claude`。`claude` 没有系统沙箱：只能 `git_worktree` 或 `read_only_in_place`，shell 只放行只读命令和 `sandbox.allowed_commands` 里声明的命令，不支持 `ask_worker`。preflight 和正式派单要用同一个 runner |
 | `preflight_id` | 写 worker 必填。base、workspace、sandbox、owned_paths、context 有任何变化都要重跑 preflight |
 
 回执不回传 task 原文，带 `id`、`worktree_path`、`branch`、`owned_paths`、`status`。
