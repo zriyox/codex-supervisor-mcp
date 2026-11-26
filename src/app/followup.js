@@ -72,6 +72,7 @@ export async function createFollowupWorker(options) {
 
   return createCodexWorker({
     title: title ?? `Follow-up for ${parent.id}`,
+    runner: parent.worker,
     task: followupTaskText(parent, recentEvents, followupPrompt),
     sessionId: sessionId ?? parent.session_id ?? null,
     sessionTitle,

@@ -39,6 +39,7 @@ export const checkAcceptanceOp = {
 export const preflightCodexWorkerOp = {
   input: z.object({
       title: z.string().optional(),
+      runner: z.string().regex(/^[a-z][a-z0-9-]{0,31}$/).optional(),
       cwd: z.string().min(1),
       sandbox: z.enum(["read-only", "workspace-write", "danger-full-access"]).default("workspace-write"),
       model: z.string().optional(),
@@ -95,6 +96,7 @@ export const getWorkerPreflightOp = {
 export const createCodexWorkerOp = {
   input: z.object({
       title: z.string().optional(),
+      runner: z.string().regex(/^[a-z][a-z0-9-]{0,31}$/).optional(),
       task: z.string().min(1),
       cwd: z.string().min(1),
       session_id: z.string().min(1).optional(),
@@ -166,6 +168,7 @@ export const createCodexFollowupWorkerOp = {
       session_title: z.string().min(1).max(120).optional(),
       session_note: z.string().min(1).max(2000).optional(),
       title: z.string().optional(),
+      runner: z.string().regex(/^[a-z][a-z0-9-]{0,31}$/).optional(),
       cwd: z.string().optional(),
       sandbox: z.enum(["read-only", "workspace-write", "danger-full-access"]).optional(),
       model: z.string().optional(),

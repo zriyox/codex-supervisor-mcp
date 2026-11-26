@@ -1,22 +1,19 @@
 import "./compose.js";
 import { describeProcess } from "../infra/process.js";
 import { getTask, upsertTask } from "../infra/store/tasks.js";
-import { codexRunner } from "../runners/codex/adapter.js";
+import { getRunner, runnerOf } from "../runners/registry.js";
 import { acceptanceRuns, cancelledTasks, processes } from "./run-state.js";
 
-function isLikelyCodexProcess(pid) {
-  return codexRunner.ownsPid(pid, describeProcess);
+// A pid on a row may have been reused; only a process that looks like this runner's CLI is signalled.
+function isWorkerProcess(task) {
+  return runnerOf(task).ownsPid(task.pid, describeProcess);
 }
 
 // Ends a worker and, on Windows, its whole process tree: the direct child there
 // is the JS wrapper around the native Codex binary, so terminating it alone
 // would leave the real CLI running and the task stuck in `running`.
-export function terminateChild(child) {
-  codexRunner.cancelChild(child);
-}
-
-function terminatePid(pid) {
-  codexRunner.cancelPid(pid);
+export function terminateChild(child, runner = getRunner()) {
+  runner.cancelChild(child);
 }
 
 export async function cancelCodexWorker(taskId) {
@@ -38,9 +35,9 @@ export async function cancelCodexWorker(taskId) {
     await upsertTask({ ...task, cancel_requested_at: new Date().toISOString(), updated_at: new Date().toISOString() });
     return { cancelled: true, via: "acceptance", pid: null };
   }
-  if (task?.pid && (await isPidAlive(task.pid)) && isLikelyCodexProcess(task.pid)) {
+  if (task?.pid && (await isPidAlive(task.pid)) && isWorkerProcess(task)) {
     try {
-      terminatePid(task.pid);
+      runnerOf(task).cancelPid(task.pid);
       return { cancelled: true, via: "pid", pid: task.pid };
     } catch (error) {
       return { cancelled: false, reason: "kill_failed", message: error.message, pid: task.pid };

@@ -12,7 +12,7 @@
 // base is the commit the worktree was created from.
 import { branchOf } from "../domain/worker-branch.js";
 import { runGit } from "./git.js";
-import { existsSync, readFileSync, lstatSync } from "node:fs";
+import { existsSync, lstatSync, readFileSync, realpathSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
 import { truncateMiddleChars } from "../domain/truncate.js";
 import { createHash } from "node:crypto";
@@ -263,8 +263,23 @@ function statusWord(code) {
   }
 }
 
+// A CLI may name a file through a different path than git does (on macOS a
+// temp directory is both /var/... and /private/var/...). One file is listed once.
+function sameFileKey(path) {
+  try {
+    return realpathSync(path);
+  } catch {
+    return path; // deleted or never there: the name is all there is
+  }
+}
+
 export function mergeChangedFiles(existing, discovered) {
-  return Array.from(new Set([...(existing ?? []), ...(discovered ?? [])]));
+  const seen = new Map();
+  for (const path of [...(existing ?? []), ...(discovered ?? [])]) {
+    const key = sameFileKey(path);
+    if (!seen.has(key)) seen.set(key, path);
+  }
+  return [...seen.values()];
 }
 
 // What a task row knows about its own worktree, in the shape

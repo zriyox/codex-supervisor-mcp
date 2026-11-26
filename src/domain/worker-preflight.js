@@ -64,9 +64,12 @@ export function buildRuntimeContract({
   contracts,
   workspaceSetup = null,
   workspaceKind = "git_worktree",
-  workspaceManifestSha256 = null
+  workspaceManifestSha256 = null,
+  runner = "codex"
 }) {
   return stableValue({
+    // Named only when it is not the default, so contracts made before runners existed still match.
+    ...(runner && runner !== "codex" ? { runner } : {}),
     version: PREFLIGHT_VERSION,
     project_root: resolve(projectRoot),
     base_commit: baseCommit ?? null,

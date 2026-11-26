@@ -26,9 +26,9 @@ import { ensureTaskWorktree } from "./restore-worktree.js";
 import "./compose.js";
 import { answerOf, partsFromChunks, turnView } from "../domain/side-turn-view.js";
 import { closeSideSession, getSideSession, insertSideTurn, interruptRunningSideTurns, openSideSession, readSideTurns, setSideSessionFork, updateSideTurn } from "../infra/store/sessions.js";
-import { codexRunner } from "../runners/codex/adapter.js";
-import { chunksFor } from "../runners/codex/chat-chunks.js";
-import { codexConfigText, disableMcpServerArgs } from "../runners/codex/mcp-config.js";
+import { getTask } from "../infra/store/tasks.js";
+import { unsupported } from "../runners/contract.js";
+import { loadRunner, runnerOf } from "../runners/registry.js";
 import { endStream, sseHead, writeChunk } from "./sse.js";
 import { randomUUID } from "node:crypto";
 
@@ -55,12 +55,9 @@ export function sideQuestionText(question) {
 // Codex config is switched off for the turn. Sub-tables
 // ([mcp_servers.x.env]) are not servers and are skipped.
 //
-// The key path is written bare: `-c mcp_servers.name.enabled=false`. A
-// quoted name (`mcp_servers."name".enabled`) is taken by codex as a new
-// server literally called "name", quotes included, with no transport, and
-// the whole config then fails to load.
-export function sideTurnConfigArgs(configText) {
-  return disableMcpServerArgs(configText);
+// A side question runs with none of the user's MCP servers: it only reads.
+export function sideTurnConfigArgs(configText, runner = runnerOf(null)) {
+  return runner.sideChat.disableMcpServerArgs(configText);
 }
 
 // The session to ask on. A fork taken before the worker was resumed no
@@ -141,10 +138,12 @@ export function attachToTurn(taskId, res) {
 }
 
 function startSideChild(target, task, session) {
-  const args = codexRunner.forkSideArgs({ forkThreadId: session.fork_thread_id, workerThreadId: task.thread_id, model: task.model });
-  args.splice(-2, 0, ...sideTurnConfigArgs(codexConfigText()));
+  const runner = runnerOf(task);
+  const side = runner.sideChat;
+  const forkArgs = side.forkArgs({ forkThreadId: session.fork_thread_id, workerThreadId: task.thread_id, model: task.model });
+  const args = side.withConfig(forkArgs, sideTurnConfigArgs(side.configText(), runner));
   const cwd = task.worktree_path || task.project_root || process.cwd();
-  return codexRunner.start(target, args, {
+  return runner.start(target, args, {
     cwd,
     stdio: ["pipe", "pipe", "pipe"],
     env: { ...process.env, NO_COLOR: "1" },
@@ -158,7 +157,8 @@ async function openLiveTurn(task, text, child) {
   const turnId = `turn-${Date.now()}-${randomUUID().slice(0, 8)}`;
   const startedAt = new Date().toISOString();
   const state = { toolsSeen: new Set(), completed: false, failed: false, usage: null };
-  const live = { turnId, child, chunks: [], watchers: new Set(), startedAt, question: text, state, stderr: "", stoppedBy: null, persistTimer: null };
+  const live = { turnId, child, chunks: [], watchers: new Set(), startedAt, question: text, state, stderr: "", stoppedBy: null, persistTimer: null,
+    chunksFor: runnerOf(task).sideChat.chunksFor };
   const persistSoon = () => {
     if (live.persistTimer) return;
     live.persistTimer = setTimeout(() => {
@@ -173,7 +173,7 @@ async function openLiveTurn(task, text, child) {
   };
   live.stop = (reason) => {
     live.stoppedBy = reason;
-    codexRunner.cancelChild(child);
+    runnerOf(task).cancelChild(child);
   };
   running.set(task.id, live);
   await insertSideTurn({ id: turnId, task_id: task.id, question: text, status: "running", chunks: [], started_at: startedAt });
@@ -200,7 +200,7 @@ function pipeSideOutput(child, live, session, taskId) {
         session.fork_thread_id = event.thread_id;
         setSideSessionFork(taskId, event.thread_id).catch(() => {});
       }
-      for (const part of chunksFor(event, live.state)) live.broadcast(part);
+      for (const part of live.chunksFor(event, live.state)) live.broadcast(part);
     }
   });
   child.stderr.setEncoding("utf8");
@@ -238,9 +238,11 @@ async function settleSideTurn(live, taskId, code, signal) {
 // turn has ended, however it ended.
 export async function runSideTurn({ task, text, res = null, fresh = false }) {
   await sweepOnce();
-  if (!task.thread_id) throw Object.assign(new Error("this worker recorded no thread_id, so there is no Codex thread to fork"), { code: "no_thread" });
+  const runner = await loadRunner(task.worker);
+  if (!runner.capabilities.side_chat) throw unsupported(runner, "side_chat", "asking a worker a side question");
+  if (!task.thread_id) throw Object.assign(new Error("this worker recorded no thread_id, so there is no thread to fork"), { code: "no_thread" });
   if (running.has(task.id)) throw Object.assign(new Error("a side turn is already running for this worker"), { code: "busy" });
-  const target = codexRunner.resolveTarget();
+  const target = runner.resolveTarget();
   if (target.error) throw Object.assign(new Error(target.error), { code: "codex_missing" });
 
   const { session, refreshed } = await prepareSideSession(task, { fresh });
@@ -334,12 +336,14 @@ export async function endSideSession(taskId) {
   if (!row) return { ended: false };
   let deleted = false;
   if (row.fork_thread_id) {
-    const target = codexRunner.resolveTarget();
+    const stored = await getTask(taskId);
+    const runner = runnerOf(stored);
+    const target = runner.resolveTarget();
     if (!target.error) {
       deleted = await new Promise((resolve) => {
         // --force: without a terminal codex asks for confirmation and exits.
-        const child = codexRunner.start(target, ["delete", "--force", row.fork_thread_id], { stdio: "ignore", windowsHide: true, env: { ...process.env, NO_COLOR: "1" } });
-        const t = setTimeout(() => { codexRunner.cancelChild(child); resolve(false); }, 15000);
+        const child = runner.start(target, runner.sideChat.deleteArgs(row.fork_thread_id), { stdio: "ignore", windowsHide: true, env: { ...process.env, NO_COLOR: "1" } });
+        const t = setTimeout(() => { runner.cancelChild(child); resolve(false); }, 15000);
         child.on("exit", (code) => { clearTimeout(t); resolve(code === 0); });
         child.on("error", () => { clearTimeout(t); resolve(false); });
       });

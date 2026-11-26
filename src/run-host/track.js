@@ -9,7 +9,7 @@ import { clearStage } from "../infra/stage-store.js";
 import { appendTaskEvent, ensureRunRecord } from "../infra/store/events.js";
 import { getTask } from "../infra/store/tasks.js";
 import { snapshotTaskOutput } from "../infra/worktree.js";
-import { codexRunner } from "../runners/codex/adapter.js";
+import { loadRunner } from "../runners/registry.js";
 import { finalizeChild } from "./finalize.js";
 import { buildLaunch } from "./launch.js";
 import { persist, startingRow, watchQuota } from "./live-run.js";
@@ -83,7 +83,8 @@ async function noteFinalizeFailure(run, error) {
 }
 
 export async function trackRunInHost({ record, args, prompt, logPath, spawnOptions = {}, outputSchema = true }) {
-  const capability = codexRunner.capabilityPreflight();
+  // The run host is its own process: a third-party runner is loaded here again.
+  const capability = (await loadRunner(record.worker)).capabilityPreflight();
   if (!capability.ok) return failedStart(record, capability.error);
   const target = capability.target;
   const before = {

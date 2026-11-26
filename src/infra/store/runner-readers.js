@@ -12,5 +12,5 @@ export function registerRunnerReaders({ nativeGoal, agentMessage }) {
   readers.agentMessage = agentMessage;
 }
 
-export const readNativeGoal = (threadId) => readers.nativeGoal(threadId);
+export const readNativeGoal = (threadId, runnerName) => readers.nativeGoal(threadId, runnerName);
 export const extractAgentMessage = (event) => readers.agentMessage(event);

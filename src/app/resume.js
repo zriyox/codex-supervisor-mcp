@@ -7,8 +7,8 @@ import { buildHandoff } from "../infra/handoff.js";
 import { appendTaskEvent } from "../infra/store/events.js";
 import { getSession } from "../infra/store/sessions.js";
 import { claimTaskRun, getTask, isGroupAlive, readTasks, releaseTaskRun, upsertTask } from "../infra/store/tasks.js";
-import { codexRunner } from "../runners/codex/adapter.js";
-import { readNativeGoalState } from "../runners/codex/goal-store.js";
+import { unsupported } from "../runners/contract.js";
+import { getRunner, loadRunner } from "../runners/registry.js";
 import { DEFAULT_ACCEPTANCE_TIMEOUT_MS, normalizeAcceptance } from "./acceptance.js";
 import { isPidAlive } from "./cancel.js";
 import { rebaseWorktree } from "./rebase.js";
@@ -74,16 +74,6 @@ async function rebaseBeforeResume(task, rebaseOnto) {
   return { task: moved, rebase };
 }
 
-// Only a thread with no native goal, or one explicitly stored as complete,
-// can safely resume with a structured output schema. Paused, blocked,
-// usage-limited and budget-limited goals are not complete; Codex can still
-// activate their goal turn and reject the incompatible schema.
-function resumeAllowsOutputSchema(threadId) {
-  const goalRead = readNativeGoalState(threadId);
-  return ["missing_goal", "missing_database"].includes(goalRead.state)
-    || (goalRead.state === "available" && goalRead.goal?.storage_status === "complete");
-}
-
 // Where a resumed worker runs. It is the directory it ran in before, and never
 // a stand-in: falling back to the project root would let a worker that was
 // confined to a scratch directory or a worktree write into the source tree.
@@ -104,7 +94,7 @@ async function resumeClaimed(claimed, { prompt, rebaseOnto, acceptance }) {
   let task = await refreshAcceptance(claimed, session, acceptance);
   if (!task.thread_id) {
     throw new Error(
-      `task ${task.id} has no Codex thread_id recorded. Only workers created by this version of codex-supervisor-mcp can be resumed; use create_worker with followup_of otherwise.`
+      `task ${task.id} has no thread_id recorded. Only workers created by this version of codex-supervisor-mcp can be resumed; use create_worker with followup_of otherwise.`
     );
   }
   await ensureTaskWorktree(task);
@@ -112,8 +102,9 @@ async function resumeClaimed(claimed, { prompt, rebaseOnto, acceptance }) {
   if (rebaseOnto) ({ task, rebase } = await rebaseBeforeResume(task, rebaseOnto));
 
   const cwd = await resumeCwd(task);
-  const args = codexRunner.resumeArgs(task);
-  const outputSchema = resumeAllowsOutputSchema(task.thread_id);
+  const runner = getRunner(task.worker);
+  const args = runner.resumeArgs(task);
+  const outputSchema = runner.capabilities.structured_report && (runner.resumeAllowsOutputSchema?.(task.thread_id) ?? true);
   const started = await startTrackedRun({
     record: { ...task, resumed_from: task.resumed_from ?? task.id },
     args,
@@ -132,6 +123,8 @@ export async function resumeCodexWorker({ taskId, prompt, rebaseOnto = null, acc
   if (!prompt || typeof prompt !== "string") throw new Error("prompt is required");
   let task = await getTask(taskId);
   if (!task) throw new Error(`task not found: ${taskId}`);
+  const runner = await loadRunner(task.worker);
+  if (!runner.capabilities.resume) throw unsupported(runner, "resume", "resuming a worker");
   if (task.guard_policy?.maxTotalMs && Date.now() - Date.parse(task.created_at) >= task.guard_policy.maxTotalMs) {
     throw coded("time_quota_exceeded", "total time quota exceeded; inspect partial work and explicitly dispatch a revised budget");
   }
