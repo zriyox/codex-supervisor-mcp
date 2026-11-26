@@ -8,7 +8,7 @@ English | [中文](README.md)
 [![CI](https://github.com/zriyox/agent-supervisor-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/zriyox/agent-supervisor-mcp/actions/workflows/ci.yml)
 [![node](https://img.shields.io/badge/node-%3E%3D22.13.0-339933.svg)](package.json)
 
-Website [codex-supervisor.zriyo.com](https://codex-supervisor.zriyo.com) · for models [llms.txt](https://codex-supervisor.zriyo.com/llms.txt) · [reference](docs/reference.en.md)
+Website [agent-supervisor.zriyo.com](https://agent-supervisor.zriyo.com) · for models [llms.txt](https://agent-supervisor.zriyo.com/llms.txt) · [reference](docs/reference.en.md)
 
 Point several agents at one repository and they overwrite each other, nobody can say who changed what, and the main thread's context fills up with worker output.
 

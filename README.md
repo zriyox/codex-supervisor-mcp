@@ -8,7 +8,7 @@
 [![CI](https://github.com/zriyox/agent-supervisor-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/zriyox/agent-supervisor-mcp/actions/workflows/ci.yml)
 [![node](https://img.shields.io/badge/node-%3E%3D22.13.0-339933.svg)](package.json)
 
-官网 [codex-supervisor.zriyo.com](https://codex-supervisor.zriyo.com) · 给模型读的 [llms.txt](https://codex-supervisor.zriyo.com/llms.txt) · [参考手册](docs/reference.md)
+官网 [agent-supervisor.zriyo.com](https://agent-supervisor.zriyo.com) · 给模型读的 [llms.txt](https://agent-supervisor.zriyo.com/llms.txt) · [参考手册](docs/reference.md)
 
 让几个 agent 同时改一个仓库，结果是互相覆盖，没人说得清谁改了什么，主线程的上下文还被 worker 的输出塞满。
 
