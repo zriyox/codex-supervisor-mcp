@@ -71,6 +71,6 @@ export async function persist(run, next, label = "persist") {
   } catch (error) {
     await appendTaskEvent(next.id, { type: "supervisor.persist_failed", label, error: error.message, run: next.run_count },
       { runId: runIdFor(next.id, next.run_count), actor: "supervisor" }).catch(() => null);
-    process.stderr.write(`[codex-supervisor] ${label} failed for ${next.id}: ${error.message}\n`);
+    process.stderr.write(`[agent-supervisor] ${label} failed for ${next.id}: ${error.message}\n`);
   }
 }

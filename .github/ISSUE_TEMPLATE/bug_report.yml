@@ -9,7 +9,7 @@ body:
     id: version
     attributes:
       label: Version
-      description: The `installed_version` from `check_for_update`, or `npm ls -g codex-supervisor-mcp`
+      description: The `installed_version` from `check_for_update`, or `npm ls -g agent-supervisor-mcp`
     validations:
       required: true
   - type: input

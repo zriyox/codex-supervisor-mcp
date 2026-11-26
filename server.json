@@ -1,18 +1,18 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
-  "name": "io.github.zriyox/codex-supervisor-mcp",
+  "name": "io.github.zriyox/agent-supervisor-mcp",
   "description": "Parallel Codex CLI or Claude Code workers from any MCP client: one git worktree each, 14 tools.",
   "repository": {
     "url": "https://github.com/zriyox/codex-supervisor-mcp",
     "source": "github"
   },
   "websiteUrl": "https://codex-supervisor.zriyo.com",
-  "version": "1.2.0",
+  "version": "2.0.0",
   "packages": [
     {
       "registryType": "npm",
-      "identifier": "codex-supervisor-mcp",
-      "version": "1.2.0",
+      "identifier": "agent-supervisor-mcp",
+      "version": "2.0.0",
       "transport": {
         "type": "stdio"
       },
@@ -26,7 +26,7 @@
         },
         {
           "name": "SUPERVISOR_HOME",
-          "description": "State directory, default ~/.codex-supervisor",
+          "description": "State directory, default ~/.agent-supervisor",
           "isRequired": false,
           "format": "filepath",
           "isSecret": false

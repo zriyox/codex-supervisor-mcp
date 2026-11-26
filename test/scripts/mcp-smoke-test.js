@@ -10,7 +10,7 @@ const transport = new StdioClientTransport({
 });
 
 const client = new Client({
-  name: "codex-supervisor-smoke-test",
+  name: "agent-supervisor-smoke-test",
   version: "0.2.0"
 });
 

@@ -84,7 +84,7 @@ Wait defaults to 60 seconds and compact rows; longer requests are capped unless 
 
 Each run injects the shipped PreToolUse guard: apply_patch checks every target including renames and symlinks; forbid rejects red lines. Shell allows simple reads and explicitly declared sandbox.allowed_commands/acceptance. Declared validation scripts run with dispatcher privileges and may have side effects; this is not a filesystem sandbox for arbitrary programs. Resume/follow-up inherit the policy without changing global hooks. Empty write runs use current output and command evidence and surface no_work; read-only tasks are not empty merely for having no diff.
 
-Workers are not dispatchers. A worker starts with the codex-supervisor MCP server disabled, so it cannot dispatch, resume, cancel or edit another session. Business MCP servers remain available. Side-chat forks disable every MCP server.
+Workers are not dispatchers. A worker starts with the agent-supervisor MCP server disabled, so it cannot dispatch, resume, cancel or edit another session. Business MCP servers remain available. Side-chat forks disable every MCP server.
 
 A model with no separate `apply_patch` tool (measured with Codex 0.162 + DeepSeek/cc-switch) sends the patch as a shell call: `apply_patch <<'EOF' ... EOF`. The guard accepts that shape and judges every target path with the same owned_paths rule, so such a model can still edit; an unquoted heredoc, or one followed by `&&`/`;`, is refused.
 
@@ -120,7 +120,7 @@ The hold period is 7 days from the moment the worker finished; `AGENT_SUPERVISOR
 
 After a worktree is gone, `resume_worker`, `land_worker`, `ask_worker` and `get_worker_diff` cut it again from the branch and redo `workspace.setup`, so cleanup never strands unfinished work.
 
-By hand: `cleanup` shows the verdicts and reasons, `cleanup` removes SAFE items at once; from a shell, `codex-supervisor-cleanup --dry-run` and `codex-supervisor-cleanup --apply --plan <plan_id> --item <item_id>`. `AGENT_SUPERVISOR_NO_AUTO_CLEANUP=1` turns the automatic sweep off. A research worker's scratch directory goes after the same hold period.
+By hand: `cleanup` shows the verdicts and reasons, `cleanup` removes SAFE items at once; from a shell, `agent-supervisor-cleanup --dry-run` and `agent-supervisor-cleanup --apply --plan <plan_id> --item <item_id>`. `AGENT_SUPERVISOR_NO_AUTO_CLEANUP=1` turns the automatic sweep off. A research worker's scratch directory goes after the same hold period.
 
 ## What the board shows
 
@@ -150,7 +150,7 @@ A terminal state lands in two steps: `turn.completed` sets `completed`, the proc
 
 ## Where state lives
 
-`~/.codex-supervisor/` by default:
+`~/.agent-supervisor` (a machine upgraded from codex-supervisor-mcp that already has `~/.codex-supervisor` keeps using it) by default:
 
 | File | Content |
 |---|---|
@@ -166,7 +166,7 @@ A terminal state lands in two steps: `turn.completed` sets `completed`, the proc
 
 | Variable | Default | Effect |
 |---|---|---|
-| `SUPERVISOR_HOME` | `~/.codex-supervisor` | State root. The MCP and the board must point at the same one |
+| `SUPERVISOR_HOME` | `~/.agent-supervisor` | State root. The MCP and the board must point at the same one |
 | `CODEX_HOME` | `~/.codex` | Read-only: the native `goals_1.sqlite` and the MCP config |
 | `CODEX_BIN` | `codex` | Path to the Codex CLI. The Windows `.cmd` shim is bypassed |
 | `CLAUDE_BIN` | `claude` | Path to Claude Code, for workers with `runner: "claude"` |
@@ -189,9 +189,9 @@ GUI clients (Claude Desktop, Cursor, Windsurf) are not automatic registration ta
 ```json
 {
   "mcpServers": {
-    "codex-supervisor": {
+    "agent-supervisor": {
       "command": "npx",
-      "args": ["-y", "codex-supervisor-mcp"],
+      "args": ["-y", "agent-supervisor-mcp"],
       "env": { "CODEX_BIN": "/usr/local/bin/codex" }
     }
   }
@@ -209,4 +209,4 @@ GUI clients (Claude Desktop, Cursor, Windsurf) are not automatic registration ta
 
 Nothing to do by hand. At start the server asks the registry in the background; a newer version is installed by a detached `npm i -g` into the same global path, the running session is untouched and the next session starts on it. Only a copy that `npm i -g` installed is touched; a git checkout or an `npx` copy is left alone. The skill does the same: every start copies it into the existing skill directories, backing up an edited file as `SKILL.md.bak-<timestamp>`.
 
-When the install fails (a global directory that needs sudo) the `update` field says why and `npm install -g codex-supervisor-mcp@latest` by hand still works. Versions up to 0.6.1 only notify; upgrade by hand once and it is automatic from then on. After changing Node versions/install prefixes, setup repairs old package-generated paths and verifies command/args through client read-back. Custom, disabled and project registrations are preserved with a repair warning. To run the setup again: `codex-supervisor-setup` (`--skill-only` / `--mcp-only` / `--dry-run`). Manual registration failures exit nonzero; automatic installs warn without failing npm. A skill write failure does not prevent MCP registration. Set `CLAUDE_BIN` / `CODEX_BIN` for off-PATH CLIs. Skill locations follow `CLAUDE_CONFIG_DIR` / `CODEX_HOME`.
+When the install fails (a global directory that needs sudo) the `update` field says why and `npm install -g agent-supervisor-mcp@latest` by hand still works. Versions up to 0.6.1 only notify; upgrade by hand once and it is automatic from then on. After changing Node versions/install prefixes, setup repairs old package-generated paths and verifies command/args through client read-back. Custom, disabled and project registrations are preserved with a repair warning. To run the setup again: `agent-supervisor-setup` (`--skill-only` / `--mcp-only` / `--dry-run`). Manual registration failures exit nonzero; automatic installs warn without failing npm. A skill write failure does not prevent MCP registration. Set `CLAUDE_BIN` / `CODEX_BIN` for off-PATH CLIs. Skill locations follow `CLAUDE_CONFIG_DIR` / `CODEX_HOME`.

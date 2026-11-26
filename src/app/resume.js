@@ -94,7 +94,7 @@ async function resumeClaimed(claimed, { prompt, rebaseOnto, acceptance }) {
   let task = await refreshAcceptance(claimed, session, acceptance);
   if (!task.thread_id) {
     throw new Error(
-      `task ${task.id} has no thread_id recorded. Only workers created by this version of codex-supervisor-mcp can be resumed; use create_worker with followup_of otherwise.`
+      `task ${task.id} has no thread_id recorded. Only workers created by this version of agent-supervisor-mcp can be resumed; use create_worker with followup_of otherwise.`
     );
   }
   await ensureTaskWorktree(task);

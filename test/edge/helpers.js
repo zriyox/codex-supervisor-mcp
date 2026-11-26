@@ -163,7 +163,7 @@ export async function fakeRegistry(plan) {
     }
     const latest = state.plan;
     const body = {
-      name: "codex-supervisor-mcp",
+      name: "agent-supervisor-mcp",
       "dist-tags": { latest },
       versions: {
         [latest]: { version: latest, dist: { integrity: `sha512-INTEGRITY-${latest}`, shasum: `SHA-${latest}` } },

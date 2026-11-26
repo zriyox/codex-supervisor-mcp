@@ -1,9 +1,9 @@
 ---
-name: codex-supervisor
-description: 用 Codex CLI 并行做可独立验收的功能包，每路一个 Git worktree，能派单、等待、验收、恢复、合入和清理。用户说“派 codex”“并行跑”“多 agent”“接回旧 worker”时使用。
+name: agent-supervisor
+description: 用 Codex CLI 或 Claude Code 当 worker，并行做可独立验收的功能包，每路一个 Git worktree，能派单、等待、验收、恢复、合入和清理。用户说“派 codex”“派 claude”“并行跑”“多 agent”“接回旧 worker”时使用。
 ---
 
-# codex-supervisor
+# agent-supervisor
 
 主线程负责拆包、定写集、准备环境、验收和合入。worker 只在自己的 worktree 里完成一个功能包，不负责编排，也不负责交付到远端。
 
@@ -135,5 +135,5 @@ description: 用 Codex CLI 并行做可独立验收的功能包，每路一个 G
 - `exit_code: 0` 不等于业务完成；acceptance 和 diff 才是证据。
 - `owned_paths` 的冲突在派单时预留，运行时守卫拦直接写文件，land 再查完整 diff。你放行的脚本仍可能有清单外的副作用，它不是文件系统沙箱。
 - worktree 只隔离工作目录。端口、数据库、临时目录仍然共享。
-- 看板用 `codex-supervisor-web` 打开 `http://127.0.0.1:7877`。看板只看，不派单、不取消。
+- 看板用 `agent-supervisor-web` 打开 `http://127.0.0.1:7877`。看板只看，不派单、不取消。
 - 安装或升级后要重开会话，MCP 和 skill 才会加载新版本。

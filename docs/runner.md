@@ -81,7 +81,7 @@ Either way the module exports the object as `runner` or as its default export, a
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { checkRunner } from "codex-supervisor-mcp/src/runners/contract-check.js";
+import { checkRunner } from "agent-supervisor-mcp/src/runners/contract-check.js";
 import { runner } from "./index.js";
 
 test("meets the runner contract", () => {

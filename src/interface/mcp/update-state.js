@@ -15,9 +15,9 @@ export async function refreshUpdateState({ force = false } = {}) {
     updateState = await checkForUpdate({ force });
     autoUpdateState = await maybeAutoUpdate(updateState);
     const notice = updateNotice(updateState, autoUpdateState)?.notice;
-    if (notice) process.stderr.write(`[codex-supervisor] ${notice}\n`);
+    if (notice) process.stderr.write(`[agent-supervisor] ${notice}\n`);
   } catch (error) {
-    process.stderr.write(`[codex-supervisor] update check failed: ${error.message}\n`);
+    process.stderr.write(`[agent-supervisor] update check failed: ${error.message}\n`);
   }
   return updateState;
 }

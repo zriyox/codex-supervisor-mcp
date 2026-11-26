@@ -15,7 +15,7 @@ import { dataDir } from "../paths.js";
 import { resolveCommand } from "../bin-resolver.js";
 
 const run = promisify(runFile);
-const PACKAGE_NAME = "codex-supervisor-mcp";
+const PACKAGE_NAME = "agent-supervisor-mcp";
 const statePath = join(dataDir, "auto-update.json");
 const lockPath = join(dataDir, "auto-update.lock");
 const LOCK_STALE_MS = 10 * 60 * 1000;

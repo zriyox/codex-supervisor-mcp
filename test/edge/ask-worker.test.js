@@ -109,7 +109,7 @@ test("the fork is told what a side question is, and has its MCP servers switched
   const stdinLog = join(home, "stdin.log");
   const codexHome = join(home, "codex-home");
   await (await import("node:fs/promises")).mkdir(codexHome, { recursive: true });
-  await (await import("node:fs/promises")).writeFile(join(codexHome, "config.toml"), '[mcp_servers.codex-supervisor]\ncommand = "x"\n[mcp_servers.codex-supervisor.env]\nA = "1"\n[mcp_servers."obsidian"]\nurl = "http://x"\n');
+  await (await import("node:fs/promises")).writeFile(join(codexHome, "config.toml"), '[mcp_servers.agent-supervisor]\ncommand = "x"\n[mcp_servers.agent-supervisor.env]\nA = "1"\n[mcp_servers."obsidian"]\nurl = "http://x"\n');
   await withMcp({ ...sideEnv, FAKE_CODEX_STDIN_LOG: stdinLog, CODEX_HOME: codexHome }, async ({ call }) => {
     const asked = await call("ask_worker", { task_id: worker.id, question: "where is the retry handled?", fresh: true });
     assert.equal(asked.turn.answer, `[fork of ${worker.thread_id}] answer to: where is the retry handled?`);
@@ -117,9 +117,9 @@ test("the fork is told what a side question is, and has its MCP servers switched
     assert.match(last.stdin, /^This is a side question/);
     assert.match(last.stdin, /no network/);
     assert.ok(last.stdin.endsWith("Question:\nwhere is the retry handled?"));
-    assert.ok(last.args.includes("mcp_servers.codex-supervisor.enabled=false"), last.args.join(" "));
+    assert.ok(last.args.includes("mcp_servers.agent-supervisor.enabled=false"), last.args.join(" "));
     assert.ok(last.args.includes("mcp_servers.obsidian.enabled=false"));
-    assert.ok(!last.args.some((a) => a.includes("codex-supervisor.env")), "a sub-table is not a server");
+    assert.ok(!last.args.some((a) => a.includes("agent-supervisor.env")), "a sub-table is not a server");
     assert.ok(last.args.includes('sandbox_mode="read-only"'));
   });
 });

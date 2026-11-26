@@ -15,7 +15,7 @@ import { pollWorkersTool, waitWorkersTool } from "./tools/track.js";
 installCrashGuard("mcp-server");
 
 const server = new McpServer({
-  name: "codex-supervisor",
+  name: "agent-supervisor",
   version: packageVersion
 });
 
@@ -23,7 +23,7 @@ refreshUpdateState();
 setInterval(() => refreshUpdateState({ force: true }), UPDATE_RECHECK_MS).unref();
 
 // The skill describes this tool surface, so it moves with the server: a
-// server fetched by `npx -y codex-supervisor-mcp@latest` never ran postinstall,
+// server fetched by `npx -y agent-supervisor-mcp@latest` never ran postinstall,
 // and a global install only synced the skill on the day it was installed.
 // Runs in the background; a client that cannot write its skill directory
 // only costs a line on stderr.
@@ -33,15 +33,15 @@ if (!process.env.AGENT_SUPERVISOR_SKIP_SKILL_SYNC) {
       const changed = [...result.installed, ...result.updated];
       if (changed.length > 0) {
         process.stderr.write(
-          `[codex-supervisor] skill synced for ${changed.join(", ")}; a session that already loaded the skill keeps the old text until it loads it again\n`
+          `[agent-supervisor] skill synced for ${changed.join(", ")}; a session that already loaded the skill keeps the old text until it loads it again\n`
         );
       }
       for (const failure of result.failed) {
-        process.stderr.write(`[codex-supervisor] skill sync failed: ${failure}\n`);
+        process.stderr.write(`[agent-supervisor] skill sync failed: ${failure}\n`);
       }
     })
     .catch((error) => {
-      process.stderr.write(`[codex-supervisor] skill sync failed: ${error.message}\n`);
+      process.stderr.write(`[agent-supervisor] skill sync failed: ${error.message}\n`);
     });
 }
 

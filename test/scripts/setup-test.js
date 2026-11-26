@@ -16,7 +16,7 @@ import { promisify } from "node:util";
 const run = promisify(execFile);
 const setupPath = fileURLToPath(new URL("../../src/interface/bin/setup.js", import.meta.url));
 const sourceSkill = await readFile(
-  fileURLToPath(new URL("../../skills/codex-supervisor/SKILL.md", import.meta.url)),
+  fileURLToPath(new URL("../../skills/agent-supervisor/SKILL.md", import.meta.url)),
   "utf8"
 );
 
@@ -51,7 +51,7 @@ function runSetup(home, args = [], env = {}) {
   });
 }
 
-const skillAt = (home, client) => join(home, `.${client}`, "skills", "codex-supervisor", "SKILL.md");
+const skillAt = (home, client) => join(home, `.${client}`, "skills", "agent-supervisor", "SKILL.md");
 
 await check("a fresh run installs the skill into every present client", async () => {
   const home = await makeHome();
@@ -66,7 +66,7 @@ await check("a second run is idempotent and leaves no backup", async () => {
   const home = await makeHome();
   await runSetup(home, ["--skill-only"]);
   await runSetup(home, ["--skill-only"]);
-  const dir = join(home, ".claude", "skills", "codex-supervisor");
+  const dir = join(home, ".claude", "skills", "agent-supervisor");
   assert.deepEqual((await readdir(dir)).sort(), ["SKILL.md"]);
 });
 
@@ -75,7 +75,7 @@ await check("a locally modified skill is backed up before being overwritten", as
   await runSetup(home, ["--skill-only"]);
   await writeFile(skillAt(home, "claude"), "locally edited\n");
   await runSetup(home, ["--skill-only"]);
-  const dir = join(home, ".claude", "skills", "codex-supervisor");
+  const dir = join(home, ".claude", "skills", "agent-supervisor");
   const files = (await readdir(dir)).sort();
   assert.equal(files.length, 2, `expected a backup file, got ${files.join(", ")}`);
   assert.match(files.find((name) => name.startsWith("SKILL.md.bak-")) ?? "", /^SKILL\.md\.bak-\d+$/);
@@ -87,7 +87,7 @@ await check("--force overwrites without keeping a backup", async () => {
   await runSetup(home, ["--skill-only"]);
   await writeFile(skillAt(home, "claude"), "locally edited\n");
   await runSetup(home, ["--skill-only", "--force"]);
-  const dir = join(home, ".claude", "skills", "codex-supervisor");
+  const dir = join(home, ".claude", "skills", "agent-supervisor");
   assert.deepEqual((await readdir(dir)).sort(), ["SKILL.md"]);
 });
 
@@ -95,7 +95,7 @@ await check("--dry-run reports work without writing anything", async () => {
   const home = await makeHome();
   const { stdout } = await runSetup(home, ["--skill-only", "--dry-run"]);
   assert.match(stdout, /would install/);
-  assert.equal(existsSync(join(home, ".claude", "skills", "codex-supervisor")), false);
+  assert.equal(existsSync(join(home, ".claude", "skills", "agent-supervisor")), false);
 });
 
 await check("--target only touches the named client", async () => {
@@ -108,7 +108,7 @@ await check("--target only touches the named client", async () => {
 await check("--auto stays silent unless the install is global", async () => {
   const nonGlobal = await makeHome();
   await runSetup(nonGlobal, ["--auto"], { npm_config_global: "false" });
-  assert.equal(existsSync(join(nonGlobal, ".claude", "skills", "codex-supervisor")), false);
+  assert.equal(existsSync(join(nonGlobal, ".claude", "skills", "agent-supervisor")), false);
 
   const global = await makeHome();
   await runSetup(global, ["--auto", "--skill-only"], { npm_config_global: "true" });
@@ -121,7 +121,7 @@ await check("AGENT_SUPERVISOR_SKIP_SETUP opts the automatic run out", async () =
     npm_config_global: "true",
     AGENT_SUPERVISOR_SKIP_SETUP: "1"
   });
-  assert.equal(existsSync(join(home, ".claude", "skills", "codex-supervisor")), false);
+  assert.equal(existsSync(join(home, ".claude", "skills", "agent-supervisor")), false);
 });
 
 await check("a client missing from PATH is still found via its global bin directory", async () => {

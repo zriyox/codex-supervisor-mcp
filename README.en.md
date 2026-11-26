@@ -1,10 +1,10 @@
-# codex-supervisor-mcp
+# agent-supervisor-mcp
 
 English | [中文](README.md)
 
-[![npm version](https://img.shields.io/npm/v/codex-supervisor-mcp.svg)](https://www.npmjs.com/package/codex-supervisor-mcp)
-[![npm downloads](https://img.shields.io/npm/dm/codex-supervisor-mcp.svg)](https://www.npmjs.com/package/codex-supervisor-mcp)
-[![license](https://img.shields.io/npm/l/codex-supervisor-mcp.svg)](LICENSE)
+[![npm version](https://img.shields.io/npm/v/agent-supervisor-mcp.svg)](https://www.npmjs.com/package/agent-supervisor-mcp)
+[![npm downloads](https://img.shields.io/npm/dm/agent-supervisor-mcp.svg)](https://www.npmjs.com/package/agent-supervisor-mcp)
+[![license](https://img.shields.io/npm/l/agent-supervisor-mcp.svg)](LICENSE)
 [![CI](https://github.com/zriyox/codex-supervisor-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/zriyox/codex-supervisor-mcp/actions/workflows/ci.yml)
 [![node](https://img.shields.io/badge/node-%3E%3D22.13.0-339933.svg)](package.json)
 
@@ -12,12 +12,14 @@ Website [codex-supervisor.zriyo.com](https://codex-supervisor.zriyo.com) · for 
 
 Point several agents at one repository and they overwrite each other, nobody can say who changed what, and the main thread's context fills up with worker output.
 
-codex-supervisor-mcp is an MCP server. A main thread (Claude Code, Codex, or any MCP client) uses it to run several Codex CLI workers at once: one Git worktree per worker, state in SQLite, and a web board to watch them. Dispatch and bookkeeping live on disk, not in the model's context.
+agent-supervisor-mcp is an MCP server. A main thread (Claude Code, Codex, or any MCP client) uses it to run several Codex CLI workers at once: one Git worktree per worker, state in SQLite, and a web board to watch them. Dispatch and bookkeeping live on disk, not in the model's context.
 
 ![Demo: one Claude Code main thread dispatches three Codex workers into separate worktrees, waits, and merges the result](https://raw.githubusercontent.com/zriyox/codex-supervisor-mcp/main/assets/demo.gif)
 
 *30 seconds, recorded live: three workers in their own worktrees in parallel, then the main thread collects three diffs and makes one commit.*
 
+> **This package used to be codex-supervisor-mcp.** It was renamed because a worker is no longer only Codex. A machine with the old package is brought over by its last release: this package is installed, the MCP registration and the skill become `agent-supervisor`, and the state directory stays where it is. The command line tools change prefix from `codex-supervisor-` to `agent-supervisor-`.
+>
 > **Upgrading from 0.x to 1.x**: 39 tools became 14, with new names and arguments and no aliases for the old ones. Finish the workers in flight first, then reopen the session after upgrading so the new skill loads. The tool table is in the [reference](docs/reference.en.md); what changed is in the [1.0.0 release](https://github.com/zriyox/codex-supervisor-mcp/releases/tag/v1.0.0).
 
 ## What it solves
@@ -41,21 +43,21 @@ A worker can also be Claude Code: pass `runner: "claude"` to `create_worker`. It
 You need Node.js 22.13.0 or newer and the `codex` CLI on `PATH`. macOS, Linux and Windows all work.
 
 ```bash
-npm install -g codex-supervisor-mcp
+npm install -g agent-supervisor-mcp
 ```
 
-The install script puts the skill into every Claude Code and Codex it finds and registers the MCP server. Restart them afterwards. If nothing got registered (`--ignore-scripts`, for instance), run `codex-supervisor-setup`, or add it by hand:
+The install script puts the skill into every Claude Code and Codex it finds and registers the MCP server. Restart them afterwards. If nothing got registered (`--ignore-scripts`, for instance), run `agent-supervisor-setup`, or add it by hand:
 
 ```bash
-claude mcp add -s user codex-supervisor -- npx -y codex-supervisor-mcp
-codex mcp add codex-supervisor -- npx -y codex-supervisor-mcp
+claude mcp add -s user agent-supervisor -- npx -y agent-supervisor-mcp
+codex mcp add agent-supervisor -- npx -y agent-supervisor-mcp
 ```
 
 GUI clients such as Claude Desktop, Cursor and Windsurf need their MCP config edited by hand; the snippet is in the [reference](docs/reference.en.md#environment-variables). For the skill without the server: `npx skills add zriyox/codex-supervisor-mcp`.
 
 Then say it in plain words in Claude Code:
 
-> Fill in the unit tests for these three modules. Use codex-supervisor, three workers in parallel, call the session "unit tests".
+> Fill in the unit tests for these three modules. Use agent-supervisor, three workers in parallel, call the session "unit tests".
 
 The skill walks the main thread through this:
 
@@ -73,7 +75,7 @@ Workers never commit. Their changes stay on `worker/<taskId>` until the main thr
 To watch them work, open the board:
 
 ```bash
-codex-supervisor-web     # or: npx -p codex-supervisor-mcp codex-supervisor-web
+agent-supervisor-web     # or: npx -p agent-supervisor-mcp agent-supervisor-web
 ```
 
 Open `http://127.0.0.1:7877`. It shows each session's workers: status, the command running right now, changes and events. You can also ask a worker a question on the side; the answer comes from a read-only fork of its thread, so the work in progress is not interrupted. The board is read-only. It does not dispatch or cancel.
@@ -93,7 +95,7 @@ One block of text passes between the two sessions, pasted into the main-brain se
 
 ```text
 [Role]        You are the main brain: dispatch workers, check results, update docs, report to me.
-              You write no business code. Load the codex-supervisor skill first.
+              You write no business code. Load the agent-supervisor skill first.
 [Background]  Why this block exists, what the previous one left behind
 [Read first]  Which sections of which documents, and which one wins when they disagree
 [Do]          Follow the table in section N of the brief. Nothing outside the table
@@ -131,7 +133,7 @@ Three more are registered only with `AGENT_SUPERVISOR_TOOLS=all`: `facts` (the l
 
 A subagent can open its own worktree too, so file isolation is not the difference. The model and the process are.
 
-| | Claude Code subagent | codex-supervisor worker |
+| | Claude Code subagent | agent-supervisor worker |
 |---|---|---|
 | Which models | Claude only | Anything the Codex CLI has a provider for |
 | Who does the work | Claude Code itself | A separate `codex exec` process |
@@ -142,11 +144,11 @@ A subagent can open its own worktree too, so file isolation is not the differenc
 
 ## Configuration and state
 
-Everything lives under `~/.codex-supervisor/`: `data/supervisor.sqlite` is the ledger, `data/runs/<taskId>.jsonl` is Codex's raw output, and `worktrees/<taskId>/` holds each worker's checkout.
+Everything lives under `~/.agent-supervisor` (a machine upgraded from codex-supervisor-mcp that already has `~/.codex-supervisor` keeps using it): `data/supervisor.sqlite` is the ledger, `data/runs/<taskId>.jsonl` is Codex's raw output, and `worktrees/<taskId>/` holds each worker's checkout.
 
 | Variable | Default | What it does |
 |---|---|---|
-| `SUPERVISOR_HOME` | `~/.codex-supervisor` | State root. The MCP server and the board must point at the same one |
+| `SUPERVISOR_HOME` | `~/.agent-supervisor` | State root. The MCP server and the board must point at the same one |
 | `CODEX_BIN` | `codex` | Path to the Codex CLI. GUI clients often lack it on `PATH` |
 | `SUPERVISOR_WEB_PORT` | `7877` | Board port |
 | `AGENT_SUPERVISOR_NO_AUTO_UPDATE` | unset | `1` turns off background updates and only notifies |
@@ -158,17 +160,17 @@ Updates take care of themselves. At start the server asks the registry in the ba
 Uninstall:
 
 ```bash
-npm uninstall -g codex-supervisor-mcp
-claude mcp remove -s user codex-supervisor
-codex mcp remove codex-supervisor
-rm -rf ~/.claude/skills/codex-supervisor ~/.agents/skills/codex-supervisor ~/.codex/skills/codex-supervisor ~/.codex-supervisor
+npm uninstall -g agent-supervisor-mcp
+claude mcp remove -s user agent-supervisor
+codex mcp remove agent-supervisor
+rm -rf ~/.claude/skills/agent-supervisor ~/.agents/skills/agent-supervisor ~/.codex/skills/agent-supervisor ~/.agent-supervisor
 ```
 
 ## Troubleshooting
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| Missing from `claude mcp list` | The install did not run `postinstall` | `codex-supervisor-setup` |
+| Missing from `claude mcp list` | The install did not run `postinstall` | `agent-supervisor-setup` |
 | Worker `failed` at once, `spawn codex ENOENT` | No codex on the process `PATH` | Set `CODEX_BIN` |
 | `codex only resolved to a shell shim` | Windows found only the `.cmd`; the package entry is gone | Reinstall `@openai/codex`, or point `CODEX_BIN` at `codex.js` |
 | `Cannot find module 'node:sqlite'` | Node older than 22.13.0 | Upgrade Node |

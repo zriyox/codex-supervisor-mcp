@@ -1,7 +1,7 @@
 // Copies the bundled skill into the skill directories of the agent clients on
 // this machine. setup.js runs it after a global install; mcp-server.js runs it
 // every time the server starts, because a server launched through
-// `npx -y codex-supervisor-mcp@latest` never runs postinstall, and the skill
+// `npx -y agent-supervisor-mcp@latest` never runs postinstall, and the skill
 // text has to move together with the tool surface it describes.
 import { existsSync } from "node:fs";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
@@ -11,7 +11,7 @@ import { fileURLToPath } from "node:url";
 
 const packageRoot = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
 
-export const SKILL_NAME = "codex-supervisor";
+export const SKILL_NAME = "agent-supervisor";
 export const skillSource = join(packageRoot, "skills", SKILL_NAME, "SKILL.md");
 
 // Resolved on each call so a test can point HOME somewhere else first.
@@ -33,6 +33,19 @@ async function writeAtomically(destination, text) {
   await rename(staging, destination);
 }
 
+// The skill this package installed when it was codex-supervisor-mcp describes
+// tools that no longer exist. Left in place a session would load both. The
+// file is renamed, not deleted: a directory without SKILL.md is no skill, and
+// whatever the user wrote in it is still there.
+export const LEGACY_SKILL_NAME = "codex-supervisor";
+
+async function retireLegacySkill(client, log) {
+  const legacy = join(client.skillRoot, LEGACY_SKILL_NAME, "SKILL.md");
+  if (!existsSync(legacy)) return;
+  await rename(legacy, `${legacy}.retired`);
+  log(`skill   ${client.label}: retired the former ${LEGACY_SKILL_NAME} skill`);
+}
+
 // Writes the bundled skill under client.skillRoot. A file that differs is
 // backed up as SKILL.md.bak-<timestamp> first unless options.force is set.
 // Returns one of: unchanged, updated, installed, would-update, would-install.
@@ -43,6 +56,7 @@ export async function installSkill(client, options = {}, log = () => {}) {
   if (existsSync(destination)) {
     const current = await readFile(destination, "utf8");
     if (current === source) {
+      if (!options.dryRun) await retireLegacySkill(client, log);
       log(`skill   ${client.label}: up to date`);
       return "unchanged";
     }
@@ -59,6 +73,7 @@ export async function installSkill(client, options = {}, log = () => {}) {
       return "would-update";
     }
     await writeAtomically(destination, source);
+    await retireLegacySkill(client, log);
     log(`skill   ${client.label}: updated`);
     return "updated";
   }
@@ -69,6 +84,7 @@ export async function installSkill(client, options = {}, log = () => {}) {
   }
   await mkdir(dirname(destination), { recursive: true });
   await writeAtomically(destination, source);
+  await retireLegacySkill(client, log);
   log(`skill   ${client.label}: installed`);
   return "installed";
 }

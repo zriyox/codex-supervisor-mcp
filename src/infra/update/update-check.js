@@ -14,7 +14,7 @@ import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { dataDir } from "../paths.js";
 
-const PACKAGE_NAME = "codex-supervisor-mcp";
+const PACKAGE_NAME = "agent-supervisor-mcp";
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const packageJson = JSON.parse(readFileSync(join(packageRoot, "package.json"), "utf8"));
 
@@ -159,9 +159,9 @@ export function evaluateUpdate(installed, registry, { source, error }) {
   const integrityMatches = installed.integrity && expected ? installed.integrity === expected : null;
   let notice = null;
   if (updateAvailable) {
-    notice = `codex-supervisor-mcp ${installed.version} is installed but ${registry.latest.version} is published. Run \`${INSTALL_COMMAND}\` and restart the MCP client.`;
+    notice = `agent-supervisor-mcp ${installed.version} is installed but ${registry.latest.version} is published. Run \`${INSTALL_COMMAND}\` and restart the MCP client.`;
   } else if (integrityMatches === false) {
-    notice = `The installed codex-supervisor-mcp ${installed.version} does not match the published tarball (integrity differs). Reinstall with \`${INSTALL_COMMAND}\`.`;
+    notice = `The installed agent-supervisor-mcp ${installed.version} does not match the published tarball (integrity differs). Reinstall with \`${INSTALL_COMMAND}\`.`;
   }
   return {
     checked_at: new Date().toISOString(),

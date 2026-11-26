@@ -32,7 +32,7 @@ async function sweepWorktree(task, tasks, now) {
   const checkpoint = await removeSafeWorktree(task, assessed.fingerprint);
   // The worktree is gone whether or not the audit row can be written.
   await recordRemoval(task, { actor: "auto_cleanup", checkpoint, reasons: assessed.reasons })
-    .catch((error) => process.stderr.write(`[codex-supervisor] removed ${task.id} but could not record it: ${error.message}\n`));
+    .catch((error) => process.stderr.write(`[agent-supervisor] removed ${task.id} but could not record it: ${error.message}\n`));
   return { task_id: task.id, kind: "worktree", branch: branchOf(task), checkpoint_commit: checkpoint, reasons: assessed.reasons };
 }
 
@@ -64,7 +64,7 @@ export async function sweepCleanup({ now = Date.now(), force = false } = {}) {
     tasks = await readTasks();
   } catch (error) {
     // Cleanup is housekeeping; a store hiccup must not fail the poll it rides on.
-    process.stderr.write(`[codex-supervisor] auto cleanup skipped: ${error.message.split("\n")[0]}\n`);
+    process.stderr.write(`[agent-supervisor] auto cleanup skipped: ${error.message.split("\n")[0]}\n`);
     return [];
   }
   const finished = tasks.filter((task) => TERMINAL_STATUSES.has(task.status)).sort((a, b) => finishedAt(a) - finishedAt(b));
@@ -84,7 +84,7 @@ export async function sweepCleanup({ now = Date.now(), force = false } = {}) {
       const gone = await sweepWorktree(task, tasks, now);
       if (gone) removed.push(gone);
     } catch (error) {
-      process.stderr.write(`[codex-supervisor] auto cleanup skipped ${task.id}: ${error.message.split("\n")[0]}\n`);
+      process.stderr.write(`[agent-supervisor] auto cleanup skipped ${task.id}: ${error.message.split("\n")[0]}\n`);
     }
   }
   return removed;

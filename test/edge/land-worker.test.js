@@ -121,7 +121,7 @@ test("a machine where git has no identity still lands, with a stand-in committer
     assert.equal(result.landed.length, 1);
   });
   const committer = git(repo, ["log", "-1", "--format=%cn <%ce>"]);
-  assert.equal(committer, "codex-supervisor <codex-supervisor@localhost>");
+  assert.equal(committer, "agent-supervisor <agent-supervisor@localhost>");
 });
 
 test("commit_message commits a workspace-write worker's edits as one commit on its branch and lands it", async () => {

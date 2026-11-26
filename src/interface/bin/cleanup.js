@@ -29,7 +29,7 @@ function parseArgs(argv) {
 }
 
 function printHelp() {
-  console.log(`Usage: codex-supervisor-cleanup [options]
+  console.log(`Usage: agent-supervisor-cleanup [options]
 
 Options:
   --dry-run          Create and print a SAFE / REVIEW / BLOCKED plan. Default.

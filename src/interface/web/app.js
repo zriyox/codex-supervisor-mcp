@@ -197,7 +197,7 @@ async function route(req, res) {
 export function startWebServer({ storeOrigin = "default" } = {}) {
   const server = createServer((req, res) => {
     route(req, res).catch((error) => {
-      process.stderr.write(`[codex-supervisor-web] ${error.stack ?? error.message}\n`);
+      process.stderr.write(`[agent-supervisor-web] ${error.stack ?? error.message}\n`);
       if (!res.headersSent) json(res, 500, { error: "internal", message: error.message });
       else res.end();
     });
@@ -208,19 +208,19 @@ export function startWebServer({ storeOrigin = "default" } = {}) {
   server.on("error", (error) => {
     if (error.code === "EADDRINUSE") {
       process.stderr.write(
-        `codex-supervisor-web: port ${port} on ${host} is already in use.\n` +
+        `agent-supervisor-web: port ${port} on ${host} is already in use.\n` +
           `  A board may already be running at http://${host}:${port}\n` +
-          `  To run a second one, pick another port: SUPERVISOR_WEB_PORT=8080 codex-supervisor-web\n`
+          `  To run a second one, pick another port: SUPERVISOR_WEB_PORT=8080 agent-supervisor-web\n`
       );
       process.exit(1);
     }
-    process.stderr.write(`codex-supervisor-web: ${error.message}\n`);
+    process.stderr.write(`agent-supervisor-web: ${error.message}\n`);
     process.exit(1);
   });
 
   server.listen(port, host, () => {
     const boundPort = server.address().port;
-    process.stdout.write(`codex-supervisor web view on http://${host}:${boundPort}\n  store: ${supervisorRoot}  (${storeOrigin})\n`);
+    process.stdout.write(`agent-supervisor web view on http://${host}:${boundPort}\n  store: ${supervisorRoot}  (${storeOrigin})\n`);
   });
   return server;
 }
