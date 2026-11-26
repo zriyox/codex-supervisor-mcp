@@ -52,7 +52,7 @@ const transport = new StdioClientTransport({
   command: process.execPath,
   args: [join(projectRoot, "src", "mcp-server.js")],
   cwd: projectRoot,
-  env: { ...process.env, SUPERVISOR_HOME: home, AGENT_SUPERVISOR_NO_UPDATE_CHECK: "1" },
+  env: { ...process.env, SUPERVISOR_HOME: home, AGENT_SUPERVISOR_NO_UPDATE_CHECK: "1", AGENT_SUPERVISOR_SKIP_SKILL_SYNC: "1" },
   stderr: "pipe"
 });
 const client = new Client({ name: "supervisor-multi-project-real", version: "1.0.0" });

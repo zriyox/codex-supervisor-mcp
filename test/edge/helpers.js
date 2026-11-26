@@ -11,6 +11,11 @@ import { DatabaseSync } from "node:sqlite";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 
+// A server started by a test must never write into the skill directories of
+// whoever runs the tests: at start-up the server copies the checkout's skill
+// to every client it finds. Every child process below inherits this.
+process.env.AGENT_SUPERVISOR_SKIP_SKILL_SYNC ??= "1";
+
 export const repoRoot = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 export const fakeCodex = join(repoRoot, "test", "fixtures", "fake-codex.js");
 export const packageVersion = JSON.parse(

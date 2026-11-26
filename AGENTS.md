@@ -35,6 +35,7 @@ npm run web:build        # runs by itself before npm publish
 ## Rules
 
 - `npm test` green before every commit. Never `npm version` or `npm publish` while CI is red or still running; check `gh run list` first.
+- A server started by a test runs with `AGENT_SUPERVISOR_SKIP_SKILL_SYNC=1`. Without it the server copies the checkout's skill into the real `~/.claude`, `~/.codex` and `~/.agents` skill directories of whoever runs the tests.
 - Tests use a temp `SUPERVISOR_HOME` and `CODEX_BIN=test/fixtures/fake-codex.js`. No real Codex, no network, no git identity, no writable `/tmp` assumed. CI's Linux and Windows runners have none of those.
 - Never run `npm i -g` or `codex-supervisor-setup` against the user's machine unless asked.
 - A tool, argument or behaviour change is done when the skill, both READMEs (tool table and count), both `docs/reference*.md` (arguments and edge cases) and a test say the same thing. The skill ships inside the package: a skill change reaches users only with a release.

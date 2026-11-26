@@ -33,7 +33,7 @@ async function withServer(fn) {
     command: process.execPath,
     args: [join(serverRoot, "src", "mcp-server.js")],
     cwd: projectRoot,
-    env: { ...process.env, SUPERVISOR_HOME: home },
+    env: { ...process.env, SUPERVISOR_HOME: home, AGENT_SUPERVISOR_SKIP_SKILL_SYNC: "1" },
     stderr: "pipe"
   });
   const client = new Client({ name: "supervisor-real-codex", version: "1.0.0" });
