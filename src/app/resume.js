@@ -2,7 +2,7 @@ import { mkdir } from "node:fs/promises";
 import { ensureTaskWorktree } from "./restore-worktree.js";
 import "./compose.js";
 import { frameWorkerPrompt } from "../domain/prompt.js";
-import { ACTIVE_STATUSES } from "../domain/status.js";
+import { ACTIVE_STATUSES, runIsOver } from "../domain/status.js";
 import { buildHandoff } from "../infra/handoff.js";
 import { appendTaskEvent } from "../infra/store/events.js";
 import { getSession } from "../infra/store/sessions.js";
@@ -158,7 +158,8 @@ export async function recoverEligibleRuns() {
       || ["blocked", "paused", "budget_limited", "usage_limited"].includes(task.goal_status)
       || /401|403|unauthori[sz]ed|not logged|permission denied|approval|rate.?limit|429/i.test(task.error ?? "")
       || /time_limit|quota/.test(`${task.attention_reason ?? ""} ${task.error ?? ""}`)
-      || await isPidAlive(task.pid) || await isPidAlive(task.run_host_pid)
+      // Once the run is over its pids may belong to anyone.
+      || (!runIsOver(task) && (await isPidAlive(task.pid) || await isPidAlive(task.run_host_pid)))
       // Something of the dead run is still alive and holds the session;
       // resuming now fails with "already has an active writer". A later poll retries.
       || isGroupAlive(task.run_host_pid)) continue;

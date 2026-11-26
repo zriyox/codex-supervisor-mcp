@@ -14,6 +14,6 @@ test("a settled worker is not active because some other process now has its pid"
   const settled = await cleanupFacts({ ...row, status: "completed", exit_code: 0 }, []);
   assert.equal(settled.active, null);
 
-  const unsettled = await cleanupFacts({ ...row, status: "lost", exit_code: null }, []);
+  const unsettled = await cleanupFacts({ ...row, status: "running", exit_code: null }, []);
   assert.match(unsettled.active, /still active/);
 });

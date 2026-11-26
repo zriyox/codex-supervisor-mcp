@@ -1,7 +1,7 @@
 // Reads what the cleanup policy needs to know about one worker's worktree.
 import { branchOf } from "../domain/worker-branch.js";
 import "./compose.js";
-import { ACTIVE_STATUSES, TERMINAL_STATUSES } from "../domain/status.js";
+import { ACTIVE_STATUSES, TERMINAL_STATUSES, runIsOver } from "../domain/status.js";
 import { gitSucceedsAsync, runGitAsync } from "../infra/git.js";
 import { worktreesDir } from "../infra/paths.js";
 import { isGroupAlive, isPidAlive } from "../infra/store/tasks.js";
@@ -14,12 +14,9 @@ import { resolve } from "node:path";
 const git = (cwd, args) => runGitAsync(cwd, args, { timeout: 15000, noOptionalLocks: true, rawPaths: true, trim: false });
 const lines = (text) => text.split("\n").filter(Boolean);
 
-// The exit code is the last thing a run host writes, after acceptance. Once it
-// is on a finished row nothing of that run touches the worktree again, and the
-// pids on the row are history: the system hands them to other processes, on
-// Windows within seconds, and a live stranger must not read as a live worker.
 function activeReason(task) {
-  const settled = TERMINAL_STATUSES.has(task.status) && task.exit_code != null;
+  // Once the run is over its pids may belong to anyone.
+  const settled = runIsOver(task);
   if (!settled && task.pid && isPidAlive(task.pid)) return "worker process is still active";
   if (!settled && task.run_host_pid && isPidAlive(task.run_host_pid)) return "run host process is still active";
   if (!settled && isGroupAlive(task.run_host_pid)) return "a process of the worker's run is still active";

@@ -23,3 +23,18 @@ test("a lost row with a finished turn is recovered even when its old pid is aliv
     assert.equal(row.exit_code, 0);
   });
 });
+
+test("a finished run that did nothing is retried even when its old pid is alive again", async () => {
+  const home = await tempHome("supervisor-recovery-pid-");
+  const { dir } = await makeRepo(join(home, "repo"));
+  await withMcp({ SUPERVISOR_HOME: home, FAKE_CODEX_SCENARIO: "echo-prompt" }, async ({ call }) => {
+    const worker = await call("create_worker", dispatchArgs("empty write", dir, { sandbox: { mode: "workspace-write" }, owned_paths: ["result.txt"] }));
+    await waitFor(call, worker.id, (task) => task.exit_code === 0 && task.attention_reason === "no_work");
+    await waitForRunHostExit(home, worker.id);
+    const db = openStore(home);
+    db.prepare("UPDATE tasks SET pid=?, run_host_pid=? WHERE id=?").run(process.pid, process.pid, worker.id);
+    db.close();
+    const reply = await call("poll_workers", { cursor: "observer" });
+    assert.deepEqual(reply.recoveries.map((entry) => entry.id), [worker.id]);
+  });
+});
