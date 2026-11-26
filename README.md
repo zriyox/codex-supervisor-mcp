@@ -7,6 +7,7 @@
 [![license](https://img.shields.io/npm/l/agent-supervisor-mcp.svg)](LICENSE)
 [![CI](https://github.com/zriyox/agent-supervisor-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/zriyox/agent-supervisor-mcp/actions/workflows/ci.yml)
 [![node](https://img.shields.io/badge/node-%3E%3D22.13.0-339933.svg)](package.json)
+[![agent-supervisor-mcp on Glama](https://glama.ai/mcp/servers/zriyox/agent-supervisor-mcp/badges/score.svg)](https://glama.ai/mcp/servers/zriyox/agent-supervisor-mcp)
 
 官网 [agent-supervisor.zriyo.com](https://agent-supervisor.zriyo.com) · 给模型读的 [llms.txt](https://agent-supervisor.zriyo.com/llms.txt) · [参考手册](docs/reference.md)
 
