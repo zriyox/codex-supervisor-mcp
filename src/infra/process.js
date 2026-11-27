@@ -9,10 +9,15 @@ export const runSync = execFileSync;
 export const runFile = execFile;
 export const spawnProcess = spawn;
 
+// A Windows run host is started inside its parent's hidden console; its children
+// must share that console, because a console of their own shows a window.
+export const SHARED_CONSOLE_ENV = "AGENT_SUPERVISOR_SHARED_CONSOLE";
+export const hideChildConsole = process.env[SHARED_CONSOLE_ENV] !== "1";
+
 // Resolves when the command exits 0, rejects otherwise. Output is discarded.
 export function runToExit(command, args, options = {}) {
   return new Promise((resolvePromise, reject) => {
-    const child = spawn(command, args, { stdio: "ignore", windowsHide: true, ...options });
+    const child = spawn(command, args, { stdio: "ignore", windowsHide: hideChildConsole, ...options });
     child.on("exit", (code) => {
       if (code === 0) resolvePromise();
       else reject(new Error(`${command} ${args.join(" ")} exited with ${code}`));
@@ -40,7 +45,7 @@ function powershellBin() {
 // seconds to print anything. A tight timeout silently degrades to the useless
 // tasklist probe, and the cancel comes back "process_not_found".
 export function describeProcess(pid) {
-  const options = { encoding: "utf8", timeout: 15000, windowsHide: true };
+  const options = { encoding: "utf8", timeout: 15000, windowsHide: hideChildConsole };
   try {
     if (process.platform === "win32") {
       try {

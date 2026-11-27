@@ -11,7 +11,7 @@
 // The commands are shell lines written by the main thread, so they run with
 // the supervisor's own privileges, exactly as if the main thread had run
 // them itself. That is the trust model and it is stated in the tool text.
-import { runSync, spawnProcess } from "../infra/process.js";
+import { hideChildConsole, runSync, spawnProcess } from "../infra/process.js";
 import { existsSync } from "node:fs";
 import { lstat, readFile, realpath } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
@@ -130,7 +130,7 @@ function spawnAcceptanceShell(cwd, env) {
     cwd,
     env: shellEnv,
     stdio: ["pipe", "pipe", "pipe"],
-    windowsHide: true,
+    windowsHide: hideChildConsole,
     detached: process.platform !== "win32"
   });
 }

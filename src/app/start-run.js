@@ -1,9 +1,9 @@
 import "./compose.js";
-import { spawnProcess } from "../infra/process.js";
+import { runSync, SHARED_CONSOLE_ENV, spawnProcess } from "../infra/process.js";
 import { upsertTask } from "../infra/store/tasks.js";
 import { compileWorkerContext } from "./context-compiler.js";
 import { failedStart, MAX_RUN_HOST_PROMPT_BYTES, RUN_HOST_STARTUP_TIMEOUT_MS } from "./run-state.js";
-import { closeSync, openSync } from "node:fs";
+import { closeSync, existsSync, openSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 // The MCP client may disappear at any point. A detached process owns the
@@ -32,6 +32,11 @@ export async function startTrackedRun(job) {
   const hostLogPath = job.logPath.endsWith(".jsonl")
     ? job.logPath.replace(/\.jsonl$/, ".host.log")
     : `${job.logPath}.host.log`;
+  if (process.platform === "win32") {
+    const started = await startHostInSharedConsole(job, hostLogPath);
+    if (!started.ok) await upsertTask(started.record);
+    return started;
+  }
   let hostLogFd;
   try {
     hostLogFd = openSync(hostLogPath, "a");
@@ -74,4 +79,86 @@ export async function startTrackedRun(job) {
   });
   if (!started.ok) await upsertTask(started.record);
   return started;
+}
+
+// On Windows the run host must share this process's hidden console and live
+// outside the job that ends this process's children: `start /b` gives both.
+// That path has no IPC channel, so the job and the startup answer are files.
+async function startHostInSharedConsole(job, hostLogPath) {
+  const base = hostLogPath.replace(/\.host\.log$/, "");
+  const jobPath = `${base}.job.json`;
+  const ackPath = `${base}.ack.json`;
+  const entry = fileURLToPath(new URL("../run-host/entry.js", import.meta.url));
+  for (const path of [process.execPath, entry, jobPath, ackPath]) {
+    if (/[%&^|<>"]/.test(path)) {
+      return failedStart(job.record, `run host cannot launch: path contains a cmd.exe special character (% & ^ | < > "): ${path}`);
+    }
+  }
+  rmSync(ackPath, { force: true });
+  writeFileSync(jobPath, JSON.stringify(job));
+  const line = `/d /c start "" /b "${process.execPath}" "${entry}" --run-host --job-file "${jobPath}" --ack-file "${ackPath}"`;
+  let hostLogFd;
+  try {
+    hostLogFd = openSync(hostLogPath, "a");
+  } catch (error) {
+    rmSync(jobPath, { force: true });
+    return failedStart(job.record, `cannot open run host log ${hostLogPath}: ${error.message}`);
+  }
+  let spawnError = null;
+  try {
+    const launcher = spawnProcess(process.env.ComSpec || "cmd.exe", [line], {
+      stdio: ["ignore", hostLogFd, hostLogFd],
+      env: { ...process.env, [SHARED_CONSOLE_ENV]: "1" },
+      windowsVerbatimArguments: true,
+      windowsHide: true
+    });
+    launcher.on("error", (error) => {
+      spawnError = error;
+    });
+    launcher.unref();
+  } finally {
+    closeSync(hostLogFd);
+  }
+  const deadline = Date.now() + RUN_HOST_STARTUP_TIMEOUT_MS;
+  while (Date.now() < deadline) {
+    if (spawnError) {
+      rmSync(jobPath, { force: true });
+      return failedStart(job.record, `run host launcher failed: ${spawnError.message}`);
+    }
+    if (existsSync(ackPath)) {
+      let answer;
+      try {
+        answer = JSON.parse(readFileSync(ackPath, "utf8"));
+      } catch (error) {
+        return failedStart(job.record, `run host answer unreadable (${error.message}); host log: ${hostLogPath}`);
+      } finally {
+        rmSync(ackPath, { force: true });
+      }
+      return answer;
+    }
+    await new Promise((resolveWait) => setTimeout(resolveWait, 100));
+  }
+  return failedStart(job.record, `run host startup timed out; ${abandonLateHost(jobPath)}; host log: ${hostLogPath}`);
+}
+
+// The host claims the job by renaming the job file; whoever renames it first
+// owns the start. A host that claimed it after the deadline is killed.
+function abandonLateHost(jobPath) {
+  try {
+    renameSync(jobPath, `${jobPath}.abandoned`);
+    rmSync(`${jobPath}.abandoned`, { force: true });
+    return "the host never claimed the job";
+  } catch (error) {
+    if (error.code !== "ENOENT") return `job file could not be withdrawn: ${error.message}`;
+  }
+  const pidPath = `${jobPath}.pid`;
+  if (!existsSync(pidPath)) return "the host claimed the job but left no pid";
+  const pid = Number(readFileSync(pidPath, "utf8"));
+  rmSync(pidPath, { force: true });
+  try {
+    runSync("taskkill", ["/PID", String(pid), "/T", "/F"], { stdio: "ignore", timeout: 5000, windowsHide: true });
+    return `the late host ${pid} was stopped`;
+  } catch (error) {
+    return `the late host ${pid} could not be stopped: ${error.message}`;
+  }
 }
