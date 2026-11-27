@@ -47,10 +47,11 @@ test("the default tool set is exactly fourteen and the optional three stay off u
   }
 });
 
-test("both READMEs and both references document every registered MCP tool", async () => {
-  const [zh, en, zhRef, enRef] = await Promise.all([
+test("all three READMEs and both references document every registered MCP tool", async () => {
+  const [en, ru, zh, zhRef, enRef] = await Promise.all([
     read("README.md"),
-    read("README.en.md"),
+    read("README.ru.md"),
+    read("README.zh-CN.md"),
     read("docs/reference.md"),
     read("docs/reference.en.md")
   ]);
@@ -59,6 +60,7 @@ test("both READMEs and both references document every registered MCP tool", asyn
   // The READMEs group tools by stage; the references keep one row per tool with its arguments.
   assert.deepEqual(mentionedTools(zh, "## 工具", "## 和 Claude Code", registered), registered);
   assert.deepEqual(mentionedTools(en, "## Tools", "## How this differs", registered), registered);
+  assert.deepEqual(mentionedTools(ru, "## Инструменты", "## Чем это отличается", registered), registered);
   assert.deepEqual(documentedTools(zhRef, "## 工具", "分组参数：").sort(), registered);
   assert.deepEqual(documentedTools(enRef, "## Tools", "The grouped arguments:").sort(), registered);
 });
@@ -79,7 +81,7 @@ test("the skill names every default tool and the rules a main thread must not mi
 
 test("no document still names a tool or argument that was removed", async () => {
   const removed = /create_codex_worker|land_codex_worker|check_workers|overview_delta|get_worker_result|verify_delivery_push|cleanup_plan|ownedPaths|commitMessage|allowLongWait|CODEX_SUPERVISOR_/;
-  for (const path of ["README.md", "README.en.md", "docs/reference.md", "docs/reference.en.md", "skills/agent-supervisor/SKILL.md"]) {
+  for (const path of ["README.md", "README.ru.md", "README.zh-CN.md", "docs/reference.md", "docs/reference.en.md", "skills/agent-supervisor/SKILL.md"]) {
     const hit = (await read(path)).match(removed);
     assert.equal(hit, null, `${path} still says ${hit?.[0]}`);
   }

@@ -1,6 +1,6 @@
 # Reference
 
-The [README](../README.en.md) covers getting started. Every tool argument, where the guard and acceptance draw their lines, which directories the sandbox opens, and the full list of environment variables are here.
+The [README](../README.md) covers getting started. Every tool argument, where the guard and acceptance draw their lines, which directories the sandbox opens, and the full list of environment variables are here.
 
 ## Tools
 
