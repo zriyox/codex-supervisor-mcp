@@ -103,7 +103,7 @@ test("a valid probe survives an invalid final report and is not auto-resumed", a
 test("a valid probe survives a missing process exit and is not auto-resumed", async () => {
   const home = await tempHome("supervisor-worker-preflight-exit-");
   const { dir } = await makeRepo(join(home, "repo"));
-  await withMcp({ SUPERVISOR_HOME: home, FAKE_CODEX_SCENARIO: "command-then-no-terminal" }, async ({ call }) => {
+  const preflightId = await withMcp({ SUPERVISOR_HOME: home, FAKE_CODEX_SCENARIO: "command-then-no-terminal" }, async ({ call }) => {
     const preflight = await runPreflight(call, dir);
     const verdict = await call("get_worker", { task_id: preflight.id, include: ["preflight"] });
     assert.equal(verdict.status, "passed", JSON.stringify(verdict));
@@ -118,16 +118,19 @@ test("a valid probe survives a missing process exit and is not auto-resumed", as
     recovered = await call("get_worker", { task_id: preflight.id, include: ["preflight"] });
     assert.equal(recovered.status, "passed", JSON.stringify(recovered));
     assert.equal(recovered.worker_outcome.missing_exit_tolerated, true);
+    return preflight.id;
+  });
+  await withMcp({ SUPERVISOR_HOME: home, FAKE_CODEX_SCENARIO: "happy" }, async ({ call }) => {
     const target = await call("create_worker", {
       ...dispatchArgs("passed preflight target", dir, {
         sandbox: { mode: "workspace-write" },
         owned_paths: ["result.txt"]
       }),
-      preflight_id: preflight.id
+      preflight_id: preflightId
     });
     assert.ok(target.id, JSON.stringify(target));
     assert.notEqual(target.error, "ownership_conflict");
-    await call("cancel_worker", { task_id: target.id });
+    await waitFor(call, target.id, (task) => task.status === "completed" && task.exit_code === 0);
     const checked = await call("poll_workers", { cursor: "observer" });
     assert.deepEqual(checked.recoveries, []);
   });
