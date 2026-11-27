@@ -23,6 +23,19 @@ test("preflight matches the shell wrapper Codex emits around a command", () => {
   assert.equal(normalizeObservedCommand("git status --short"), "git status --short");
 });
 
+test("preflight matches the PowerShell wrapper Codex emits on Windows", () => {
+  assert.equal(
+    normalizeObservedCommand(String.raw`"C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -Command 'cargo test -q -p gamma'`),
+    "cargo test -q -p gamma"
+  );
+  assert.equal(normalizeObservedCommand("pwsh.exe -NoProfile -Command \"git status --short\""), "git status --short");
+  assert.equal(normalizeObservedCommand("powershell -Command 'Write-Output ''ready'''"), "Write-Output 'ready'");
+  assert.equal(
+    commandsEquivalent(String.raw`"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe" -Command 'node --version'`, "node --version"),
+    true
+  );
+});
+
 test("preflight reverses zsh history-expansion quotes around ! and quoted literals", () => {
   const observed = Buffer.from(
     "L2Jpbi96c2ggLWMgIm5vZGUgLWUgXCJjb25zdCBmcz1yZXF1aXJlKCdmcycpO2Zvcihjb25zdCBwIG9mIFsnbm9kZV9tb2R1bGVzL2V4YW1wbGUtZGVwL2luZGV4LmpzJywndmVuZG9yLWxpYi9saWIudHh0JywnLnByZXBhcmVkL3N0YXR1cycsJ+i1hOaWmS/or7TmmI4udHh0J10paWYoIichZnMuZXhpc3RzU3luYyhwKSlwcm9jZXNzLmV4aXQoMSk7Y29uc29sZS5sb2coJyInc2V0dXAtb2snKVwiIg==",

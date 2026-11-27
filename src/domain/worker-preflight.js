@@ -21,8 +21,19 @@ function uniqueSorted(values) {
   return [...new Set((values ?? []).map((value) => String(value)))].sort();
 }
 
+const POWERSHELL_WRAPPED = /^"?(?:[^"\s]*[\\/])?(?:powershell|pwsh)(?:\.exe)?"?(?:\s+-(?:NoProfile|NoLogo|NonInteractive|ExecutionPolicy\s+\S+))*\s+-(?:Command|c)\s+([\s\S]+)$/i;
+
+function unwrapPowerShell(body) {
+  const text = body.trim();
+  if (text.length >= 2 && text[0] === "'" && text.at(-1) === "'") return text.slice(1, -1).replace(/''/g, "'").trim();
+  if (text.length >= 2 && text[0] === '"' && text.at(-1) === '"') return text.slice(1, -1).replace(/\\"/g, '"').trim();
+  return text;
+}
+
 export function normalizeObservedCommand(command) {
   const text = String(command ?? "").trim();
+  const powershell = text.match(POWERSHELL_WRAPPED);
+  if (powershell) return unwrapPowerShell(powershell[1]);
   const wrapped = text.match(/^(?:[^\s]+\/)?(?:zsh|bash|sh)\s+-l?c\s+([\s\S]+)$/);
   if (!wrapped) return text;
   let body = wrapped[1].trim();
