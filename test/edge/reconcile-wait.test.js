@@ -63,11 +63,20 @@ test("a worker that lingers after turn.completed is not reported until its exit 
   const home = await tempHome("supervisor-wait-");
   await withMcp({ SUPERVISOR_HOME: home, FAKE_CODEX_LINGER_MS: "1200" }, async ({ call }) => {
     const created = await call("create_worker", dispatchArgs("linger", join(home, "workspace")));
-    const started = Date.now();
     const waited = await call("wait_workers", { task_ids: [created.id], timeout_ms: 10000, poll_ms: 250 });
-    assert.ok(Date.now() - started >= 1000, "the wait must outlast the linger");
-    assert.equal(waited.workers[0].status, "completed");
-    assert.equal(waited.workers[0].exit_code, 0);
+    const [worker] = waited.workers;
+    assert.equal(waited.timed_out, false);
+    assert.equal(worker.status, "completed");
+    assert.equal(worker.exit_code, 0);
+    const db = openStore(home);
+    try {
+      const turn = db.prepare("SELECT created_at FROM task_events WHERE task_id = ? AND event_type = 'turn.completed'").get(created.id);
+      assert.ok(turn, "the worker must record turn.completed");
+      assert.ok(Date.parse(worker.updated_at) - Date.parse(turn.created_at) >= 1000,
+        "the returned exit must land at least 1000 ms after turn.completed");
+    } finally {
+      db.close();
+    }
   });
 });
 
