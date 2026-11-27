@@ -19,11 +19,18 @@ jobs:
     if: github.event_name == 'workflow_dispatch' || !startsWith(github.event.release.tag_name, 'v1.')
     steps:
       - uses: actions/checkout@v4
-      - name: Check that npm has the version server.json names
+      # A release is usually created seconds after npm publish, before the
+      # registry serves the new version, so wait for it rather than fail.
+      - name: Wait until npm serves the version server.json names
         run: |
           name=$(node -p "require('./server.json').packages[0].identifier")
           version=$(node -p "require('./server.json').packages[0].version")
-          npm view "$name@$version" version
+          for attempt in $(seq 1 40); do
+            npm view "$name@$version" version --prefer-online 2>/dev/null && exit 0
+            sleep 15
+          done
+          echo "npm still does not serve $name@$version after 10 minutes" >&2
+          exit 1
       - name: Install mcp-publisher
         run: |
           curl -fsSL "https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_linux_amd64.tar.gz" | tar xz mcp-publisher
