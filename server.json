@@ -7,12 +7,12 @@
     "source": "github"
   },
   "websiteUrl": "https://agent-supervisor.zriyo.com",
-  "version": "2.0.2",
+  "version": "2.0.3",
   "packages": [
     {
       "registryType": "npm",
       "identifier": "agent-supervisor-mcp",
-      "version": "2.0.2",
+      "version": "2.0.3",
       "transport": {
         "type": "stdio"
       },
