@@ -9,7 +9,16 @@ import { fileURLToPath } from "node:url";
 
 const quoteCommand = (path) => process.platform === "win32" ? `"${path.replace(/"/g, '""')}"` : `'${path.replace(/'/g, "'\\''")}'`;
 
-const CODEX_NPM_ENTRY = { pkg: "@openai/codex", bin: "bin/codex.js" };
+// The native binary is resolved before codex.js: its commands must share the
+// run host's console.
+const CODEX_NPM_ENTRY = {
+  pkg: "@openai/codex",
+  bin: "bin/codex.js",
+  native: [
+    "node_modules/@openai/codex-win32-x64/vendor/x86_64-pc-windows-msvc/bin/codex.exe",
+    "node_modules/@openai/codex-win32-arm64/vendor/aarch64-pc-windows-msvc/bin/codex.exe"
+  ]
+};
 
 export class CodexRunnerAdapter {
   constructor({ env = process.env } = {}) {
@@ -72,7 +81,12 @@ export class CodexRunnerAdapter {
     const located = configured ? configured : (findBinaryPath("codex", { extraDirs: defaultBinDirs() }) ?? "codex");
     const target = resolveCommand(located, { npmEntry: CODEX_NPM_ENTRY });
     if (target.shim) return { error: shimMessage("codex", target.cmd, "CODEX_BIN") };
-    return { cmd: target.cmd, prefixArgs: target.prefixArgs };
+    const normalized = target.cmd.replace(/\\/g, "/");
+    const native = CODEX_NPM_ENTRY.native.find((entry) => normalized.toLowerCase().endsWith(`/${entry.toLowerCase()}`));
+    const packageRoot = native ? target.cmd.slice(0, -(native.length + 1)) : null;
+    return { cmd: target.cmd, prefixArgs: target.prefixArgs, ...(packageRoot ? { env: {
+      CODEX_MANAGED_BY_NPM: "1", CODEX_MANAGED_PACKAGE_ROOT: packageRoot
+    } } : {}) };
   }
 
   capabilityPreflight(target = this.resolveTarget()) {

@@ -52,7 +52,10 @@ const CLIENTS = [
     ...SKILL_ROOTS.codex,
     binary: "codex",
     binEnv: "CODEX_BIN",
-    npmEntry: { pkg: "@openai/codex", bin: "bin/codex.js" }
+    npmEntry: { pkg: "@openai/codex", bin: "bin/codex.js", native: [
+      "node_modules/@openai/codex-win32-x64/vendor/x86_64-pc-windows-msvc/bin/codex.exe",
+      "node_modules/@openai/codex-win32-arm64/vendor/aarch64-pc-windows-msvc/bin/codex.exe"
+    ] }
   }
 ];
 

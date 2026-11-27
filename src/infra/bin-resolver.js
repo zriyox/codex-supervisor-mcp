@@ -70,6 +70,7 @@ const listSeparator = (platform) => (isWindows(platform) ? ";" : ":");
  * @typedef {Object} NpmEntryHint
  * @property {string} pkg  npm package name, e.g. "@openai/codex"
  * @property {string} bin  entry path inside the package, e.g. "bin/codex.js"
+ * @property {string[]} [native]  native executable paths inside the package, probed before bin
  */
 
 /**
@@ -276,6 +277,10 @@ function npmBypass(shimPath, npmEntry, exists, nodePath) {
     roots.push(path.win32.dirname(path.win32.dirname(dir)));
   }
   for (const root of roots) {
+    for (const native of npmEntry.native ?? []) {
+      const binary = path.win32.join(root, "node_modules", npmEntry.pkg, native);
+      if (exists(binary)) return { cmd: binary, prefixArgs: [], shim: false };
+    }
     const entry = path.win32.join(root, "node_modules", npmEntry.pkg, npmEntry.bin);
     if (!exists(entry)) continue;
     if (DIRECT_EXTS.has(path.win32.extname(entry).toLowerCase())) {

@@ -4,7 +4,7 @@
 import "../app/compose.js";
 import { failedStart, processes } from "../app/run-state.js";
 import { captureExternalOutputs } from "../infra/external-output.js";
-import { spawnProcess } from "../infra/process.js";
+import { hideChildConsole, spawnProcess } from "../infra/process.js";
 import { clearStage } from "../infra/stage-store.js";
 import { appendTaskEvent, ensureRunRecord } from "../infra/store/events.js";
 import { getTask } from "../infra/store/tasks.js";
@@ -97,9 +97,9 @@ export async function trackRunInHost({ record, args, prompt, logPath, spawnOptio
 
   const { child, spawnError, earlyOutput } = await spawnAndAwaitStart(target, launch.guardedArgs, {
     stdio: ["pipe", "pipe", "pipe"],
-    env: launch.env(),
-    windowsHide: true,
-    ...spawnOptions
+    windowsHide: hideChildConsole,
+    ...spawnOptions,
+    env: { ...launch.env(), ...spawnOptions.env, ...target.env }
   });
   if (spawnError) return failedStart(record, `failed to spawn ${target.cmd}: ${spawnError.message}`);
 
